@@ -296,9 +296,10 @@ own palette.
 ## Development
 
 ```
-bun test               # 652 tests
+bun test               # 657 tests
 bunx tsc --noEmit
 bun run build
+bun run audit          # no machine-specific data in the tree or the history
 ```
 
 Tests create real files and run real rsync, because the behaviour worth testing

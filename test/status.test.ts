@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Config, Target } from "../src/config.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import type { Scan, State } from "../src/state.ts";
-import { behindReason, cellState, evaluateUnit, rollUp, type Cell } from "../src/status.ts";
+import { behindReason, cellState, evaluateUnit, rollUp, type Cell, knownExtras, evidencePhrase } from "../src/status.ts";
 
 const NOW = Date.parse("2026-08-20T12:00:00Z");
 const DAY = 86_400_000;
@@ -309,5 +309,57 @@ describe("behind says what the files actually are", () => {
 
   test("a record written before the breakdown existed falls back, not invents", () => {
     expect(behindReason(scan({}))).toBe("504 files pending");
+  });
+});
+
+describe("a deep verify must not erase a known extra", () => {
+  /**
+   * `--delete` appears only in the quick check, so a deep verify always reports
+   * `nExtra: 0` — not because the extras are gone, but because it never looked.
+   * Reading the count from whichever scan is newest therefore made running a
+   * deep check delete the knowledge that a destination held an extra file.
+   */
+  const fp = { nfiles: 801, bytes: 10e9, maxMtimeNs: "1" };
+  const scan = (over: Partial<Scan>): Scan => ({
+    unit: "maui", target: "external", ts: 1000, method: "quick", outcome: "clean",
+    nChanges: 0, nExtra: 0, bytesPending: 0, fingerprint: fp, sentinel: "s", ...over,
+  });
+
+  test("the quick check's count survives a later deep verify", () => {
+    const state: State = {
+      version: 1,
+      scans: [
+        scan({ method: "quick", ts: 1000, nExtra: 1 }),
+        scan({ method: "deep", ts: 2000, nExtra: 0 }),
+      ],
+    };
+    expect(knownExtras(state, "maui", "external")?.count).toBe(1);
+  });
+
+  test("no quick check means nothing is claimed either way", () => {
+    const state: State = { version: 1, scans: [scan({ method: "deep", ts: 2000 })] };
+    expect(knownExtras(state, "maui", "external")).toBeNull();
+  });
+
+  test("a quick check that found none reports none", () => {
+    const state: State = { version: 1, scans: [scan({ method: "quick", nExtra: 0 })] };
+    expect(knownExtras(state, "maui", "external")).toBeNull();
+  });
+
+  test("the evidence line names them, and calls them a destination", () => {
+    const last = scan({ method: "deep", ts: 2000, nExtra: 0 });
+    const line = evidencePhrase(last, last, 3000, {
+      stamp: () => "22 aug", ageAgo: () => "today",
+    }, 1);
+    expect(line).toContain("1 extra at destination");
+  });
+
+  test("extras still never block verified", () => {
+    // They cannot endanger source data, so they are reported and not counted
+    // against the verdict (DESIGN.md section 3).
+    const line = evidencePhrase(scan({ method: "deep" }), scan({ method: "deep" }), 3000, {
+      stamp: () => "22 aug", ageAgo: () => "today",
+    }, 4);
+    expect(line).toContain("deep verified");
   });
 });

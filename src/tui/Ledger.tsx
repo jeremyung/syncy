@@ -2,7 +2,7 @@ import { Box, Text } from "ink";
 import type { Config } from "../config.ts";
 import { ageAgo, bytes, stamp } from "../format.ts";
 import { findScan, latestScan, type State } from "../state.ts";
-import { evidencePhrase, GLYPH, type UnitStatus } from "../status.ts";
+import { evidencePhrase, GLYPH, knownExtras, type UnitStatus } from "../status.ts";
 import { displayWidth, padEnd, padStart, truncate } from "../width.ts";
 import { Forklift, forkliftRows } from "./Forklift.tsx";
 import { Progress, progressLines, type RunProgress } from "./Progress.tsx";
@@ -272,7 +272,7 @@ export function Ledger(props: LedgerProps): React.ReactElement {
               <Text color={theme.ink}>{"  " + prefix}</Text>
               <Text color={theme.dim}>{padEnd(t.name, 5) + " "}</Text>
               <Text color={theme.dim}>
-                {evidencePhrase(deep, last, now, { stamp, ageAgo })}
+                {evidencePhrase(deep, last, now, { stamp, ageAgo }, knownExtras(state, selectedRow.status.unit, t.name)?.count)}
               </Text>
             </Box>
           );

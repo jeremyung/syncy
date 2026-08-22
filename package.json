@@ -10,7 +10,8 @@
     "start": "bun run src/cli.ts",
     "test": "bun test",
     "build": "bun build --compile --minify --target=bun-darwin-arm64 src/cli.ts --outfile syncy",
-    "testdata": "bun run scripts/testdata.ts"
+    "testdata": "bun run scripts/testdata.ts",
+    "audit": "sh scripts/audit-history.sh"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

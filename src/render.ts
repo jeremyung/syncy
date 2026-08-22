@@ -128,8 +128,12 @@ function detailLines(view: LedgerView): string[] {
   return out;
 }
 
-const describe = (deep: Scan | undefined, last: Scan | undefined, now: number): string =>
-  evidencePhrase(deep, last, now, { stamp, ageAgo });
+const describe = (
+  deep: Scan | undefined,
+  last: Scan | undefined,
+  now: number,
+  extras?: number,
+): string => evidencePhrase(deep, last, now, { stamp, ageAgo }, extras);
 
 function footer(view: LedgerView, W: number): string {
   const total = view.rows.reduce((a, r) => a + r.size, 0);

@@ -57,6 +57,13 @@ function agePhrase(ts: number, now: number): string {
 }
 
 export interface CellInput {
+  /**
+   * Extras known from the most recent quick check.
+   *
+   * A deep verify carries no `--delete` and so always reports zero; taking the
+   * count from the newest scan made a deep check erase a known extra file.
+   */
+  readonly knownExtras?: number;
   readonly target: Target;
   readonly sentinel: SentinelStatus | "unreachable";
   readonly fingerprintNow: Fingerprint;
@@ -94,11 +101,31 @@ export function behindReason(latest: Scan): string {
  * file present, sizes and dates matching — and saying so makes the ladder
  * legible: quick proves the shape, deep proves the bytes.
  */
+/**
+ * Extras, from the only check that can see them.
+ *
+ * `--delete` appears solely in the quick check, so a deep verify always reports
+ * `nExtra: 0` — not because the extras are gone, but because it never looked.
+ * Taking the count from whichever scan is newest therefore made a deep verify
+ * erase the knowledge that a destination held an extra file. This reads it from
+ * the most recent quick check, which is the only scan that asked.
+ */
+export function knownExtras(
+  state: State,
+  unit: string,
+  target: string,
+): { readonly count: number; readonly asOf: number } | null {
+  const quick = findScan(state, unit, target, "quick");
+  if (quick === undefined || quick.nExtra <= 0) return null;
+  return { count: quick.nExtra, asOf: quick.ts };
+}
+
 export function evidencePhrase(
   deep: Scan | undefined,
   last: Scan | undefined,
   now: number,
   fmt: { stamp: (ts: number) => string; ageAgo: (ts: number, now: number) => string },
+  extras?: number,
 ): string {
   if (last === undefined) return "never checked";
   const parts: string[] = [];
@@ -108,7 +135,9 @@ export function evidencePhrase(
       ? `deep verified ${fmt.stamp(deep.ts)}`
       : "bytes never read",
   );
-  if (last.nExtra > 0) parts.push(`${last.nExtra} extra at target`);
+  // Prefer the caller's count, which comes from the check that could see them.
+  const nExtra = extras ?? last.nExtra;
+  if (nExtra > 0) parts.push(`${nExtra} extra at destination`);
   return parts.join(" · ");
 }
 
@@ -158,7 +187,11 @@ export function cellState(input: CellInput): Cell {
   }
 
   // The most recent check came back clean. Now the two clocks.
-  const extra = { ...base, nExtra: latest.nExtra };
+  //
+  // `nExtra` comes from the input rather than from `latest`: a deep verify
+  // always reports zero, having no `--delete` to find them with, so reading it
+  // from whichever scan is newest made a deep check erase a known extra.
+  const extra = { ...base, nExtra: input.knownExtras ?? latest.nExtra };
 
   if (!sameFingerprint(latest.fingerprint, input.fingerprintNow)) {
     return { ...extra, state: "unverified", reason: "source changed since last check" };
@@ -239,6 +272,11 @@ export function evaluateUnit(
       now,
       maxVerifyAgeDays: config.maxVerifyAgeDays,
       maxQuickAgeDays: config.maxQuickAgeDays,
+      // A deep verify carries no --delete and always reports zero extras,
+      // so the count comes from the quick check that could actually see them.
+      ...(knownExtras(state, ev.unit, target.name) === null
+        ? {}
+        : { knownExtras: knownExtras(state, ev.unit, target.name)!.count }),
     };
     return cellState(input);
   });
