@@ -1,0 +1,7 @@
+node_modules/
+syncy
+*.log
+.test-tmp/
+*.bun-build
+testdata/
+.impeccable.md

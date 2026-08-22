@@ -1,0 +1,5 @@
+# Containment: every test run redirects syncy's XDG directories into the
+# project before a single test file loads. Without this, one test that forgot
+# to override them would write into ~/.config/syncy and ~/.local/state/syncy.
+[test]
+preload = ["./test/preload.ts"]

@@ -1,0 +1,26 @@
+{
+  "name": "syncy",
+  "version": "0.1.0",
+  "description": "A replication ledger for rsync: know which folders are provably on every drive you keep them on.",
+  "author": "Jeremy Ung",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "test": "bun test",
+    "build": "bun build --compile --minify --target=bun-darwin-arm64 src/cli.ts --outfile syncy",
+    "testdata": "bun run scripts/testdata.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "@types/react": "^19.2.18",
+    "ink-testing-library": "^4.0.0",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "react": "^19.2.8",
+    "react-devtools-core": "^7.0.1"
+  }
+}
