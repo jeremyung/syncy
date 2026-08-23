@@ -33,7 +33,17 @@ export interface RunProgress {
   readonly total: number;
   readonly bytesDone: number;
   readonly bytesTotal: number;
+  /** When this run of checks began — the whole batch, not this one folder. */
   readonly startedAt: number;
+  /**
+   * When THIS job began.
+   *
+   * Distinct from `startedAt` on purpose: `priorMs` estimates one folder, and
+   * measuring it against how long the whole run has been going pinned the bar
+   * near 100% from partway through the second folder onward (see the doc
+   * comment on `barFraction`). This is what the estimate is actually for.
+   */
+  readonly jobStartedAt: number;
   /** Files rsync has reported finishing. Often stays 0 for a whole deep run. */
   readonly filesSeen?: number;
   readonly filesTotal?: number;
@@ -73,6 +83,17 @@ const QUIET_GRACE_MS = 4000;
  * Preferring the previous duration over completed-folder bytes matters most in
  * the single-folder case, where the byte fraction is 0% for the entire run and
  * then 100% — which is not progress, it is a light that turns on at the end.
+ *
+ * MEASURED, before the blend below existed: `priorMs` estimates one job, but
+ * this was comparing it against `now - startedAt` — elapsed time for the
+ * *whole run*. Five folders, each ~60s and each estimated at 60s: 10s into
+ * folder 1 read 17%, 50s into folder 1 read 83%, then 10s into folder 2 read
+ * 99% — because 70s of run time against a 60s estimate is already past
+ * 100%, capped. Every folder from the second one on read 99% for its entire
+ * duration; a bar frozen near full for most of an hour is the same complaint
+ * as one frozen at zero. The fix blends what has actually completed
+ * (`bytesDone`, real across the whole run) with how far the *current* job has
+ * gotten against its own estimate (`jobStartedAt`, not `startedAt`).
  */
 export function barFraction(p: RunProgress, now: number): {
   readonly fraction: number;
@@ -88,10 +109,18 @@ export function barFraction(p: RunProgress, now: number): {
   readonly drawable: boolean;
 } {
   if (p.priorMs !== undefined && p.priorMs > 0) {
+    // How far the current job alone has gotten against its own estimate.
+    const inJob = Math.min(1, (now - p.jobStartedAt) / p.priorMs);
+    // Blended with the bytes other jobs in this run have actually finished,
+    // so the bar reflects the whole run rather than repeating one folder's
+    // progress five times. bytesTotal <= 0 has nothing to divide by — one
+    // folder's own fraction is the only thing left to show.
+    const fraction =
+      p.bytesTotal > 0 ? (p.bytesDone + inJob * (p.unitBytes ?? 0)) / p.bytesTotal : inJob;
     // Capped just short of full: claiming 100% while it is still running is the
     // one thing a progress bar must never do.
     return {
-      fraction: Math.min(0.99, (now - p.startedAt) / p.priorMs),
+      fraction: Math.min(0.99, fraction),
       estimated: true,
       drawable: true,
     };

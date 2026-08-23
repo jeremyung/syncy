@@ -26,6 +26,7 @@ const USAGE = `syncy — replication ledger
   syncy verify [unit]       deep verify (checksum) against every target
   syncy doctor              check the rsync build and target reachability
   syncy init                write a starter config
+  syncy adopt <path>        write a sentinel to a target
 
 Configuration lives at ${configFile()}.
 State, logs and history live in ${stateDir()}.
@@ -82,7 +83,7 @@ async function cmdCheck(config: Config, mode: "quick" | "deep", only: string | u
         continue;
       }
       process.stdout.write(`  ${unit} → ${target.name}: ${mode}…`);
-      const { scan, argv } = await checkUnit(config, unit, target, mode, { fingerprint: fp });
+      const { scan, argv, exitCode } = await checkUnit(config, unit, target, mode, { fingerprint: fp });
       state = upsertScan(state, scan);
       saveState(state);
       appendHistory({
@@ -90,7 +91,7 @@ async function cmdCheck(config: Config, mode: "quick" | "deep", only: string | u
         unit,
         target: target.name,
         argv,
-        exitCode: scan.outcome === "error" ? 1 : 0,
+        exitCode,
       });
       const detail =
         scan.outcome === "clean"
@@ -122,7 +123,10 @@ async function cmdDoctor(config: Config): Promise<void> {
         "  recorded for it — a different volume mounted at that path, or the\n" +
         "  directory recreated since it was added. syncy refuses to write to it.\n" +
         "  If the path is genuinely the right one, remove and re-add the target\n" +
-        "  in setup, which registers the id that is actually there.\n",
+        "  in setup. That registers the id that is actually there rather than\n" +
+        "  silently inheriting the old volume's history: every unit re-added\n" +
+        "  this way reads unchecked until it is checked again, which costs a\n" +
+        "  fresh quick check at minimum and a deep verify to reach verified.\n",
     );
   }
   process.stdout.write(`  state        ${stateFile()}\n`);
@@ -147,7 +151,7 @@ min_targets         = 1   # every configured target must verify regardless
 # name     = "ext"
 # path     = "/Volumes/Archive/photos"
 # required = true
-# sentinel = "run 'syncy doctor' after adding, then paste the written id"
+# sentinel = "run 'syncy adopt <path>' to write the id here"
 `,
     "utf8",
   );

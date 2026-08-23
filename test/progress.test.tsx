@@ -23,6 +23,7 @@ const base: RunProgress = {
   bytesDone: 0,
   bytesTotal: 13_000_000_000,
   startedAt: NOW,
+  jobStartedAt: NOW,
   filesTotal: 935,
   unitBytes: 13_000_000_000,
 };
@@ -97,6 +98,73 @@ describe("the bar is measured against something real", () => {
     const f = barFraction({ ...base, done: 1, total: 4, bytesDone: 6_500_000_000 }, NOW + 1000);
     expect(f.estimated).toBe(false);
     expect(f.fraction).toBeCloseTo(0.5, 1);
+  });
+});
+
+describe("the bar reflects the whole run, not one folder repeated", () => {
+  /**
+   * REPRODUCED on a real run: five folders, each ~60s and each estimated at
+   * 60s. `barFraction` measured `now - startedAt` — elapsed time for the
+   * *whole run* — against `priorMs`, an estimate for one job. Measured
+   * fractions before the fix: 10s into folder 1, 17%; 50s into folder 1,
+   * 83%; 10s into folder 2, 99%; 10s into folder 4, still 99%. Once the run
+   * had gone on longer than a single job's estimate, the bar pinned at the
+   * 0.99 cap and stayed there for the rest of the run — a bar frozen near
+   * full for most of an hour is the same complaint as one frozen at zero.
+   */
+  const unitSize = 12_000_000_000;
+  const jobs = 5;
+  const priorMs = 60_000;
+  const runStart = NOW;
+
+  // Job `i` (0-indexed) is estimated to run from runStart + i*priorMs to
+  // runStart + (i+1)*priorMs, exactly matching the measured real run above.
+  const progressFor = (i: number): RunProgress => ({
+    ...base,
+    done: i,
+    total: jobs,
+    bytesDone: i * unitSize,
+    bytesTotal: jobs * unitSize,
+    startedAt: runStart,
+    jobStartedAt: runStart + i * priorMs,
+    unitBytes: unitSize,
+    priorMs,
+  });
+  const fractionAt = (jobIndex: number, intoJobMs: number): number =>
+    barFraction(progressFor(jobIndex), runStart + jobIndex * priorMs + intoJobMs).fraction;
+
+  test("the old formula's exact pathology does not reproduce", () => {
+    // Before the fix, every one of these read 0.99 — the old formula only
+    // ever looked at elapsed-since-run-start against a single job's estimate.
+    expect(fractionAt(1, 10_000)).toBeLessThan(0.99);
+    expect(fractionAt(3, 10_000)).toBeLessThan(0.99);
+  });
+
+  test("the bar keeps climbing deep into the run instead of pinning early", () => {
+    const tenIntoFolder1 = fractionAt(0, 10_000);
+    const tenIntoFolder2 = fractionAt(1, 10_000);
+    const tenIntoFolder4 = fractionAt(3, 10_000);
+    // Each later folder starts from more completed bytes than the last, so
+    // the reading rises across the run rather than sitting still once
+    // pinned.
+    expect(tenIntoFolder2).toBeGreaterThan(tenIntoFolder1);
+    expect(tenIntoFolder4).toBeGreaterThan(tenIntoFolder2);
+  });
+
+  test("ten seconds into folder 2 reflects one folder done, not the whole run's clock", () => {
+    // One folder complete (1/5 = 20%) plus a sliver of the second
+    // (10s of 60s ≈ 3.3% of one fifth) — nowhere near the 99% the old
+    // now-minus-startedAt formula produced at this same instant.
+    const f = fractionAt(1, 10_000);
+    expect(f).toBeGreaterThan(0.2);
+    expect(f).toBeLessThan(0.3);
+  });
+
+  test("ten seconds into folder 4 reflects three folders done", () => {
+    // 3/5 = 60% plus a sliver of the fourth.
+    const f = fractionAt(3, 10_000);
+    expect(f).toBeGreaterThan(0.6);
+    expect(f).toBeLessThan(0.7);
   });
 });
 

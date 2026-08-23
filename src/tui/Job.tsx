@@ -1,7 +1,8 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Config, Target } from "../config.ts";
 import { bytes, count } from "../format.ts";
+import { PARTIAL_DIR } from "../rsync.ts";
 import { startSync, type SyncHandle, type SyncResult } from "../sync.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
@@ -17,6 +18,9 @@ import type { Theme } from "./theme.ts";
 
 const FLUSH_MS = 50;
 
+/** How long a refused keypress stays on screen, matching App.tsx's notice. */
+const NOTICE_MS = 3000;
+
 export interface JobProps {
   readonly config: Config;
   readonly unit: string;
@@ -29,16 +33,37 @@ export interface JobProps {
   readonly height?: number;
   readonly onDone: (result: SyncResult) => void;
   readonly onClose: () => void;
+  /** Not used by the app; lets tests point this screen at a controllable stand-in for rsync. */
+  readonly bin?: string;
 }
 
 export function Job(props: JobProps): React.ReactElement {
   const { config, unit, target, theme, width, height } = props;
   const [lines, setLines] = useState<string[]>([]);
   const [done, setDone] = useState<SyncResult | null>(null);
+  // Set on the first ctrl-c so the footer can say a second press is what
+  // quits — App.tsx eats that first press too and lets this screen act on
+  // it alone; a discoverable "again to quit" beats the user having to guess.
+  const [cancelling, setCancelling] = useState(false);
   const [started] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
   const handle = useRef<SyncHandle | null>(null);
   const pending = useRef<string[]>([]);
+
+  /**
+   * A keypress refused rather than acted on, so the refusal is visible instead
+   * of silent — the same vocabulary App.tsx's ledger uses for a refused key.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showNotice = useCallback((text: string) => {
+    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
+    setNotice(text);
+    noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS);
+  }, []);
+  useEffect(() => () => {
+    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
+  }, []);
 
   // The log pane grows with the window rather than being capped at six lines.
   const tail = Math.max(4, (height ?? 24) - 14);
@@ -61,6 +86,7 @@ export function Job(props: JobProps): React.ReactElement {
       const h = startSync(config, unit, target, {
         onLine: (line) => pending.current.push(line),
         ...(props.needsChecksum === true ? { checksum: true } : {}),
+        ...(props.bin !== undefined ? { bin: props.bin } : {}),
       });
       handle.current = h;
       h.done
@@ -86,15 +112,26 @@ export function Job(props: JobProps): React.ReactElement {
       clearInterval(flush);
       clearInterval(ticker);
     };
-  }, [config, unit, target.name, tail]);
+  }, [config, unit, target.name, tail, props.bin]);
 
   useInput((input, key) => {
     if (done !== null) {
       if (key.escape || key.return || input === "q") props.onClose();
       return;
     }
-    if (key.ctrl && input === "c") handle.current?.cancel();
-    if (key.escape) props.onClose();
+    if (key.ctrl && input === "c") {
+      setCancelling(true);
+      handle.current?.cancel();
+      return;
+    }
+    // esc used to close this screen while a transfer was in flight: the
+    // screen unmounted, `live` went false, and the rsync child kept writing to
+    // the destination with nothing attached to it — onDone never fired
+    // because it is guarded on `live`, and App.tsx unlocked [s]/[q] as soon as
+    // the screen closed, so a second sync could start against the same tree
+    // the first one was still writing to. esc is a reflex key; refuse out
+    // loud instead of cancelling a long transfer by reflex.
+    if (key.escape) showNotice("[esc] ignored — [ctrl-c] cancels this transfer");
   });
 
   const W = width;
@@ -105,7 +142,12 @@ export function Job(props: JobProps): React.ReactElement {
     done === null ? (
       <Box flexDirection="column">
         <Rule width={W} theme={theme} />
-        <Text color={theme.unverified}>{"  running · [ctrl-c] cancel"}</Text>
+        <Text color={theme.unverified}>
+          {cancelling ? "  cancelling… · [ctrl-c] again to quit" : "  running · [ctrl-c] cancel"}
+        </Text>
+        {notice == null ? null : (
+          <Text color={theme.missing}>{"  " + truncate(notice, W - 2)}</Text>
+        )}
       </Box>
     ) : (
       <Box flexDirection="column">
@@ -116,7 +158,13 @@ export function Job(props: JobProps): React.ReactElement {
           }
         >
           {done.cancelled
-            ? `  cancelled after ${count(done.transferred)} files — nothing partial was left behind`
+            ? // --partial-dir quarantines the fragment out of the archive's
+              // namespace instead of leaving it at its final name (see the
+              // comment at src/rsync.ts:~98) so rsync can resume it — it is
+              // kept, not discarded, and saying "nothing partial was left
+              // behind" tells a user who later finds .syncy-partial that it
+              // should not exist.
+              `  cancelled after ${count(done.transferred)} files — any part-transferred file is held in ${PARTIAL_DIR}, not at its final name`
             : done.exitCode === 0
               ? `  done · ${count(done.transferred)} files transferred`
               : `  failed · exit ${String(done.exitCode)}`}

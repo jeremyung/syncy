@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PROJECT_ROOT } from "./helpers.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import { appendHistory, EMPTY_STATE, findScan, latestScan, loadState, saveState, upsertScan, type Scan, estimateMs, type State } from "../src/state.ts";
@@ -72,21 +72,77 @@ describe("persistence", () => {
   });
 });
 
+describe("a malformed scan is dropped, not trusted and not fatal", () => {
+  /**
+   * `loadState` used to hand back `obj["scans"] as Scan[]` unchecked — a scan
+   * missing `fingerprint` type-checked at compile time and then threw inside
+   * `estimateMs` mid-render, and a hand-edited record claiming
+   * `{"method":"deep","outcome":"clean"}` was believed with no basis at all.
+   * A corrupt record must cost a re-check, never a program that will not
+   * start, so a bad entry is dropped rather than thrown.
+   */
+  test("a scan missing its fingerprint is dropped; a good sibling still loads", () => {
+    const file = join(dir, "state.json");
+    const good = scan({ unit: "photos/2019" });
+    const { fingerprint: _drop, ...bad } = scan({ unit: "photos/2020" });
+    writeFileSync(file, JSON.stringify({ version: 1, scans: [good, bad] }));
+    const loaded = loadState(file);
+    expect(loaded.scans).toHaveLength(1);
+    expect(loaded.scans[0]?.unit).toBe("photos/2019");
+  });
+
+  test("the drop is reported through debug(), not silently discarded", async () => {
+    const prevDebug = process.env["SYNCY_DEBUG"];
+    const prevState = process.env["XDG_STATE_HOME"];
+    const logDir = makeFixtureDir("syncy-state-log");
+    process.env["SYNCY_DEBUG"] = "1";
+    process.env["XDG_STATE_HOME"] = logDir;
+    try {
+      const { debugLogPath } = await import("../src/log.ts");
+      const file = join(dir, "state.json");
+      const { fingerprint: _drop, ...bad } = scan({ unit: "photos/2020" });
+      writeFileSync(file, JSON.stringify({ version: 1, scans: [bad] }));
+      loadState(file);
+      const log = readFileSync(debugLogPath(), "utf8");
+      expect(log).toContain("state.scan.dropped");
+      expect(log).toContain("fingerprint");
+    } finally {
+      if (prevDebug === undefined) delete process.env["SYNCY_DEBUG"];
+      else process.env["SYNCY_DEBUG"] = prevDebug;
+      if (prevState === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = prevState;
+      removeFixtureDir(logDir);
+    }
+  });
+
+  test("malformed JSON still throws — only per-scan validation degrades", () => {
+    const file = join(dir, "state.json");
+    writeFileSync(file, "{not json");
+    expect(() => loadState(file)).toThrow(/corrupt/);
+  });
+
+  test("a wrong version still throws — only per-scan validation degrades", () => {
+    const file = join(dir, "state.json");
+    writeFileSync(file, JSON.stringify({ version: 2, scans: [scan()] }));
+    expect(() => loadState(file)).toThrow(/unsupported state version/);
+  });
+});
+
 describe("scans are keyed by unit, target AND method", () => {
   test("a quick check does not evict the deep verify", () => {
     // The two-clock rule depends on both records coexisting.
     let s = upsertScan(EMPTY_STATE, scan({ method: "deep", ts: 1000 }));
     s = upsertScan(s, scan({ method: "quick", ts: 2000 }));
     expect(s.scans).toHaveLength(2);
-    expect(findScan(s, "photos/2019", "nas", "deep")!.ts).toBe(1000);
-    expect(findScan(s, "photos/2019", "nas", "quick")!.ts).toBe(2000);
+    expect(findScan(s, "photos/2019", "nas", "deep", "s")!.ts).toBe(1000);
+    expect(findScan(s, "photos/2019", "nas", "quick", "s")!.ts).toBe(2000);
   });
 
   test("re-running the same method replaces its record", () => {
     let s = upsertScan(EMPTY_STATE, scan({ method: "deep", ts: 1000 }));
     s = upsertScan(s, scan({ method: "deep", ts: 5000 }));
     expect(s.scans).toHaveLength(1);
-    expect(findScan(s, "photos/2019", "nas", "deep")!.ts).toBe(5000);
+    expect(findScan(s, "photos/2019", "nas", "deep", "s")!.ts).toBe(5000);
   });
 
   test("different targets are independent", () => {
@@ -98,14 +154,52 @@ describe("scans are keyed by unit, target AND method", () => {
   test("latestScan picks the most recent of either method", () => {
     let s = upsertScan(EMPTY_STATE, scan({ method: "deep", ts: 1000 }));
     s = upsertScan(s, scan({ method: "quick", ts: 9000 }));
-    expect(latestScan(s, "photos/2019", "nas")!.method).toBe("quick");
+    expect(latestScan(s, "photos/2019", "nas", "s")!.method).toBe("quick");
   });
 
   test("latestScan ignores other units", () => {
     let s = upsertScan(EMPTY_STATE, scan({ unit: "a", ts: 9000 }));
     s = upsertScan(s, scan({ unit: "b", ts: 1000 }));
-    expect(latestScan(s, "b", "nas")!.ts).toBe(1000);
+    expect(latestScan(s, "b", "nas", "s")!.ts).toBe(1000);
   });
+});
+
+describe("a scan is only evidence for the identity it was recorded against", () => {
+  /**
+   * `scan.sentinel` carries the identity of the volume the check actually ran
+   * against, but nothing ever compared it back — scans were matched by
+   * unit+target name alone. Remove a destination and add a different one
+   * under the same name, and the old volume's clean verdicts kept reading as
+   * evidence for the new one.
+   */
+  test("findScan ignores a scan recorded against a different identity", () => {
+    const s = upsertScan(EMPTY_STATE, scan({ sentinel: "VOLUME-A-UUID" }));
+    expect(findScan(s, "photos/2019", "nas", "deep", "VOLUME-B-UUID")).toBeUndefined();
+    expect(findScan(s, "photos/2019", "nas", "deep", "VOLUME-A-UUID")).toBeDefined();
+  });
+
+  test("latestScan ignores a scan recorded against a different identity", () => {
+    const s = upsertScan(EMPTY_STATE, scan({ sentinel: "VOLUME-A-UUID" }));
+    expect(latestScan(s, "photos/2019", "nas", "VOLUME-B-UUID")).toBeUndefined();
+    expect(latestScan(s, "photos/2019", "nas", "VOLUME-A-UUID")).toBeDefined();
+  });
+
+  test("an empty recorded identity never matches, even an empty requested one", () => {
+    // Absence of provenance is not evidence — a record with nothing written
+    // for its identity must not be treated as satisfying a lookup for "",
+    // which is what a target with neither identity nor sentinel would resolve
+    // to.
+    const s = upsertScan(EMPTY_STATE, scan({ sentinel: "" }));
+    expect(findScan(s, "photos/2019", "nas", "deep", "")).toBeUndefined();
+  });
+
+  // `identity` used to be optional here, so a caller that forgot to resolve
+  // one silently got unfiltered matching — exactly the gap that let the
+  // interactive Ledger keep showing a foreign volume's evidence after
+  // evaluateUnit and the printed ledger were both fixed. It is a required
+  // parameter now: a caller that omits it fails to compile, which is not
+  // something this runtime suite can assert directly, but every call site
+  // above and in status.ts/render.ts/Ledger.tsx passes one.
 });
 
 describe("history", () => {

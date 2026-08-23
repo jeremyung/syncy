@@ -1,7 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { join } from "node:path";
 import type { Config, Target } from "../config.ts";
-import { buildArgv, DEFAULT_RSYNC, type Mode } from "../rsync.ts";
+import { argvFor, DEFAULT_RSYNC, type Mode } from "../rsync.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
 import type { Theme } from "./theme.ts";
@@ -13,9 +13,12 @@ import type { Theme } from "./theme.ts";
  * every target unless one of them drops a metadata flag, so repeating all three
  * commands per target was noise that buried the one thing worth reading.
  *
- * The commands come from the same `buildArgv` the executor calls, so this
+ * The commands come from the same `argvFor` the executor calls, so this
  * cannot drift from what happens — a screen describing them in prose would
- * eventually lie.
+ * eventually lie. That includes the checksum flag: a repair sync (started
+ * when a deep verify found drift by content) runs with `-c`, and this screen
+ * has to show `-c` for exactly the targets that would get it, or the promise
+ * is only half true.
  */
 
 export interface PlanProps {
@@ -27,6 +30,12 @@ export interface PlanProps {
   readonly onClose: () => void;
   /** Called with the whole plan as text, for the clipboard. */
   readonly onCopy: (text: string) => void;
+  /**
+   * Targets whose most recent deep verify found drift by content rather than
+   * by size or date — so a sync to them runs with `-c`, the same as
+   * Confirm's `needsChecksum`.
+   */
+  readonly needsChecksum?: ReadonlySet<string>;
 }
 
 interface ModeInfo {
@@ -69,18 +78,24 @@ const MODES: readonly ModeInfo[] = [
   },
 ];
 
+/** Whether `target`'s sync needs `-c`, per the same rule Confirm and Job use. */
+function checksumFor(target: Target, needsChecksum: ReadonlySet<string> | undefined): boolean {
+  return needsChecksum?.has(target.name) === true;
+}
+
 /** The plan as plain text, for the clipboard and for tests. */
-export function planText(config: Config, unit: string, bin = DEFAULT_RSYNC): string {
+export function planText(
+  config: Config,
+  unit: string,
+  needsChecksum?: ReadonlySet<string>,
+  bin = DEFAULT_RSYNC,
+): string {
   const lines: string[] = [`# syncy — commands for ${unit}`, ""];
   for (const t of config.targets) {
     lines.push(`# target: ${t.name}`);
     for (const m of MODES) {
-      const argv = buildArgv(
-        m.mode,
-        join(config.source, unit),
-        { ...t, path: join(t.path, unit) },
-        config.exclude,
-      );
+      const opts = m.mode === "sync" && checksumFor(t, needsChecksum) ? { checksum: true } : {};
+      const argv = argvFor(config, unit, t, m.mode, opts);
       lines.push(`# ${m.title}${m.writes ? " — WRITES to the destination" : " — writes nothing"}`);
       lines.push(`${bin} ${argv.join(" ")}`);
       lines.push("");
@@ -90,23 +105,35 @@ export function planText(config: Config, unit: string, bin = DEFAULT_RSYNC): str
 }
 
 /** Flags only, without the two path arguments. */
-function flagsFor(config: Config, unit: string, target: Target, mode: Mode): string {
-  return buildArgv(mode, join(config.source, unit), { ...target, path: join(target.path, unit) }, config.exclude)
-    .slice(0, -2)
-    .join(" ");
+function flagsFor(
+  config: Config,
+  unit: string,
+  target: Target,
+  mode: Mode,
+  needsChecksum?: ReadonlySet<string>,
+): string {
+  const opts = mode === "sync" && checksumFor(target, needsChecksum) ? { checksum: true } : {};
+  return argvFor(config, unit, target, mode, opts).slice(0, -2).join(" ");
 }
 
 /** Targets whose flags differ from the first one's, and how. */
-export function deviations(config: Config, unit: string): { name: string; why: string }[] {
+export function deviations(
+  config: Config,
+  unit: string,
+  needsChecksum?: ReadonlySet<string>,
+): { name: string; why: string }[] {
   const first = config.targets[0];
   if (first === undefined) return [];
   const out: { name: string; why: string }[] = [];
   for (const t of config.targets.slice(1)) {
-    const differs = MODES.some((m) => flagsFor(config, unit, t, m.mode) !== flagsFor(config, unit, first, m.mode));
+    const differs = MODES.some(
+      (m) => flagsFor(config, unit, t, m.mode, needsChecksum) !== flagsFor(config, unit, first, m.mode, needsChecksum),
+    );
     if (!differs) continue;
     const why = [
       t.flagsDrop.length > 0 ? `dropping ${t.flagsDrop.join(" ")}` : "",
       t.modifyWindow > 0 ? `--modify-window=${t.modifyWindow}` : "",
+      checksumFor(t, needsChecksum) !== checksumFor(first, needsChecksum) ? "checksum repair" : "",
     ]
       .filter((s) => s !== "")
       .join(" · ");
@@ -116,16 +143,16 @@ export function deviations(config: Config, unit: string): { name: string; why: s
 }
 
 export function Plan(props: PlanProps): React.ReactElement {
-  const { config, unit, theme, width, height, onClose } = props;
+  const { config, unit, theme, width, height, onClose, needsChecksum } = props;
 
   useInput((input, key) => {
     if (key.escape || input === "q" || input === "p") return onClose();
-    if (input === "c") props.onCopy(planText(config, unit));
+    if (input === "c") props.onCopy(planText(config, unit, needsChecksum));
   });
 
   const W = width;
   const first = config.targets[0];
-  const differing = deviations(config, unit);
+  const differing = deviations(config, unit, needsChecksum);
 
   return (
     <Screen
@@ -162,9 +189,20 @@ export function Plan(props: PlanProps): React.ReactElement {
                 <Text color={theme.dim}>{truncate(m.cost, Math.max(10, W - 32))}</Text>
               </Box>
               <Text color={theme.ink}>
-                {"       " + truncate(`${DEFAULT_RSYNC} ${flagsFor(config, unit, first, m.mode)}`, W - 7)}
+                {"       " +
+                  truncate(`${DEFAULT_RSYNC} ${flagsFor(config, unit, first, m.mode, needsChecksum)}`, W - 7)}
               </Text>
               {m.note === undefined ? null : <Note text={m.note} theme={theme} width={W} />}
+              {m.mode === "sync" && checksumFor(first, needsChecksum) ? (
+                <Note
+                  text={
+                    `${first.name}'s last deep verify found drift by content, so this sync compares by ` +
+                    "checksum (-c) — slower, and the only way that repairs it."
+                  }
+                  theme={theme}
+                  width={W}
+                />
+              ) : null}
               <Text> </Text>
             </Box>
           ))}

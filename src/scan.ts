@@ -4,7 +4,7 @@ import type { Config, Target } from "./config.ts";
 import { fingerprint, type Fingerprint } from "./fingerprint.ts";
 import { parseItemizeLine, summarize, type Item } from "./itemize.ts";
 import { logDir } from "./paths.ts";
-import { buildArgv, runRsync, type Mode } from "./rsync.ts";
+import { argvFor, runRsync, type Mode } from "./rsync.ts";
 import { checkSentinel, type SentinelStatus } from "./sentinel.ts";
 import { checkVolume } from "./volume.ts";
 import type { Method, Scan } from "./state.ts";
@@ -72,6 +72,16 @@ export interface CheckResult {
   readonly targetFingerprint: Fingerprint | null;
   /** The literal argv that ran, so history records what happened, not a guess. */
   readonly argv: readonly string[];
+  /**
+   * The exit code rsync actually returned, not syncy's own verdict about it.
+   *
+   * `null` when no rsync invocation happened at all — the "missing" outcome,
+   * where the destination folder does not exist and nothing is spawned. Never
+   * synthesized from `outcome`: history.jsonl claims to record "every rsync
+   * invocation, with literal argv and exit code", and a code invented from the
+   * verdict is not that.
+   */
+  readonly exitCode: number | null;
 }
 
 export interface CheckOptions {
@@ -112,10 +122,11 @@ export async function checkUnit(
       items: [],
       argv: [],
       targetFingerprint: null,
+      exitCode: null,
     };
   }
 
-  const argv = buildArgv(mode, join(config.source, unit), { ...target, path: join(target.path, unit) }, config.exclude);
+  const argv = argvFor(config, unit, target, mode);
   const items: Item[] = [];
   // Counted as we go rather than by filtering `items` on every line: that
   // filter was O(n) per line, so a 40,000-file folder spent 800 million
@@ -133,12 +144,21 @@ export async function checkUnit(
     },
   });
 
-  if (result.exitCode !== 0) {
+  // Exit 24 ("some files vanished before they could be transferred") is
+  // routine on a live archive — a file lands or moves while rsync is mid-walk
+  // — and does not mean the check found anything wrong. Counting it as an
+  // error made a perfectly healthy folder read as broken on any check that
+  // raced an ordinary write, and buried the codes that do matter, like 23
+  // (partial transfer), under noise that fired constantly. 24 falls through
+  // to the normal summarize path below; every other non-zero code is still
+  // an error.
+  if (result.exitCode !== 0 && result.exitCode !== 24) {
     return {
       scan: { ...base, outcome: "error", nChanges: 0, nExtra: 0, bytesPending: 0 },
       items,
       argv,
       targetFingerprint: null,
+      exitCode: result.exitCode,
     };
   }
 
@@ -160,6 +180,7 @@ export async function checkUnit(
     items,
     argv,
     targetFingerprint,
+    exitCode: result.exitCode,
   };
 }
 

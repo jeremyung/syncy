@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Fingerprint } from "./fingerprint.ts";
+import { debug } from "./log.ts";
 import { historyFile, stateFile } from "./paths.ts";
 
 /**
@@ -56,6 +57,76 @@ export interface State {
 
 export const EMPTY_STATE: State = { version: 1, scans: [] };
 
+/**
+ * Validates one scan record loaded from disk, in the same hand-rolled style as
+ * `parseConfig` (DESIGN.md §1, src/config.ts): every field checked, nothing
+ * trusted just because it type-checked in a `.json` file that anyone can hand
+ * edit or half-restore from a backup.
+ *
+ * Returns the reason as a string on failure rather than throwing — `loadState`
+ * drops a bad record instead of raising, so the caller needs the reason for a
+ * debug line, not an exception to catch.
+ */
+function validateScan(raw: unknown): Scan | string {
+  if (typeof raw !== "object" || raw === null) return "not an object";
+  const o = raw as Record<string, unknown>;
+
+  const unit = o["unit"];
+  const target = o["target"];
+  const ts = o["ts"];
+  const method = o["method"];
+  const outcome = o["outcome"];
+  const nChanges = o["nChanges"];
+  const nExtra = o["nExtra"];
+  const bytesPending = o["bytesPending"];
+  const sentinel = o["sentinel"];
+  const fingerprint = o["fingerprint"];
+  const nNew = o["nNew"];
+  const durationMs = o["durationMs"];
+  const log = o["log"];
+
+  if (typeof unit !== "string") return "unit is not a string";
+  if (typeof target !== "string") return "target is not a string";
+  if (typeof ts !== "number" || !Number.isFinite(ts)) return "ts is not a finite number";
+  if (method !== "quick" && method !== "deep") return `method is not "quick" or "deep"`;
+  if (outcome !== "clean" && outcome !== "behind" && outcome !== "missing" && outcome !== "error") {
+    return "outcome is not a recognised value";
+  }
+  if (typeof nChanges !== "number") return "nChanges is not a number";
+  if (typeof nExtra !== "number") return "nExtra is not a number";
+  if (typeof bytesPending !== "number") return "bytesPending is not a number";
+  if (typeof sentinel !== "string") return "sentinel is not a string";
+
+  if (typeof fingerprint !== "object" || fingerprint === null) return "fingerprint is not an object";
+  const fp = fingerprint as Record<string, unknown>;
+  const nfiles = fp["nfiles"];
+  const bytes = fp["bytes"];
+  const maxMtimeNs = fp["maxMtimeNs"];
+  if (typeof nfiles !== "number") return "fingerprint.nfiles is not a number";
+  if (typeof bytes !== "number") return "fingerprint.bytes is not a number";
+  if (typeof maxMtimeNs !== "string") return "fingerprint.maxMtimeNs is not a string";
+
+  if (nNew !== undefined && typeof nNew !== "number") return "nNew is not a number";
+  if (durationMs !== undefined && typeof durationMs !== "number") return "durationMs is not a number";
+  if (log !== undefined && typeof log !== "string") return "log is not a string";
+
+  return {
+    unit,
+    target,
+    ts,
+    method,
+    outcome,
+    nChanges,
+    nExtra,
+    bytesPending,
+    fingerprint: { nfiles, bytes, maxMtimeNs },
+    sentinel,
+    ...(nNew !== undefined ? { nNew } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(log !== undefined ? { log } : {}),
+  };
+}
+
 export function loadState(file: string = stateFile()): State {
   let text: string;
   try {
@@ -77,7 +148,23 @@ export function loadState(file: string = stateFile()): State {
   if (!Array.isArray(obj["scans"])) {
     throw new Error(`state file is corrupt (${file}): scans is not an array`);
   }
-  return { version: 1, scans: obj["scans"] as Scan[] };
+
+  // Per-scan validation degrades gracefully where the checks above do not: a
+  // corrupt individual record must cost a re-check, never a program that will
+  // not start — a state file syncy cannot open is the one failure with no way
+  // back in. Dropped records are reported through debug() rather than thrown
+  // or returned, because there is no UI channel out of loadState; this is
+  // deliberately quiet-but-recorded, not silent.
+  const scans: Scan[] = [];
+  (obj["scans"] as readonly unknown[]).forEach((entry, i) => {
+    const result = validateScan(entry);
+    if (typeof result === "string") {
+      debug("state.scan.dropped", { file, index: i, reason: result });
+      return;
+    }
+    scans.push(result);
+  });
+  return { version: 1, scans };
 }
 
 /**
@@ -124,20 +211,45 @@ export function upsertScan(state: State, scan: Scan): State {
   return { version: 1, scans: next };
 }
 
+/**
+ * Whether a recorded scan is evidence for a target resolving to `identity`.
+ *
+ * A scan is written against whatever volume the check actually ran on
+ * (`scan.sentinel`), which was never compared back against anything — remove a
+ * destination and add a different one under the same name, and the old
+ * volume's clean verdicts were presented as evidence for the new one. An
+ * empty recorded identity is treated as NOT matching: absence of provenance is
+ * not evidence, so it can never satisfy a lookup.
+ *
+ * `identity` is required on every caller below (not optional, no default): an
+ * optional identity that silently fell back to unfiltered matching is what let
+ * the interactive Ledger keep showing a foreign volume's evidence after
+ * `evaluateUnit` and the printed ledger were both fixed — a caller that
+ * forgets to resolve one now fails to compile instead of quietly reading
+ * wrong.
+ */
+function matchesIdentity(s: Scan, identity: string): boolean {
+  return identity !== "" && s.sentinel === identity;
+}
+
 export function findScan(
   state: State,
   unit: string,
   target: string,
   method: Method,
+  identity: string,
 ): Scan | undefined {
-  return state.scans.find((s) => s.unit === unit && s.target === target && s.method === method);
+  return state.scans.find(
+    (s) => s.unit === unit && s.target === target && s.method === method && matchesIdentity(s, identity),
+  );
 }
 
 /** The most recent check of either method, which drives the cheap clock. */
-export function latestScan(state: State, unit: string, target: string): Scan | undefined {
+export function latestScan(state: State, unit: string, target: string, identity: string): Scan | undefined {
   let best: Scan | undefined;
   for (const s of state.scans) {
     if (s.unit !== unit || s.target !== target) continue;
+    if (!matchesIdentity(s, identity)) continue;
     if (best === undefined || s.ts > best.ts) best = s;
   }
   return best;
@@ -172,6 +284,12 @@ export function appendHistory(entry: HistoryEntry, file: string = historyFile())
  * deep verify reads them; an SMD share and a local disk differ by two orders of
  * magnitude. Averaging across any of those would produce a confident wrong
  * number, which is worse than no bar.
+ *
+ * Deliberately NOT filtered by identity, unlike `findScan`/`latestScan`: this
+ * estimates a destination's read throughput, not a verdict about a unit's
+ * files. A volume swapped in under the same target name has its own, unknown
+ * throughput, but the read speed of *some* drive at this target name is still
+ * the best available guess until a sample exists for the new one.
  */
 export function estimateMs(
   state: State,

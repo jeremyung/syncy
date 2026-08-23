@@ -46,17 +46,40 @@ export function parseMount(output: string): MountEntry[] {
   return entries;
 }
 
-/** The longest matching mount point wins, since mounts nest. */
-export function fstypeFor(path: string, entries: readonly MountEntry[]): string {
+/**
+ * The mount entry whose mount point is the longest prefix of `path` — the
+ * search `fstypeFor` and volume.ts's `mountFor` both need, since mounts nest
+ * and the deepest one that still contains `path` is the one that governs it.
+ *
+ * Lives here, in the dependency-free module, so both callers can share this
+ * one implementation without an import cycle (volume.ts already imports from
+ * here; the reverse would not compile).
+ *
+ * The length compared is the *normalised* prefix's — trailing slashes
+ * stripped — on both sides. Comparing it against a candidate's raw,
+ * unnormalised `mountPoint.length` was a latent bug: a mount point recorded
+ * with a trailing slash could then beat a longer, correct match by looking
+ * one character longer than it actually was.
+ */
+export function mountEntryFor(path: string, entries: readonly MountEntry[]): MountEntry | undefined {
   let best: MountEntry | undefined;
+  let bestPrefixLen = -1;
   for (const e of entries) {
     const point = e.mountPoint.endsWith("/") ? e.mountPoint.slice(0, -1) : e.mountPoint;
     const prefix = point === "" ? "/" : point;
     if (path === prefix || path.startsWith(prefix === "/" ? "/" : prefix + "/")) {
-      if (best === undefined || prefix.length > best.mountPoint.length) best = e;
+      if (prefix.length > bestPrefixLen) {
+        best = e;
+        bestPrefixLen = prefix.length;
+      }
     }
   }
-  return best?.fstype ?? "unknown";
+  return best;
+}
+
+/** The longest matching mount point wins, since mounts nest. */
+export function fstypeFor(path: string, entries: readonly MountEntry[]): string {
+  return mountEntryFor(path, entries)?.fstype ?? "unknown";
 }
 
 /**
@@ -67,15 +90,4 @@ export function modifyWindowFor(fstype: string): number {
   const f = fstype.toLowerCase();
   if (f.includes("exfat") || f.includes("msdos") || f.includes("fat")) return 2;
   return 0;
-}
-
-export async function detectFstype(path: string): Promise<string> {
-  try {
-    const proc = Bun.spawn(["/sbin/mount"], { stdout: "pipe", stderr: "pipe" });
-    const out = await new Response(proc.stdout).text();
-    await proc.exited;
-    return fstypeFor(path, parseMount(out));
-  } catch {
-    return "unknown";
-  }
 }

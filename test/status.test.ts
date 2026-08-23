@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Config, Target } from "../src/config.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import type { Scan, State } from "../src/state.ts";
-import { behindReason, cellState, evaluateUnit, rollUp, type Cell } from "../src/status.ts";
+import { behindReason, cellState, evaluateUnit, rollUp, type Cell, knownExtras, evidencePhrase } from "../src/status.ts";
 
 const NOW = Date.parse("2026-08-20T12:00:00Z");
 const DAY = 86_400_000;
@@ -158,6 +158,97 @@ describe("source changes invalidate at any age", () => {
   });
 });
 
+describe("cellState: staleRecords marks evidence made against a different volume", () => {
+  test("staleRecords overrides an otherwise-clean latest scan", () => {
+    // evaluateUnit sets staleRecords when it filtered out every scan for this
+    // unit+target because none matched the current identity; cellState must
+    // not fall through to reading `latest` as if it were fresh evidence.
+    const c = cell({ staleRecords: true, latest: undefined, deep: undefined, quick: undefined });
+    expect(c.state).toBe("unchecked");
+    expect(c.reason).toBe("the records here were made against a different volume");
+  });
+
+  test("staleRecords is distinct from never having been checked at all", () => {
+    const neverChecked = cell({ deep: undefined, quick: undefined, latest: undefined });
+    expect(neverChecked.reason).toBe("never checked");
+    const stale = cell({ staleRecords: true, deep: undefined, quick: undefined, latest: undefined });
+    expect(stale.reason).not.toBe("never checked");
+  });
+});
+
+describe("evaluateUnit refuses a record made against a different volume", () => {
+  /**
+   * The bug: `scan.sentinel` records the identity of the volume a check
+   * actually ran against, but nothing ever read it back — scans were matched
+   * to targets by name alone. Remove a destination and add a different one
+   * under the same name, and the old volume's clean deep verify was presented
+   * as evidence for the new one: `evaluateUnit` returned `verified` for a
+   * volume it had never checked.
+   */
+  const identityTarget = (name: string, identity: string): Target => ({
+    name,
+    path: `/Volumes/${name}`,
+    required: true,
+    identity,
+    fstype: "apfs",
+    modifyWindow: 0,
+    flagsDrop: [],
+  });
+
+  const config: Config = {
+    source: "/src",
+    maxVerifyAgeDays: 30,
+    maxQuickAgeDays: 7,
+    minTargets: 1,
+    exclude: [],
+    targets: [identityTarget("ext", "VOLUME-B-UUID")],
+  };
+
+  test("a clean deep scan recorded against the old volume is not evidence for the new one", () => {
+    const state: State = {
+      version: 1,
+      scans: [scan({ unit: "u", target: "ext", method: "deep", sentinel: "VOLUME-A-UUID" })],
+    };
+    const s = evaluateUnit(
+      config,
+      state,
+      { unit: "u", fingerprint: FP, sentinels: new Map([["ext", "ok"]]) },
+      NOW,
+    );
+    expect(s.state).toBe("unchecked");
+    expect(s.reason).toContain("different volume");
+  });
+
+  test("the happy path still verifies when the identity matches", () => {
+    const state: State = {
+      version: 1,
+      scans: [scan({ unit: "u", target: "ext", method: "deep", sentinel: "VOLUME-B-UUID" })],
+    };
+    const s = evaluateUnit(
+      config,
+      state,
+      { unit: "u", fingerprint: FP, sentinels: new Map([["ext", "ok"]]) },
+      NOW,
+    );
+    expect(s.state).toBe("verified");
+  });
+
+  test("a target proven by sentinel file rather than identity still works", () => {
+    const sentinelConfig: Config = { ...config, targets: [target("nas")] };
+    const state: State = {
+      version: 1,
+      scans: [scan({ unit: "u", target: "nas", method: "deep", sentinel: "sent-nas" })],
+    };
+    const s = evaluateUnit(
+      sentinelConfig,
+      state,
+      { unit: "u", fingerprint: FP, sentinels: new Map([["nas", "ok"]]) },
+      NOW,
+    );
+    expect(s.state).toBe("verified");
+  });
+});
+
 describe("unit roll-up precedence", () => {
   const mk = (targetName: string, state: Cell["state"]): Cell => ({
     target: targetName,
@@ -214,8 +305,8 @@ describe("evaluateUnit", () => {
 
   test("two verified targets clear the unit", () => {
     const state = stateWith([
-      scan({ unit: "u", target: "ext", method: "deep", ts: daysAgo(2) }),
-      scan({ unit: "u", target: "nas", method: "deep", ts: daysAgo(2) }),
+      scan({ unit: "u", target: "ext", method: "deep", ts: daysAgo(2), sentinel: "sent-ext" }),
+      scan({ unit: "u", target: "nas", method: "deep", ts: daysAgo(2), sentinel: "sent-nas" }),
     ]);
     const s = evaluateUnit(
       config,
@@ -244,8 +335,8 @@ describe("evaluateUnit", () => {
   test("min_targets is enforced independently of how many are configured", () => {
     const oneRequired: Config = { ...config, targets: [target("ext"), target("nas", false)] };
     const state = stateWith([
-      scan({ unit: "u", target: "ext", method: "deep", ts: daysAgo(2) }),
-      scan({ unit: "u", target: "nas", method: "deep", ts: daysAgo(2) }),
+      scan({ unit: "u", target: "ext", method: "deep", ts: daysAgo(2), sentinel: "sent-ext" }),
+      scan({ unit: "u", target: "nas", method: "deep", ts: daysAgo(2), sentinel: "sent-nas" }),
     ]);
     const s = evaluateUnit(
       oneRequired,
@@ -309,5 +400,95 @@ describe("behind says what the files actually are", () => {
 
   test("a record written before the breakdown existed falls back, not invents", () => {
     expect(behindReason(scan({}))).toBe("504 files pending");
+  });
+});
+
+describe("a deep verify must not erase a known extra", () => {
+  /**
+   * `--delete` appears only in the quick check, so a deep verify always reports
+   * `nExtra: 0` — not because the extras are gone, but because it never looked.
+   * Reading the count from whichever scan is newest therefore made running a
+   * deep check delete the knowledge that a destination held an extra file.
+   */
+  const fp = { nfiles: 801, bytes: 10e9, maxMtimeNs: "1" };
+  const scan = (over: Partial<Scan>): Scan => ({
+    unit: "maui", target: "external", ts: 1000, method: "quick", outcome: "clean",
+    nChanges: 0, nExtra: 0, bytesPending: 0, fingerprint: fp, sentinel: "s", ...over,
+  });
+
+  test("the quick check's count survives a later deep verify", () => {
+    const state: State = {
+      version: 1,
+      scans: [
+        scan({ method: "quick", ts: 1000, nExtra: 1 }),
+        scan({ method: "deep", ts: 2000, nExtra: 0 }),
+      ],
+    };
+    expect(knownExtras(state, "maui", "external", "s")?.count).toBe(1);
+  });
+
+  test("no quick check means nothing is claimed either way", () => {
+    const state: State = { version: 1, scans: [scan({ method: "deep", ts: 2000 })] };
+    expect(knownExtras(state, "maui", "external", "s")).toBeNull();
+  });
+
+  test("a quick check that found none reports none", () => {
+    const state: State = { version: 1, scans: [scan({ method: "quick", nExtra: 0 })] };
+    expect(knownExtras(state, "maui", "external", "s")).toBeNull();
+  });
+
+  test("the evidence line names them, and calls them a destination", () => {
+    const last = scan({ method: "deep", ts: 2000, nExtra: 0 });
+    const line = evidencePhrase(last, last, 3000, {
+      stamp: () => "22 aug", ageAgo: () => "today",
+    }, 1);
+    expect(line).toContain("1 extra at destination");
+  });
+
+  test("extras still never block verified", () => {
+    // They cannot endanger source data, so they are reported and not counted
+    // against the verdict (DESIGN.md section 3).
+    const line = evidencePhrase(scan({ method: "deep" }), scan({ method: "deep" }), 3000, {
+      stamp: () => "22 aug", ageAgo: () => "today",
+    }, 4);
+    expect(line).toContain("deep verified");
+  });
+
+  test("a deep check reporting behind still carries a known extra", () => {
+    // REPRODUCED: only the clean path read `input.knownExtras`; the "behind"
+    // branch read `latest.nExtra` directly, so a deep check that itemised the
+    // unit as behind reported 0 extras even though a quick check had found 5.
+    const behindDeep = scan({ method: "deep", ts: 2000, outcome: "behind", nChanges: 3, nExtra: 0 });
+    const c = cellState({
+      target: target("nas"),
+      sentinel: "ok",
+      fingerprintNow: FP,
+      deep: undefined,
+      quick: scan({ method: "quick", ts: 1000 }),
+      latest: behindDeep,
+      now: NOW,
+      maxVerifyAgeDays: 30,
+      maxQuickAgeDays: 7,
+      knownExtras: 5,
+    });
+    expect(c.state).toBe("behind");
+    expect(c.nExtra).toBe(5);
+  });
+
+  test("an error outcome still carries a known extra", () => {
+    const c = cellState({
+      target: target("nas"),
+      sentinel: "ok",
+      fingerprintNow: FP,
+      deep: undefined,
+      quick: scan({ method: "quick", ts: 1000 }),
+      latest: scan({ method: "deep", ts: 2000, outcome: "error", nExtra: 0 }),
+      now: NOW,
+      maxVerifyAgeDays: 30,
+      maxQuickAgeDays: 7,
+      knownExtras: 5,
+    });
+    expect(c.state).toBe("error");
+    expect(c.nExtra).toBe(5);
   });
 });

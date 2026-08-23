@@ -163,16 +163,37 @@ export function saveDiff(diff: Diff, dir: string = diffDir()): void {
   renameSync(tmp, file);
 }
 
+/** True when a raw JSON value has every field `buildDiff` puts on a `DiffEntry`. */
+function isValidEntry(raw: unknown): raw is DiffEntry {
+  if (typeof raw !== "object" || raw === null) return false;
+  const o = raw as Record<string, unknown>;
+  return (
+    (o["kind"] === "new" || o["kind"] === "changed" || o["kind"] === "metadata" || o["kind"] === "extra") &&
+    typeof o["name"] === "string" &&
+    typeof o["bytes"] === "number" &&
+    typeof o["flags"] === "string" &&
+    typeof o["dir"] === "boolean" &&
+    typeof o["sized"] === "boolean"
+  );
+}
+
 /**
  * Returns null when there is no stored diff, which the view reports as "not
  * checked yet" rather than as "no differences" — the two are not the same.
+ *
+ * A diff is explicitly derived and safe to lose (unlike state.json), so the
+ * treatment here is proportionate rather than identical to `loadState`'s: a
+ * malformed ENTRY inside an otherwise-valid record is dropped in place, so it
+ * costs one row of the listing rather than crashing the differences screen or
+ * discarding the whole record.
  */
 export function loadDiff(unit: string, target: string, dir: string = diffDir()): Diff | null {
   try {
     const raw: unknown = JSON.parse(readFileSync(diffFile(unit, target, dir), "utf8"));
     if (typeof raw !== "object" || raw === null) return null;
     const d = raw as Diff;
-    return d.version === 1 && Array.isArray(d.entries) ? d : null;
+    if (d.version !== 1 || !Array.isArray(d.entries)) return null;
+    return { ...d, entries: d.entries.filter(isValidEntry) };
   } catch {
     return null;
   }

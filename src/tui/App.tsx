@@ -4,11 +4,11 @@ import { join } from "node:path";
 import type { Config } from "../config.ts";
 import { EMPTY as EMPTY_FINGERPRINT, fingerprint, type Fingerprint } from "../fingerprint.ts";
 import { bytes } from "../format.ts";
-import { buildArgv, DEFAULT_RSYNC } from "../rsync.ts";
 import { allReachability, checkUnit, listUnits, methodOf, type Reachability } from "../scan.ts";
 import { appendHistory, estimateMs, loadState, saveState, upsertScan, type State } from "../state.ts";
 import { debug, timed, timedAsync } from "../log.ts";
 import { setTitle, titleFor } from "../title.ts";
+import { padEnd, truncatePath } from "../width.ts";
 import { evaluateUnit, reachWord, type CellState, type UnitState } from "../status.ts";
 import { Diff as DiffScreen } from "./Diff.tsx";
 import { buildDiff, loadDiff, saveDiff, type Diff } from "../diff.ts";
@@ -16,7 +16,7 @@ import { Ledger, type Row } from "./Ledger.tsx";
 import { Confirm } from "./Confirm.tsx";
 import { Job } from "./Job.tsx";
 import { Mark } from "./Mark.tsx";
-import { Plan, planText } from "./Plan.tsx";
+import { Plan } from "./Plan.tsx";
 import { barFraction, type RunProgress } from "./Progress.tsx";
 import { Rule, Screen } from "./Screen.tsx";
 import { Setup } from "./Setup.tsx";
@@ -42,12 +42,14 @@ const FILTERS: ReadonlyArray<UnitState | "all"> = [
 
 export interface AppProps {
   readonly config: Config;
+  /** Not used by the app; lets tests point the job screen at a controllable stand-in for rsync. */
+  readonly bin?: string;
 }
 
 /** How long a refused keypress stays on screen. */
 const NOTICE_MS = 3000;
 
-export function App({ config: initialConfig }: AppProps): React.ReactElement {
+export function App({ config: initialConfig, bin }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const theme = useMemo(() => resolveTheme(), []);
@@ -96,6 +98,21 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
   // `s` opens the confirm page, and only [enter] there starts a transfer.
   const [pendingSync, setPendingSync] = useState<{ unit: string; target: string } | null>(null);
   const [runningSync, setRunningSync] = useState<{ unit: string; target: string } | null>(null);
+  /**
+   * ctrl-c presses seen while a transfer is running.
+   *
+   * Ink calls every mounted useInput handler, so App and Job both see every
+   * ctrl-c. Job's handler cancels rsync; this one used to exit unconditionally,
+   * which meant the app quit the instant a transfer was cancelled — before
+   * Job's own screen could render the outcome or its [esc] back. The first
+   * press while a transfer is running is left to Job; only a second press
+   * exits, so a transfer that ignores SIGTERM can never trap the user. Reset
+   * once the job screen closes, so the next transfer starts counting fresh.
+   */
+  const ctrlCPresses = useRef(0);
+  useEffect(() => {
+    if (runningSync === null) ctrlCPresses.current = 0;
+  }, [runningSync]);
   const [now, setNow] = useState(() => Date.now());
   const [frame, setFrame] = useState(0);
 
@@ -267,6 +284,7 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
         // works from the second check onwards on *any* folder rather than only
         // on one that has been checked twice.
         const prior = estimateMs(working, job.target.name, methodOf(mode), job.size);
+        const jobStarted = Date.now();
         const base = {
           unit: job.unit,
           target: job.target.name,
@@ -276,12 +294,12 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
           bytesDone,
           bytesTotal,
           startedAt,
+          jobStartedAt: jobStarted,
           filesTotal: job.files,
           unitBytes: job.size,
           ...(prior !== undefined ? { priorMs: prior } : {}),
         } as const;
         setRunning({ ...base, filesSeen: 0 });
-        const jobStarted = Date.now();
         debug("check.start", {
           mode,
           unit: job.unit,
@@ -291,7 +309,7 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
           estimateMs: prior ?? null,
         });
         try {
-          const { scan, argv, items, targetFingerprint } = await checkUnit(config, job.unit, job.target, mode, {
+          const { scan, argv, items, targetFingerprint, exitCode } = await checkUnit(config, job.unit, job.target, mode, {
             // Throttled: one render per 25 files keeps a large folder from
             // driving the render loop instead of the check.
             onFile: (seen) => {
@@ -333,7 +351,7 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
             unit: job.unit,
             target: job.target.name,
             argv,
-            exitCode: scan.outcome === "error" ? 1 : 0,
+            exitCode,
           });
           // Publish after every unit so the ledger fills in as it goes rather
           // than staying blank until the whole run finishes.
@@ -384,7 +402,16 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
   );
 
   useInput((input, key) => {
-    if (key.ctrl && input === "c") return exit();
+    if (key.ctrl && input === "c") {
+      // While a transfer is running, the first press is Job's to act on: let
+      // it cancel and render the outcome instead of the app vanishing under
+      // it. A second press exits regardless of what the transfer is doing.
+      if (runningSync !== null) {
+        ctrlCPresses.current += 1;
+        if (ctrlCPresses.current < 2) return;
+      }
+      return exit();
+    }
     if (showHelp) {
       setShowHelp(false);
       return;
@@ -472,6 +499,7 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
         nChanges={syncCell?.nChanges ?? 0}
         bytesPending={syncCell?.bytesPending ?? 0}
         {...(syncCell?.needsChecksum === true ? { needsChecksum: true } : {})}
+        {...(bin !== undefined ? { bin } : {})}
         theme={theme}
         width={width}
         height={screen.rows}
@@ -480,6 +508,12 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
           // for it is now stale. Re-read state rather than assuming success.
           setState(loadState());
           setNow(Date.now());
+          // Nothing is running any more, so ctrl-c has nothing to leave to the
+          // job screen: arm it to exit on the very next press. Without this the
+          // count is still 0 while the finished screen is up, so a ctrl-c there
+          // would be swallowed and appear to do nothing — and that screen's
+          // footer offers [esc], never mentioning a press was needed twice.
+          ctrlCPresses.current = 1;
         }}
         onClose={() => {
           setRunningSync(null);
@@ -496,6 +530,9 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
         <Plan
           config={config}
           unit={row.status.unit}
+          needsChecksum={
+            new Set(row.status.cells.filter((c) => c.needsChecksum === true).map((c) => c.target))
+          }
           theme={theme}
           width={width}
           height={screen.rows}
@@ -618,7 +655,7 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
   );
 }
 
-function Help({
+export function Help({
   theme,
   width,
   height,
@@ -659,7 +696,7 @@ function Help({
       {line("f", "cycle the status filter")}
       {line("r", "re-read the source, recompute sizes")}
       {line(",", "setup — source root and destinations")}
-      {line("ctrl-c", "quit")}
+      {line("ctrl-c", "quit — during a transfer, the first press cancels it")}
       <Text> </Text>
       <Text color={theme.dim}>{"  syncy never deletes, and writes to no destination from this screen."}</Text>
     </Screen>
@@ -680,7 +717,7 @@ interface EvidenceProps {
  * The evidence view ends at the evidence. No recommendation, no command to
  * copy, nothing organised around deleting.
  */
-function Evidence({ row, config, state, theme, width, height }: EvidenceProps): React.ReactElement {
+export function Evidence({ row, config, state, theme, width, height }: EvidenceProps): React.ReactElement {
   return (
     <Screen
       title="syncy · evidence"
@@ -701,13 +738,13 @@ function Evidence({ row, config, state, theme, width, height }: EvidenceProps): 
         return (
           <Box key={t.name} flexDirection="column">
             <Box>
-              <Text color={theme.figure}>{"  " + t.name.padEnd(10)}</Text>
+              <Text color={theme.figure}>{"  " + padEnd(t.name, 10)}</Text>
               <Text color={theme[cell === undefined ? "unchecked" : cellToken(cell.state)]}>
-                {(cell?.state ?? "unchecked").padEnd(12)}
+                {padEnd(cell?.state ?? "unchecked", 12)}
               </Text>
               <Text color={theme.dim}>{cell?.reason ?? ""}</Text>
             </Box>
-            <Text color={theme.dim}>{`      path        ${t.path}`}</Text>
+            <Text color={theme.dim}>{`      path        ${truncatePath(t.path, width - 18)}`}</Text>
             <Text color={theme.dim}>
               {`      deep        ${deep === undefined ? "never" : `${deep.outcome} · ${new Date(deep.ts).toLocaleString()}`}`}
             </Text>

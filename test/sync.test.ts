@@ -3,10 +3,13 @@ import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, type Config, type Target } from "../src/config.ts";
+import type { Fingerprint } from "../src/fingerprint.ts";
 import { deleteCheck, freeBytes, preflight, SPACE_MARGIN } from "../src/guards.ts";
 import { buildArgv, checkBuild, DEFAULT_RSYNC, RsyncError } from "../src/rsync.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import { checkUnit } from "../src/scan.ts";
+import type { Scan } from "../src/state.ts";
+import { cellState } from "../src/status.ts";
 import { startSync } from "../src/sync.ts";
 
 const build = await checkBuild(DEFAULT_RSYNC);
@@ -140,6 +143,53 @@ describeRsync("preflight", () => {
   test("blocks a --delete argv outright", async () => {
     const p = await preflight(config, target(), ["-a", "--delete", "/a/", "/b/"], 10);
     expect(p.ok).toBe(false);
+  });
+});
+
+describeRsync("a first copy states what it will actually move", () => {
+  /**
+   * A `missing` cell was built from `base`, which sets bytesPending: 0 — true
+   * of a check that itemised nothing, wrong as the figure everything
+   * downstream consumes. preflight's `needed = ceil(bytesPending *
+   * SPACE_MARGIN)` came out to 0, so `free >= needed` passed for any free
+   * space including none — the free-space guard was disabled for exactly the
+   * case it exists to catch: the first full copy of an archive onto a new
+   * drive. Before the fix this test's preflight call would pass.
+   */
+  test("preflight fails for a missing cell whose source outsizes the destination's free space", async () => {
+    const free = freeBytes(target().path)!;
+    const tooBig: Fingerprint = { nfiles: 10, bytes: Math.ceil(free * 2), maxMtimeNs: "1" };
+    const missingScan: Scan = {
+      unit: "photos-2019",
+      target: "dst",
+      ts: Date.now(),
+      method: "quick",
+      outcome: "missing",
+      nChanges: 0,
+      nExtra: 0,
+      bytesPending: 0,
+      fingerprint: tooBig,
+      sentinel: target().sentinel ?? "",
+    };
+    const c = cellState({
+      target: target(),
+      sentinel: "ok",
+      fingerprintNow: tooBig,
+      deep: undefined,
+      quick: missingScan,
+      latest: missingScan,
+      now: Date.now(),
+      maxVerifyAgeDays: 30,
+      maxQuickAgeDays: 7,
+    });
+    expect(c.state).toBe("missing");
+    // The figure a copy will actually move, not the 0 an itemize-nothing
+    // check produced.
+    expect(c.bytesPending).toBe(tooBig.bytes);
+
+    const p = await preflight(config, target(), buildArgv("sync", "/a", target(), []), c.bytesPending);
+    expect(p.ok).toBe(false);
+    expect(p.checks.find((ch) => ch.name === "space")!.ok).toBe(false);
   });
 });
 

@@ -188,6 +188,58 @@ describe("the detail line", () => {
   });
 });
 
+describe("the detail line filters evidence to the target's current identity", () => {
+  /**
+   * The same bug commit 2d32532 fixed for evaluateUnit and the printed
+   * ledger, at its third site: findScan/latestScan/knownExtras were called
+   * here without a target's identity, so a scan recorded against a removed
+   * volume kept reading as this interactive detail line's evidence for
+   * whatever was later mounted under the same target name.
+   */
+  const identityConfig: Config = parseConfig(`
+source = "/src"
+[[target]]
+name = "ext"
+path = "/ext"
+identity = "VOLUME-B-UUID"
+`);
+
+  function identityFrame(state: State): string[] {
+    const { lastFrame } = render(
+      <Ledger
+        rows={rows}
+        selected={0}
+        config={identityConfig}
+        state={state}
+        theme={THEMES.ansi}
+        width={92}
+        now={NOW}
+        busy={null}
+      />,
+    );
+    return (lastFrame() ?? "").split("\n");
+  }
+
+  test("a scan recorded under a different identity is not shown as deep verified", () => {
+    const state = upsertScan(
+      EMPTY_STATE,
+      scan({ target: "ext", method: "deep", ts: NOW, sentinel: "VOLUME-A-UUID" }),
+    );
+    const text = plain(identityFrame(state).join("\n"));
+    expect(text).not.toContain("deep verified");
+    expect(text).toContain("never checked");
+  });
+
+  test("a scan recorded under the current identity still shows as evidence", () => {
+    const state = upsertScan(
+      EMPTY_STATE,
+      scan({ target: "ext", method: "deep", ts: NOW, sentinel: "VOLUME-B-UUID" }),
+    );
+    const text = plain(identityFrame(state).join("\n"));
+    expect(text).toContain("deep verified");
+  });
+});
+
 describe("the footer states facts, never actions", () => {
   test("states what is proven out of the whole, in one phrase", () => {
     // A breakdown by state overflowed the line once several states were
@@ -227,7 +279,7 @@ describe("the ledger fits the window it is given", () => {
    */
   const running = {
     unit: "photos-2019", target: "ext", mode: "deep" as const, done: 0, total: 1,
-    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 164_000,
+    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 164_000, jobStartedAt: NOW - 164_000,
     filesTotal: 935, unitBytes: 13e9, priorMs: 720_000,
   };
   const NOTICE = "[d] ignored — the deep check on photos-2019 is still running";
@@ -274,6 +326,46 @@ describe("the ledger fits the window it is given", () => {
   });
 });
 
+describe("a window too short for every row names what it could not draw", () => {
+  /**
+   * The layout doc comment above the row-windowing code states the contract:
+   * rows are windowed to what is left, and the remainder is named. It never
+   * was — `hidden` was computed and dropped on the floor, so folders that did
+   * not fit the window vanished from the ledger without a trace. This is the
+   * "interface knowing something the user does not" failure class.
+   */
+  const eightRows: Row[] = Array.from({ length: 8 }, (_, i) => ({
+    status: status(`folder-${i}`, "unchecked", [cell("ext", "unchecked"), cell("nas", "unchecked")]),
+    size: (i + 1) * 1024 ** 3,
+  }));
+
+  const render8 = (width: number): string[] => {
+    const { lastFrame } = render(
+      <Ledger rows={eightRows} selected={0} config={config} state={EMPTY_STATE} theme={THEMES.ansi}
+        width={width} height={12} now={NOW} busy={null} />,
+    );
+    return plain(lastFrame() ?? "").split("\n");
+  };
+
+  for (const width of [76, 92, 120]) {
+    test(`width ${width}: the footer states how many folders are not drawn`, () => {
+      const lines = render8(width);
+      const drawn = lines.filter((l) => l.includes(".....")).length;
+      expect(drawn).toBeLessThan(eightRows.length);
+      const hidden = eightRows.length - drawn;
+      const footer = lines.find((l) => l.includes("folders") && l.includes("not shown"));
+      expect(footer, lines.join("\n")).toBeDefined();
+      expect(footer).toContain(`${hidden} not shown`);
+    });
+
+    test(`width ${width}: no line exceeds the requested width`, () => {
+      for (const line of render8(width)) {
+        expect(displayWidth(line), `width ${width}: ${line}`).toBeLessThanOrEqual(width + 2);
+      }
+    });
+  }
+});
+
 describe("the folder list shows which folder a check is on", () => {
   /**
    * A `⋯` in one destination cell was the only sign, which is too quiet to find
@@ -282,7 +374,7 @@ describe("the folder list shows which folder a check is on", () => {
    */
   const running = {
     unit: "photos-2019", target: "nas", mode: "deep" as const, done: 1, total: 2,
-    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 292_000,
+    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 292_000, jobStartedAt: NOW - 292_000,
     filesTotal: 900, unitBytes: 78e9, priorMs: 600_000,
   };
   const lines = (selected: number): string[] => {

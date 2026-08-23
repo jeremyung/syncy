@@ -2,7 +2,7 @@ import { Box, Text } from "ink";
 import type { Config } from "../config.ts";
 import { ageAgo, bytes, stamp } from "../format.ts";
 import { findScan, latestScan, type State } from "../state.ts";
-import { evidencePhrase, GLYPH, type UnitStatus } from "../status.ts";
+import { evidencePhrase, GLYPH, knownExtras, targetIdentity, type UnitStatus } from "../status.ts";
 import { displayWidth, padEnd, padStart, truncate } from "../width.ts";
 import { Forklift, forkliftRows } from "./Forklift.tsx";
 import { Progress, progressLines, type RunProgress } from "./Progress.tsx";
@@ -264,15 +264,22 @@ export function Ledger(props: LedgerProps): React.ReactElement {
         <Text color={theme.dim}>{"  no subfolders under the source root"}</Text>
       ) : (
         config.targets.map((t, i) => {
-          const deep = findScan(state, selectedRow.status.unit, t.name, "deep");
-          const last = latestScan(state, selectedRow.status.unit, t.name);
+          // Filtered to the identity this target resolves to now — the same
+          // fix `evaluateUnit` and the printed ledger already carried. Left
+          // unfiltered here, this detail line kept showing a foreign volume's
+          // evidence after a remove-and-re-add under the same name: the third
+          // site of the bug commit 2d32532 fixed at the other two.
+          const identity = targetIdentity(t);
+          const deep = findScan(state, selectedRow.status.unit, t.name, "deep", identity);
+          const last = latestScan(state, selectedRow.status.unit, t.name, identity);
+          const extras = knownExtras(state, selectedRow.status.unit, t.name, identity)?.count;
           const prefix = i === 0 ? padEnd(truncate(selectedRow.status.unit, 17), 18) : padEnd("", 18);
           return (
             <Box key={t.name}>
               <Text color={theme.ink}>{"  " + prefix}</Text>
               <Text color={theme.dim}>{padEnd(t.name, 5) + " "}</Text>
               <Text color={theme.dim}>
-                {evidencePhrase(deep, last, now, { stamp, ageAgo })}
+                {evidencePhrase(deep, last, now, { stamp, ageAgo }, extras)}
               </Text>
             </Box>
           );
@@ -298,21 +305,30 @@ export function Ledger(props: LedgerProps): React.ReactElement {
       ) : null}
       {!showGap ? null : <Text> </Text>}
 
-      <Footer {...props} />
+      <Footer {...props} hidden={hidden} />
     </Box>
   );
 }
 
-function Footer(props: LedgerProps): React.ReactElement {
-  const { rows, theme, busy, width } = props;
-  const total = rows.reduce((a, r) => a + r.size, 0);
+function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactElement {
+  const { rows, theme, busy, width, hidden } = props;
   const states = rows.map((r) => r.status.state);
   const entries = rows.map((r) => ({ state: r.status.state, size: r.size }));
 
   // Three facts, one measure each: the scale of the archive, the bytes by
   // state, and the shape. The counts by state were the same information a
   // second way, and the shelf already carries it.
-  const scale = `  ${rows.length} folder${rows.length === 1 ? "" : "s"}`;
+  //
+  // The row area is windowed to what the height budget leaves (see the
+  // layout section above): a short terminal draws fewer rows than there are
+  // folders, and used to say nothing about the ones it dropped — the exact
+  // "interface knowing something the user does not" failure this file's own
+  // layout doc comment warns about. The footer line is part of `core` and is
+  // never shed, so the count that fell out of the window is named here
+  // rather than in the row area that is doing the shedding.
+  const scale =
+    `  ${rows.length} folder${rows.length === 1 ? "" : "s"}` +
+    (hidden > 0 ? `, ${hidden} not shown` : "");
   const phrase = verifiedPhrase(entries);
   const blocks = Math.min(states.length, 28);
   const gap = Math.max(2, width + 2 - displayWidth(scale) - displayWidth(phrase) - blocks - 4);
