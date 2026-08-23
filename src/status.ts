@@ -184,7 +184,19 @@ export function cellState(input: CellInput): Cell {
     return { ...base, state: "error", reason: "last check failed — rerun with SYNCY_DEBUG=1" };
   }
   if (latest.outcome === "missing") {
-    return { ...base, state: "missing", reason: "never copied" };
+    // `base` sets nChanges/bytesPending to 0 — true of a check that itemised
+    // nothing, wrong as the figure everything downstream consumes. preflight
+    // computes `needed = ceil(bytesPending * SPACE_MARGIN)`, so 0 pending
+    // bytes disabled the free-space guard for exactly the case it exists to
+    // catch: the first full copy of an archive onto a new drive. The real
+    // figure is what a copy will actually move — the source as it stands now.
+    return {
+      ...base,
+      state: "missing",
+      reason: "never copied",
+      nChanges: input.fingerprintNow.nfiles,
+      bytesPending: input.fingerprintNow.bytes,
+    };
   }
   if (latest.outcome === "behind") {
     const byChecksum = latest.method === "deep";
