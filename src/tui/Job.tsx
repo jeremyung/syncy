@@ -41,6 +41,10 @@ export function Job(props: JobProps): React.ReactElement {
   const { config, unit, target, theme, width, height } = props;
   const [lines, setLines] = useState<string[]>([]);
   const [done, setDone] = useState<SyncResult | null>(null);
+  // Set on the first ctrl-c so the footer can say a second press is what
+  // quits — App.tsx eats that first press too and lets this screen act on
+  // it alone; a discoverable "again to quit" beats the user having to guess.
+  const [cancelling, setCancelling] = useState(false);
   const [started] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
   const handle = useRef<SyncHandle | null>(null);
@@ -115,7 +119,11 @@ export function Job(props: JobProps): React.ReactElement {
       if (key.escape || key.return || input === "q") props.onClose();
       return;
     }
-    if (key.ctrl && input === "c") handle.current?.cancel();
+    if (key.ctrl && input === "c") {
+      setCancelling(true);
+      handle.current?.cancel();
+      return;
+    }
     // esc used to close this screen while a transfer was in flight: the
     // screen unmounted, `live` went false, and the rsync child kept writing to
     // the destination with nothing attached to it — onDone never fired
@@ -134,7 +142,9 @@ export function Job(props: JobProps): React.ReactElement {
     done === null ? (
       <Box flexDirection="column">
         <Rule width={W} theme={theme} />
-        <Text color={theme.unverified}>{"  running · [ctrl-c] cancel"}</Text>
+        <Text color={theme.unverified}>
+          {cancelling ? "  cancelling… · [ctrl-c] again to quit" : "  running · [ctrl-c] cancel"}
+        </Text>
         {notice == null ? null : (
           <Text color={theme.missing}>{"  " + truncate(notice, W - 2)}</Text>
         )}

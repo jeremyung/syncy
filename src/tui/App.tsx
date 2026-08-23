@@ -42,12 +42,14 @@ const FILTERS: ReadonlyArray<UnitState | "all"> = [
 
 export interface AppProps {
   readonly config: Config;
+  /** Not used by the app; lets tests point the job screen at a controllable stand-in for rsync. */
+  readonly bin?: string;
 }
 
 /** How long a refused keypress stays on screen. */
 const NOTICE_MS = 3000;
 
-export function App({ config: initialConfig }: AppProps): React.ReactElement {
+export function App({ config: initialConfig, bin }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const theme = useMemo(() => resolveTheme(), []);
@@ -96,6 +98,21 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
   // `s` opens the confirm page, and only [enter] there starts a transfer.
   const [pendingSync, setPendingSync] = useState<{ unit: string; target: string } | null>(null);
   const [runningSync, setRunningSync] = useState<{ unit: string; target: string } | null>(null);
+  /**
+   * ctrl-c presses seen while a transfer is running.
+   *
+   * Ink calls every mounted useInput handler, so App and Job both see every
+   * ctrl-c. Job's handler cancels rsync; this one used to exit unconditionally,
+   * which meant the app quit the instant a transfer was cancelled — before
+   * Job's own screen could render the outcome or its [esc] back. The first
+   * press while a transfer is running is left to Job; only a second press
+   * exits, so a transfer that ignores SIGTERM can never trap the user. Reset
+   * once the job screen closes, so the next transfer starts counting fresh.
+   */
+  const ctrlCPresses = useRef(0);
+  useEffect(() => {
+    if (runningSync === null) ctrlCPresses.current = 0;
+  }, [runningSync]);
   const [now, setNow] = useState(() => Date.now());
   const [frame, setFrame] = useState(0);
 
@@ -385,7 +402,16 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
   );
 
   useInput((input, key) => {
-    if (key.ctrl && input === "c") return exit();
+    if (key.ctrl && input === "c") {
+      // While a transfer is running, the first press is Job's to act on: let
+      // it cancel and render the outcome instead of the app vanishing under
+      // it. A second press exits regardless of what the transfer is doing.
+      if (runningSync !== null) {
+        ctrlCPresses.current += 1;
+        if (ctrlCPresses.current < 2) return;
+      }
+      return exit();
+    }
     if (showHelp) {
       setShowHelp(false);
       return;
@@ -473,6 +499,7 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
         nChanges={syncCell?.nChanges ?? 0}
         bytesPending={syncCell?.bytesPending ?? 0}
         {...(syncCell?.needsChecksum === true ? { needsChecksum: true } : {})}
+        {...(bin !== undefined ? { bin } : {})}
         theme={theme}
         width={width}
         height={screen.rows}
@@ -481,6 +508,12 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
           // for it is now stale. Re-read state rather than assuming success.
           setState(loadState());
           setNow(Date.now());
+          // Nothing is running any more, so ctrl-c has nothing to leave to the
+          // job screen: arm it to exit on the very next press. Without this the
+          // count is still 0 while the finished screen is up, so a ctrl-c there
+          // would be swallowed and appear to do nothing — and that screen's
+          // footer offers [esc], never mentioning a press was needed twice.
+          ctrlCPresses.current = 1;
         }}
         onClose={() => {
           setRunningSync(null);
