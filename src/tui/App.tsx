@@ -290,7 +290,7 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
           estimateMs: prior ?? null,
         });
         try {
-          const { scan, argv, items, targetFingerprint } = await checkUnit(config, job.unit, job.target, mode, {
+          const { scan, argv, items, targetFingerprint, exitCode } = await checkUnit(config, job.unit, job.target, mode, {
             // Throttled: one render per 25 files keeps a large folder from
             // driving the render loop instead of the check.
             onFile: (seen) => {
@@ -332,7 +332,7 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
             unit: job.unit,
             target: job.target.name,
             argv,
-            exitCode: scan.outcome === "error" ? 1 : 0,
+            exitCode,
           });
           // Publish after every unit so the ledger fills in as it goes rather
           // than staying blank until the whole run finishes.

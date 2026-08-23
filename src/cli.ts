@@ -82,7 +82,7 @@ async function cmdCheck(config: Config, mode: "quick" | "deep", only: string | u
         continue;
       }
       process.stdout.write(`  ${unit} → ${target.name}: ${mode}…`);
-      const { scan, argv } = await checkUnit(config, unit, target, mode, { fingerprint: fp });
+      const { scan, argv, exitCode } = await checkUnit(config, unit, target, mode, { fingerprint: fp });
       state = upsertScan(state, scan);
       saveState(state);
       appendHistory({
@@ -90,7 +90,7 @@ async function cmdCheck(config: Config, mode: "quick" | "deep", only: string | u
         unit,
         target: target.name,
         argv,
-        exitCode: scan.outcome === "error" ? 1 : 0,
+        exitCode,
       });
       const detail =
         scan.outcome === "clean"
