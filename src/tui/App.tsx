@@ -655,7 +655,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   );
 }
 
-function Help({
+export function Help({
   theme,
   width,
   height,
@@ -696,7 +696,7 @@ function Help({
       {line("f", "cycle the status filter")}
       {line("r", "re-read the source, recompute sizes")}
       {line(",", "setup — source root and destinations")}
-      {line("ctrl-c", "quit")}
+      {line("ctrl-c", "quit — during a transfer, the first press cancels it")}
       <Text> </Text>
       <Text color={theme.dim}>{"  syncy never deletes, and writes to no destination from this screen."}</Text>
     </Screen>
@@ -717,7 +717,7 @@ interface EvidenceProps {
  * The evidence view ends at the evidence. No recommendation, no command to
  * copy, nothing organised around deleting.
  */
-function Evidence({ row, config, state, theme, width, height }: EvidenceProps): React.ReactElement {
+export function Evidence({ row, config, state, theme, width, height }: EvidenceProps): React.ReactElement {
   return (
     <Screen
       title="syncy · evidence"
