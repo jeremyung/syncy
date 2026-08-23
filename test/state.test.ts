@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PROJECT_ROOT } from "./helpers.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import { appendHistory, EMPTY_STATE, findScan, latestScan, loadState, saveState, upsertScan, type Scan, estimateMs, type State } from "../src/state.ts";

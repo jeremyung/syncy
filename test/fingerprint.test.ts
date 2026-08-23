@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EMPTY, fingerprint, matchesAny, sameFingerprint } from "../src/fingerprint.ts";
 

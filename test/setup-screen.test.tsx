@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
 import { render } from "ink-testing-library";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, type Config } from "../src/config.ts";
 import { displayWidth } from "../src/width.ts";

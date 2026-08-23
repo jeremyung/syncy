@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
-import { join } from "node:path";
 import { parseConfig, type Config } from "../src/config.ts";
 import {
   buildDiff,

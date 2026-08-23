@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { makeFixtureDir, removeFixtureDir, PROJECT_ROOT } from "./helpers.ts";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, type Config, type Target } from "../src/config.ts";
 import { PROBE_DIR, probeTarget, removeProbeDir } from "../src/probe.ts";

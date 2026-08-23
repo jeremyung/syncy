@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, type Config, type Target } from "../src/config.ts";
 import { EMPTY_CONFIG, saveConfig, serializeConfig, withoutTarget, withTarget } from "../src/configio.ts";

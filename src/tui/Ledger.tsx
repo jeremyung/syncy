@@ -161,6 +161,10 @@ export function Ledger(props: LedgerProps): React.ReactElement {
   const start = Math.max(0, Math.min(selected - Math.floor(room / 2), rows.length - room));
   const shown = rows.slice(Math.max(0, start), Math.max(0, start) + room);
   const hidden = rows.length - shown.length;
+  // Rendered on the footer in the next commit; kept live here so this
+  // commit (adding noUnusedLocals) does not have to delete the count the
+  // layout's own doc comment says the remainder is named with.
+  void hidden;
 
   return (
     // Fills the terminal: the ledger sits at the top, and a flexible spacer
@@ -305,7 +309,6 @@ export function Ledger(props: LedgerProps): React.ReactElement {
 
 function Footer(props: LedgerProps): React.ReactElement {
   const { rows, theme, busy, width } = props;
-  const total = rows.reduce((a, r) => a + r.size, 0);
   const states = rows.map((r) => r.status.state);
   const entries = rows.map((r) => ({ state: r.status.state, size: r.size }));
 
