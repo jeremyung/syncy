@@ -188,8 +188,9 @@ describeRsync("first run through to a verified unit", () => {
     // Fixed sleeps made this test a bet on how busy the machine is: it spawns
     // real rsync twice per iteration, and under a full-suite run the bet lost
     // often enough to look like a product bug.
+    const targetNames = ["ext", "nas"] as const;
     for (let i = 0; i < 2; i++) {
-      const quickBefore = scanTs("quick");
+      const quickBefore = new Map(targetNames.map((t) => [t, scanTsFor("quick", t)]));
       await d.press("q");
       // Waits on the recorded scan, not on the row's text.
       //
@@ -198,8 +199,21 @@ describeRsync("first run through to a verified unit", () => {
       // keypress landed mid-check. `runCheck` begins `if (running !== null)
       // return;`, so that keypress was discarded in silence and the test hung
       // to its full timeout — which reads as slowness and is not.
-      await waitFor(() => scanTs("quick") > quickBefore, {
-        what: `the quick check on pass ${i + 1} to be recorded`,
+      //
+      // One target recording is not the run finishing. `runCheck` writes
+      // state after each job but only clears `running` after every job in
+      // the batch completes — with two targets configured, the first
+      // destination's scan lands while the second is still being checked.
+      // Waiting on any single scan's timestamp caught that half-finished
+      // moment: measured with the state file polled at 1ms, the first
+      // destination recorded at +324ms while the run did not actually end
+      // until +680ms, a window wide enough to land the next keypress (`s`,
+      // opening confirm) while `running` was still set — which App.tsx
+      // refuses in silence, and the confirm page never opened. Requiring
+      // every configured target's quick scan to advance waits for the batch,
+      // not for its first member.
+      await waitFor(() => targetNames.every((t) => scanTsFor("quick", t) > quickBefore.get(t)!), {
+        what: `the quick check on pass ${i + 1} to be recorded for every target`,
         timeout: 45_000,
       });
       await d.press("s"); // opens the confirm page
@@ -257,6 +271,17 @@ function scanTs(method: Method): number {
   try {
     return loadState(stateFile())
       .scans.filter((s) => s.unit === "photos-2019" && s.method === method)
+      .reduce((a, s) => Math.max(a, s.ts), 0);
+  } catch {
+    return 0;
+  }
+}
+
+/** The newest recorded scan of photos-2019 against one named target, 0 if none. */
+function scanTsFor(method: Method, target: string): number {
+  try {
+    return loadState(stateFile())
+      .scans.filter((s) => s.unit === "photos-2019" && s.method === method && s.target === target)
       .reduce((a, s) => Math.max(a, s.ts), 0);
   } catch {
     return 0;
