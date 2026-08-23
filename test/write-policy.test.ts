@@ -51,8 +51,15 @@ const target = (over: Partial<Target> = {}): Target => ({
 });
 
 describe("no source file writes outside the allowed modules", () => {
+  // Matched only sync node:fs calls by name, so it was blind to every other
+  // way this runtime can put bytes on disk: `Bun.write(`, the `.writer()`
+  // streaming handle `sync.ts` actually uses for its per-transfer log,
+  // `node:fs/promises` imports, and the bare async `writeFile`/`appendFile`.
+  // src/sync.ts:79 writes through `Bun.file(logPath).writer()` and passed
+  // this guard silently — not because the write was allowed, but because the
+  // guard could not see it.
   const WRITE_CALLS =
-    /\b(writeFileSync|appendFileSync|mkdirSync|mkdtempSync|renameSync|rmSync|unlinkSync|openSync|copyFileSync|symlinkSync|truncateSync|utimesSync)\s*\(/;
+    /\b(writeFileSync|appendFileSync|mkdirSync|mkdtempSync|renameSync|rmSync|unlinkSync|openSync|copyFileSync|symlinkSync|truncateSync|utimesSync|writeFile|appendFile|Bun\.write)\s*\(|\.writer\s*\(\)|from\s+["']node:fs\/promises["']/;
 
   /**
    * Modules permitted to write, and why.
@@ -70,6 +77,7 @@ describe("no source file writes outside the allowed modules", () => {
     "cli.ts", // `syncy init` writes the starter config
     "scan.ts", // creates the log directory
     "diff.ts", // per-folder difference listings, inside the state directory
+    "sync.ts", // the per-transfer log, inside the state directory
     // Permitted for removeProbeDir only, which refuses any path not named
     // `.syncy-probe`. It performs no writes.
     "probe.ts",
