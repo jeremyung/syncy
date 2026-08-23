@@ -274,6 +274,46 @@ describe("the ledger fits the window it is given", () => {
   });
 });
 
+describe("a window too short for every row names what it could not draw", () => {
+  /**
+   * The layout doc comment above the row-windowing code states the contract:
+   * rows are windowed to what is left, and the remainder is named. It never
+   * was — `hidden` was computed and dropped on the floor, so folders that did
+   * not fit the window vanished from the ledger without a trace. This is the
+   * "interface knowing something the user does not" failure class.
+   */
+  const eightRows: Row[] = Array.from({ length: 8 }, (_, i) => ({
+    status: status(`folder-${i}`, "unchecked", [cell("ext", "unchecked"), cell("nas", "unchecked")]),
+    size: (i + 1) * 1024 ** 3,
+  }));
+
+  const render8 = (width: number): string[] => {
+    const { lastFrame } = render(
+      <Ledger rows={eightRows} selected={0} config={config} state={EMPTY_STATE} theme={THEMES.ansi}
+        width={width} height={12} now={NOW} busy={null} />,
+    );
+    return plain(lastFrame() ?? "").split("\n");
+  };
+
+  for (const width of [76, 92, 120]) {
+    test(`width ${width}: the footer states how many folders are not drawn`, () => {
+      const lines = render8(width);
+      const drawn = lines.filter((l) => l.includes(".....")).length;
+      expect(drawn).toBeLessThan(eightRows.length);
+      const hidden = eightRows.length - drawn;
+      const footer = lines.find((l) => l.includes("folders") && l.includes("not shown"));
+      expect(footer, lines.join("\n")).toBeDefined();
+      expect(footer).toContain(`${hidden} not shown`);
+    });
+
+    test(`width ${width}: no line exceeds the requested width`, () => {
+      for (const line of render8(width)) {
+        expect(displayWidth(line), `width ${width}: ${line}`).toBeLessThanOrEqual(width + 2);
+      }
+    });
+  }
+});
+
 describe("the folder list shows which folder a check is on", () => {
   /**
    * A `⋯` in one destination cell was the only sign, which is too quiet to find

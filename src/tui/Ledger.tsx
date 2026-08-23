@@ -161,10 +161,6 @@ export function Ledger(props: LedgerProps): React.ReactElement {
   const start = Math.max(0, Math.min(selected - Math.floor(room / 2), rows.length - room));
   const shown = rows.slice(Math.max(0, start), Math.max(0, start) + room);
   const hidden = rows.length - shown.length;
-  // Rendered on the footer in the next commit; kept live here so this
-  // commit (adding noUnusedLocals) does not have to delete the count the
-  // layout's own doc comment says the remainder is named with.
-  void hidden;
 
   return (
     // Fills the terminal: the ledger sits at the top, and a flexible spacer
@@ -302,20 +298,30 @@ export function Ledger(props: LedgerProps): React.ReactElement {
       ) : null}
       {!showGap ? null : <Text> </Text>}
 
-      <Footer {...props} />
+      <Footer {...props} hidden={hidden} />
     </Box>
   );
 }
 
-function Footer(props: LedgerProps): React.ReactElement {
-  const { rows, theme, busy, width } = props;
+function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactElement {
+  const { rows, theme, busy, width, hidden } = props;
   const states = rows.map((r) => r.status.state);
   const entries = rows.map((r) => ({ state: r.status.state, size: r.size }));
 
   // Three facts, one measure each: the scale of the archive, the bytes by
   // state, and the shape. The counts by state were the same information a
   // second way, and the shelf already carries it.
-  const scale = `  ${rows.length} folder${rows.length === 1 ? "" : "s"}`;
+  //
+  // The row area is windowed to what the height budget leaves (see the
+  // layout section above): a short terminal draws fewer rows than there are
+  // folders, and used to say nothing about the ones it dropped — the exact
+  // "interface knowing something the user does not" failure this file's own
+  // layout doc comment warns about. The footer line is part of `core` and is
+  // never shed, so the count that fell out of the window is named here
+  // rather than in the row area that is doing the shedding.
+  const scale =
+    `  ${rows.length} folder${rows.length === 1 ? "" : "s"}` +
+    (hidden > 0 ? `, ${hidden} not shown` : "");
   const phrase = verifiedPhrase(entries);
   const blocks = Math.min(states.length, 28);
   const gap = Math.max(2, width + 2 - displayWidth(scale) - displayWidth(phrase) - blocks - 4);
