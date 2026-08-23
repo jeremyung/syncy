@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Fingerprint } from "./fingerprint.ts";
+import { debug } from "./log.ts";
 import { historyFile, stateFile } from "./paths.ts";
 
 /**
@@ -56,6 +57,76 @@ export interface State {
 
 export const EMPTY_STATE: State = { version: 1, scans: [] };
 
+/**
+ * Validates one scan record loaded from disk, in the same hand-rolled style as
+ * `parseConfig` (DESIGN.md §1, src/config.ts): every field checked, nothing
+ * trusted just because it type-checked in a `.json` file that anyone can hand
+ * edit or half-restore from a backup.
+ *
+ * Returns the reason as a string on failure rather than throwing — `loadState`
+ * drops a bad record instead of raising, so the caller needs the reason for a
+ * debug line, not an exception to catch.
+ */
+function validateScan(raw: unknown): Scan | string {
+  if (typeof raw !== "object" || raw === null) return "not an object";
+  const o = raw as Record<string, unknown>;
+
+  const unit = o["unit"];
+  const target = o["target"];
+  const ts = o["ts"];
+  const method = o["method"];
+  const outcome = o["outcome"];
+  const nChanges = o["nChanges"];
+  const nExtra = o["nExtra"];
+  const bytesPending = o["bytesPending"];
+  const sentinel = o["sentinel"];
+  const fingerprint = o["fingerprint"];
+  const nNew = o["nNew"];
+  const durationMs = o["durationMs"];
+  const log = o["log"];
+
+  if (typeof unit !== "string") return "unit is not a string";
+  if (typeof target !== "string") return "target is not a string";
+  if (typeof ts !== "number" || !Number.isFinite(ts)) return "ts is not a finite number";
+  if (method !== "quick" && method !== "deep") return `method is not "quick" or "deep"`;
+  if (outcome !== "clean" && outcome !== "behind" && outcome !== "missing" && outcome !== "error") {
+    return "outcome is not a recognised value";
+  }
+  if (typeof nChanges !== "number") return "nChanges is not a number";
+  if (typeof nExtra !== "number") return "nExtra is not a number";
+  if (typeof bytesPending !== "number") return "bytesPending is not a number";
+  if (typeof sentinel !== "string") return "sentinel is not a string";
+
+  if (typeof fingerprint !== "object" || fingerprint === null) return "fingerprint is not an object";
+  const fp = fingerprint as Record<string, unknown>;
+  const nfiles = fp["nfiles"];
+  const bytes = fp["bytes"];
+  const maxMtimeNs = fp["maxMtimeNs"];
+  if (typeof nfiles !== "number") return "fingerprint.nfiles is not a number";
+  if (typeof bytes !== "number") return "fingerprint.bytes is not a number";
+  if (typeof maxMtimeNs !== "string") return "fingerprint.maxMtimeNs is not a string";
+
+  if (nNew !== undefined && typeof nNew !== "number") return "nNew is not a number";
+  if (durationMs !== undefined && typeof durationMs !== "number") return "durationMs is not a number";
+  if (log !== undefined && typeof log !== "string") return "log is not a string";
+
+  return {
+    unit,
+    target,
+    ts,
+    method,
+    outcome,
+    nChanges,
+    nExtra,
+    bytesPending,
+    fingerprint: { nfiles, bytes, maxMtimeNs },
+    sentinel,
+    ...(nNew !== undefined ? { nNew } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(log !== undefined ? { log } : {}),
+  };
+}
+
 export function loadState(file: string = stateFile()): State {
   let text: string;
   try {
@@ -77,7 +148,23 @@ export function loadState(file: string = stateFile()): State {
   if (!Array.isArray(obj["scans"])) {
     throw new Error(`state file is corrupt (${file}): scans is not an array`);
   }
-  return { version: 1, scans: obj["scans"] as Scan[] };
+
+  // Per-scan validation degrades gracefully where the checks above do not: a
+  // corrupt individual record must cost a re-check, never a program that will
+  // not start — a state file syncy cannot open is the one failure with no way
+  // back in. Dropped records are reported through debug() rather than thrown
+  // or returned, because there is no UI channel out of loadState; this is
+  // deliberately quiet-but-recorded, not silent.
+  const scans: Scan[] = [];
+  (obj["scans"] as readonly unknown[]).forEach((entry, i) => {
+    const result = validateScan(entry);
+    if (typeof result === "string") {
+      debug("state.scan.dropped", { file, index: i, reason: result });
+      return;
+    }
+    scans.push(result);
+  });
+  return { version: 1, scans };
 }
 
 /**

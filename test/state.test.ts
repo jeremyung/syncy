@@ -72,6 +72,62 @@ describe("persistence", () => {
   });
 });
 
+describe("a malformed scan is dropped, not trusted and not fatal", () => {
+  /**
+   * `loadState` used to hand back `obj["scans"] as Scan[]` unchecked — a scan
+   * missing `fingerprint` type-checked at compile time and then threw inside
+   * `estimateMs` mid-render, and a hand-edited record claiming
+   * `{"method":"deep","outcome":"clean"}` was believed with no basis at all.
+   * A corrupt record must cost a re-check, never a program that will not
+   * start, so a bad entry is dropped rather than thrown.
+   */
+  test("a scan missing its fingerprint is dropped; a good sibling still loads", () => {
+    const file = join(dir, "state.json");
+    const good = scan({ unit: "photos/2019" });
+    const { fingerprint: _drop, ...bad } = scan({ unit: "photos/2020" });
+    writeFileSync(file, JSON.stringify({ version: 1, scans: [good, bad] }));
+    const loaded = loadState(file);
+    expect(loaded.scans).toHaveLength(1);
+    expect(loaded.scans[0]?.unit).toBe("photos/2019");
+  });
+
+  test("the drop is reported through debug(), not silently discarded", async () => {
+    const prevDebug = process.env["SYNCY_DEBUG"];
+    const prevState = process.env["XDG_STATE_HOME"];
+    const logDir = makeFixtureDir("syncy-state-log");
+    process.env["SYNCY_DEBUG"] = "1";
+    process.env["XDG_STATE_HOME"] = logDir;
+    try {
+      const { debugLogPath } = await import("../src/log.ts");
+      const file = join(dir, "state.json");
+      const { fingerprint: _drop, ...bad } = scan({ unit: "photos/2020" });
+      writeFileSync(file, JSON.stringify({ version: 1, scans: [bad] }));
+      loadState(file);
+      const log = readFileSync(debugLogPath(), "utf8");
+      expect(log).toContain("state.scan.dropped");
+      expect(log).toContain("fingerprint");
+    } finally {
+      if (prevDebug === undefined) delete process.env["SYNCY_DEBUG"];
+      else process.env["SYNCY_DEBUG"] = prevDebug;
+      if (prevState === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = prevState;
+      removeFixtureDir(logDir);
+    }
+  });
+
+  test("malformed JSON still throws — only per-scan validation degrades", () => {
+    const file = join(dir, "state.json");
+    writeFileSync(file, "{not json");
+    expect(() => loadState(file)).toThrow(/corrupt/);
+  });
+
+  test("a wrong version still throws — only per-scan validation degrades", () => {
+    const file = join(dir, "state.json");
+    writeFileSync(file, JSON.stringify({ version: 2, scans: [scan()] }));
+    expect(() => loadState(file)).toThrow(/unsupported state version/);
+  });
+});
+
 describe("scans are keyed by unit, target AND method", () => {
   test("a quick check does not evict the deep verify", () => {
     // The two-clock rule depends on both records coexisting.

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { render } from "ink-testing-library";
 import { parseConfig, type Config } from "../src/config.ts";
 import {
@@ -144,6 +145,20 @@ describe("the stored diff", () => {
     saveDiff(buildDiff("u", "t", "quick", [NEW_FILE]), dir);
     Bun.spawnSync(["/bin/sh", "-c", `printf 'not json' > ${JSON.stringify(diffFile("u", "t", dir))}`]);
     expect(loadDiff("u", "t", dir)).toBeNull();
+  });
+
+  test("a malformed entry inside an otherwise-valid diff is dropped, not fatal", () => {
+    // Diffs are entirely derived and safe to lose, so the treatment is
+    // proportionate to state.ts's: the record as a whole is kept and only the
+    // one bad entry is dropped, rather than the differences screen crashing on
+    // it or the whole diff being discarded like a corrupt file would be.
+    const d = buildDiff("u", "t", "quick", [NEW_FILE, CHANGED], { ts: NOW });
+    const raw = JSON.parse(JSON.stringify(d)) as { entries: unknown[] };
+    raw.entries.push({ kind: "new", name: "no-bytes.jpg" }); // missing bytes/flags/dir/sized
+    writeFileSync(diffFile("u", "t", dir), JSON.stringify(raw));
+    const loaded = loadDiff("u", "t", dir);
+    expect(loaded?.entries).toHaveLength(2);
+    expect(loaded?.entries.map((e) => e.name)).toEqual(["holiday/new.jpg", "holiday/edited.jpg"]);
   });
 });
 
