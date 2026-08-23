@@ -216,6 +216,23 @@ describeRsync("first run through to a verified unit", () => {
         what: `the quick check on pass ${i + 1} to be recorded for every target`,
         timeout: 45_000,
       });
+      // A second, smaller gap remains between the state file and the
+      // render: the last target's scan is written synchronously just before
+      // `setRunning(null)`, but React's own re-render is a separate, later
+      // tick — so the state-file condition above can go true a beat before
+      // `running` actually clears in the component the `s` handler reads.
+      // Measured: one run in a ten-run full-suite loop failed at the confirm
+      // page preflight wait below, and rerunning this file alone reproduced
+      // the same failure again a run later — both consistent with `s`
+      // landing in that beat, not with the first-target race the scan-file
+      // wait above already closes. The row's own "… check running …" text is
+      // driven by the same `running` prop the `s` handler reads, so waiting
+      // for it to leave the frame observes that guard directly rather than a
+      // proxy for it.
+      await waitFor(() => !d.frame().includes("check running"), {
+        what: `pass ${i + 1}'s check to stop showing as running`,
+        timeout: 45_000,
+      });
       await d.press("s"); // opens the confirm page
       // The title appears before the preflight finishes, and the page ignores
       // [enter] until it does — so waiting on the title alone pressed enter
