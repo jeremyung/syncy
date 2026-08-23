@@ -116,8 +116,12 @@ function detailLines(view: LedgerView): string[] {
   const label = truncate(row.status.unit, 18);
   const out: string[] = [];
   view.config.targets.forEach((t, i) => {
-    const deep = findScan(view.state, row.status.unit, t.name, "deep");
-    const last = latestScan(view.state, row.status.unit, t.name);
+    // Filtered to the identity this target resolves to now, or the printed
+    // ledger — the path that works over ssh — keeps showing a foreign
+    // volume's evidence after a remove-and-re-add under the same name.
+    const identity = t.identity ?? t.sentinel ?? "";
+    const deep = findScan(view.state, row.status.unit, t.name, "deep", identity);
+    const last = latestScan(view.state, row.status.unit, t.name, identity);
     const prefix = i === 0 ? padEnd(label, 18) : padEnd("", 18);
     out.push(`  ${prefix}${padEnd(t.name, 5)} ${describe(deep, last, view.now)}`);
   });

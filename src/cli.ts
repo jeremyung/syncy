@@ -122,7 +122,10 @@ async function cmdDoctor(config: Config): Promise<void> {
         "  recorded for it — a different volume mounted at that path, or the\n" +
         "  directory recreated since it was added. syncy refuses to write to it.\n" +
         "  If the path is genuinely the right one, remove and re-add the target\n" +
-        "  in setup, which registers the id that is actually there.\n",
+        "  in setup. That registers the id that is actually there rather than\n" +
+        "  silently inheriting the old volume's history: every unit re-added\n" +
+        "  this way reads unchecked until it is checked again, which costs a\n" +
+        "  fresh quick check at minimum and a deep verify to reach verified.\n",
     );
   }
   process.stdout.write(`  state        ${stateFile()}\n`);

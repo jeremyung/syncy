@@ -158,6 +158,97 @@ describe("source changes invalidate at any age", () => {
   });
 });
 
+describe("cellState: staleRecords marks evidence made against a different volume", () => {
+  test("staleRecords overrides an otherwise-clean latest scan", () => {
+    // evaluateUnit sets staleRecords when it filtered out every scan for this
+    // unit+target because none matched the current identity; cellState must
+    // not fall through to reading `latest` as if it were fresh evidence.
+    const c = cell({ staleRecords: true, latest: undefined, deep: undefined, quick: undefined });
+    expect(c.state).toBe("unchecked");
+    expect(c.reason).toBe("the records here were made against a different volume");
+  });
+
+  test("staleRecords is distinct from never having been checked at all", () => {
+    const neverChecked = cell({ deep: undefined, quick: undefined, latest: undefined });
+    expect(neverChecked.reason).toBe("never checked");
+    const stale = cell({ staleRecords: true, deep: undefined, quick: undefined, latest: undefined });
+    expect(stale.reason).not.toBe("never checked");
+  });
+});
+
+describe("evaluateUnit refuses a record made against a different volume", () => {
+  /**
+   * The bug: `scan.sentinel` records the identity of the volume a check
+   * actually ran against, but nothing ever read it back — scans were matched
+   * to targets by name alone. Remove a destination and add a different one
+   * under the same name, and the old volume's clean deep verify was presented
+   * as evidence for the new one: `evaluateUnit` returned `verified` for a
+   * volume it had never checked.
+   */
+  const identityTarget = (name: string, identity: string): Target => ({
+    name,
+    path: `/Volumes/${name}`,
+    required: true,
+    identity,
+    fstype: "apfs",
+    modifyWindow: 0,
+    flagsDrop: [],
+  });
+
+  const config: Config = {
+    source: "/src",
+    maxVerifyAgeDays: 30,
+    maxQuickAgeDays: 7,
+    minTargets: 1,
+    exclude: [],
+    targets: [identityTarget("ext", "VOLUME-B-UUID")],
+  };
+
+  test("a clean deep scan recorded against the old volume is not evidence for the new one", () => {
+    const state: State = {
+      version: 1,
+      scans: [scan({ unit: "u", target: "ext", method: "deep", sentinel: "VOLUME-A-UUID" })],
+    };
+    const s = evaluateUnit(
+      config,
+      state,
+      { unit: "u", fingerprint: FP, sentinels: new Map([["ext", "ok"]]) },
+      NOW,
+    );
+    expect(s.state).toBe("unchecked");
+    expect(s.reason).toContain("different volume");
+  });
+
+  test("the happy path still verifies when the identity matches", () => {
+    const state: State = {
+      version: 1,
+      scans: [scan({ unit: "u", target: "ext", method: "deep", sentinel: "VOLUME-B-UUID" })],
+    };
+    const s = evaluateUnit(
+      config,
+      state,
+      { unit: "u", fingerprint: FP, sentinels: new Map([["ext", "ok"]]) },
+      NOW,
+    );
+    expect(s.state).toBe("verified");
+  });
+
+  test("a target proven by sentinel file rather than identity still works", () => {
+    const sentinelConfig: Config = { ...config, targets: [target("nas")] };
+    const state: State = {
+      version: 1,
+      scans: [scan({ unit: "u", target: "nas", method: "deep", sentinel: "sent-nas" })],
+    };
+    const s = evaluateUnit(
+      sentinelConfig,
+      state,
+      { unit: "u", fingerprint: FP, sentinels: new Map([["nas", "ok"]]) },
+      NOW,
+    );
+    expect(s.state).toBe("verified");
+  });
+});
+
 describe("unit roll-up precedence", () => {
   const mk = (targetName: string, state: Cell["state"]): Cell => ({
     target: targetName,
@@ -214,8 +305,8 @@ describe("evaluateUnit", () => {
 
   test("two verified targets clear the unit", () => {
     const state = stateWith([
-      scan({ unit: "u", target: "ext", method: "deep", ts: daysAgo(2) }),
-      scan({ unit: "u", target: "nas", method: "deep", ts: daysAgo(2) }),
+      scan({ unit: "u", target: "ext", method: "deep", ts: daysAgo(2), sentinel: "sent-ext" }),
+      scan({ unit: "u", target: "nas", method: "deep", ts: daysAgo(2), sentinel: "sent-nas" }),
     ]);
     const s = evaluateUnit(
       config,
@@ -244,8 +335,8 @@ describe("evaluateUnit", () => {
   test("min_targets is enforced independently of how many are configured", () => {
     const oneRequired: Config = { ...config, targets: [target("ext"), target("nas", false)] };
     const state = stateWith([
-      scan({ unit: "u", target: "ext", method: "deep", ts: daysAgo(2) }),
-      scan({ unit: "u", target: "nas", method: "deep", ts: daysAgo(2) }),
+      scan({ unit: "u", target: "ext", method: "deep", ts: daysAgo(2), sentinel: "sent-ext" }),
+      scan({ unit: "u", target: "nas", method: "deep", ts: daysAgo(2), sentinel: "sent-nas" }),
     ]);
     const s = evaluateUnit(
       oneRequired,

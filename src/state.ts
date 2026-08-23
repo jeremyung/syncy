@@ -124,20 +124,43 @@ export function upsertScan(state: State, scan: Scan): State {
   return { version: 1, scans: next };
 }
 
+/**
+ * Whether a recorded scan is evidence for a target resolving to `identity`.
+ *
+ * A scan is written against whatever volume the check actually ran on
+ * (`scan.sentinel`), which was never compared back against anything — remove a
+ * destination and add a different one under the same name, and the old
+ * volume's clean verdicts were presented as evidence for the new one. An
+ * empty recorded identity is treated as NOT matching: absence of provenance is
+ * not evidence, so it can never satisfy a lookup.
+ *
+ * `identity` is optional so callers that have not been updated to resolve a
+ * target's identity keep their prior, unfiltered behaviour rather than being
+ * forced into either extreme by a default.
+ */
+function matchesIdentity(s: Scan, identity: string | undefined): boolean {
+  if (identity === undefined) return true;
+  return identity !== "" && s.sentinel === identity;
+}
+
 export function findScan(
   state: State,
   unit: string,
   target: string,
   method: Method,
+  identity?: string,
 ): Scan | undefined {
-  return state.scans.find((s) => s.unit === unit && s.target === target && s.method === method);
+  return state.scans.find(
+    (s) => s.unit === unit && s.target === target && s.method === method && matchesIdentity(s, identity),
+  );
 }
 
 /** The most recent check of either method, which drives the cheap clock. */
-export function latestScan(state: State, unit: string, target: string): Scan | undefined {
+export function latestScan(state: State, unit: string, target: string, identity?: string): Scan | undefined {
   let best: Scan | undefined;
   for (const s of state.scans) {
     if (s.unit !== unit || s.target !== target) continue;
+    if (!matchesIdentity(s, identity)) continue;
     if (best === undefined || s.ts > best.ts) best = s;
   }
   return best;
@@ -172,6 +195,12 @@ export function appendHistory(entry: HistoryEntry, file: string = historyFile())
  * deep verify reads them; an SMD share and a local disk differ by two orders of
  * magnitude. Averaging across any of those would produce a confident wrong
  * number, which is worse than no bar.
+ *
+ * Deliberately NOT filtered by identity, unlike `findScan`/`latestScan`: this
+ * estimates a destination's read throughput, not a verdict about a unit's
+ * files. A volume swapped in under the same target name has its own, unknown
+ * throughput, but the read speed of *some* drive at this target name is still
+ * the best available guess until a sample exists for the new one.
  */
 export function estimateMs(
   state: State,

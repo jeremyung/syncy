@@ -108,6 +108,44 @@ describe("scans are keyed by unit, target AND method", () => {
   });
 });
 
+describe("a scan is only evidence for the identity it was recorded against", () => {
+  /**
+   * `scan.sentinel` carries the identity of the volume the check actually ran
+   * against, but nothing ever compared it back — scans were matched by
+   * unit+target name alone. Remove a destination and add a different one
+   * under the same name, and the old volume's clean verdicts kept reading as
+   * evidence for the new one.
+   */
+  test("findScan ignores a scan recorded against a different identity", () => {
+    const s = upsertScan(EMPTY_STATE, scan({ sentinel: "VOLUME-A-UUID" }));
+    expect(findScan(s, "photos/2019", "nas", "deep", "VOLUME-B-UUID")).toBeUndefined();
+    expect(findScan(s, "photos/2019", "nas", "deep", "VOLUME-A-UUID")).toBeDefined();
+  });
+
+  test("latestScan ignores a scan recorded against a different identity", () => {
+    const s = upsertScan(EMPTY_STATE, scan({ sentinel: "VOLUME-A-UUID" }));
+    expect(latestScan(s, "photos/2019", "nas", "VOLUME-B-UUID")).toBeUndefined();
+    expect(latestScan(s, "photos/2019", "nas", "VOLUME-A-UUID")).toBeDefined();
+  });
+
+  test("an empty recorded identity never matches, even an empty requested one", () => {
+    // Absence of provenance is not evidence — a record with nothing written
+    // for its identity must not be treated as satisfying a lookup for "",
+    // which is what a target with neither identity nor sentinel would resolve
+    // to.
+    const s = upsertScan(EMPTY_STATE, scan({ sentinel: "" }));
+    expect(findScan(s, "photos/2019", "nas", "deep", "")).toBeUndefined();
+  });
+
+  test("omitting identity preserves the old, unfiltered lookup", () => {
+    // Callers that have not been taught a target's identity keep matching on
+    // unit+target+method alone, exactly as before this filter existed.
+    const s = upsertScan(EMPTY_STATE, scan({ sentinel: "VOLUME-A-UUID" }));
+    expect(findScan(s, "photos/2019", "nas", "deep")).toBeDefined();
+    expect(latestScan(s, "photos/2019", "nas")).toBeDefined();
+  });
+});
+
 describe("history", () => {
   test("appends one JSON line per invocation", () => {
     const file = join(dir, "history.jsonl");

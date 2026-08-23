@@ -73,6 +73,15 @@ export interface CellInput {
   readonly now: number;
   readonly maxVerifyAgeDays: number;
   readonly maxQuickAgeDays: number;
+  /**
+   * True when scans exist for this unit and target, but none were recorded
+   * against the identity the target resolves to right now — evidence made
+   * against a volume that is not the one mounted here. This is distinct from
+   * `latest === undefined`, which also covers the target never having been
+   * checked at all; `cellState` needs to tell the two apart to give the
+   * correct reason.
+   */
+  readonly staleRecords?: boolean;
 }
 
 /**
@@ -114,8 +123,9 @@ export function knownExtras(
   state: State,
   unit: string,
   target: string,
+  identity?: string,
 ): { readonly count: number; readonly asOf: number } | null {
-  const quick = findScan(state, unit, target, "quick");
+  const quick = findScan(state, unit, target, "quick", identity);
   if (quick === undefined || quick.nExtra <= 0) return null;
   return { count: quick.nExtra, asOf: quick.ts };
 }
@@ -157,6 +167,14 @@ export function cellState(input: CellInput): Cell {
           // added. Either way this is not the directory that was registered.
           : "not the directory that was registered — re-add it in setup";
     return { ...base, state: "unchecked", reason };
+  }
+
+  // A record exists for this unit and target, but not for the volume that is
+  // actually here right now. Without this check, remove-and-re-add under the
+  // same name inherited the old volume's clean history — the one way this
+  // tool could report `verified` for a destination it had never checked.
+  if (input.staleRecords === true) {
+    return { ...base, state: "unchecked", reason: "the records here were made against a different volume" };
   }
 
   const latest = input.latest;
@@ -262,21 +280,34 @@ export function evaluateUnit(
 ): UnitStatus {
   const cells = config.targets.map((target) => {
     const sentinel = ev.sentinels.get(target.name) ?? "unreachable";
+    // The identity a scan must have been recorded against to count as
+    // evidence for this target. Never read back before this commit: a scan
+    // is written with the identity of whatever volume it actually ran
+    // against, but every lookup matched on unit+target name alone, so a
+    // record made against a removed volume kept counting as evidence for
+    // whatever was later added under the same name.
+    const identity = target.identity ?? target.sentinel ?? "";
+    const latest = latestScan(state, ev.unit, target.name, identity);
+    // Scans exist for this unit+target under *some* identity but none match
+    // the current one — distinguishes "made against a different volume" from
+    // "never checked at all", which need different reasons.
+    const staleRecords =
+      latest === undefined && state.scans.some((s) => s.unit === ev.unit && s.target === target.name);
+    const extras = knownExtras(state, ev.unit, target.name, identity);
     const input: CellInput = {
       target,
       sentinel,
       fingerprintNow: ev.fingerprint,
-      deep: findScan(state, ev.unit, target.name, "deep"),
-      quick: findScan(state, ev.unit, target.name, "quick"),
-      latest: latestScan(state, ev.unit, target.name),
+      deep: findScan(state, ev.unit, target.name, "deep", identity),
+      quick: findScan(state, ev.unit, target.name, "quick", identity),
+      latest,
       now,
       maxVerifyAgeDays: config.maxVerifyAgeDays,
       maxQuickAgeDays: config.maxQuickAgeDays,
+      staleRecords,
       // A deep verify carries no --delete and always reports zero extras,
       // so the count comes from the quick check that could actually see them.
-      ...(knownExtras(state, ev.unit, target.name) === null
-        ? {}
-        : { knownExtras: knownExtras(state, ev.unit, target.name)!.count }),
+      ...(extras === null ? {} : { knownExtras: extras.count }),
     };
     return cellState(input);
   });
