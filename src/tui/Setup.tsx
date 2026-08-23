@@ -171,18 +171,18 @@ export function Setup({ config, theme, width, height, onChange, onExit }: SetupP
     async (path: string, name: string) => {
       const abs = resolve(path);
       setStatus(`identifying ${name}…`);
-      // Nothing is written to the destination: the volume is identified by
-      // asking the operating system which one is mounted there. A sentinel file
-      // is the stronger check — it also catches the directory being deleted and
-      // recreated — but it costs a file on the user's volume, so it is opt-in.
+      // A destination is identified by asking the OS which volume is mounted
+      // there, BEFORE any write to it. A probe would rsync a directory into the
+      // destination, so we must check that identify() succeeded before calling
+      // probeTarget() — if the volume is not identified, we must not write.
       const found = await identify(abs);
-      const fstype = await detectFstype(abs);
-      setStatus(`probing ${name} for acl and xattr support…`);
-      const probe = await probeTarget(abs);
       if (found === null) {
         setStatus(`could not identify the volume at ${abs}`);
         return;
       }
+      const fstype = await detectFstype(abs);
+      setStatus(`probing ${name} for acl and xattr support…`);
+      const probe = await probeTarget(abs);
       const target: Target = {
         name,
         path: abs,
