@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import type { Target } from "./config.ts";
+import { join } from "node:path";
+import type { Config, Target } from "./config.ts";
 
 /**
  * rsync invocation (DESIGN.md section 3).
@@ -115,6 +116,35 @@ export function buildArgv(
 
   argv.push(asDir(source), asDir(target.path));
   return argv;
+}
+
+/**
+ * Builds the argv for one unit at one destination — the single place every
+ * caller turns a (config, unit, target) triple into a real rsync invocation.
+ *
+ * Five call sites used to do this independently: `buildArgv(mode,
+ * join(config.source, unit), { ...target, path: join(target.path, unit) },
+ * config.exclude)`, repeated in scan.ts, sync.ts and twice in Plan.tsx —
+ * and Confirm.tsx built the same pair with template strings
+ * (`${config.source}/${unit}`) instead of `join()`. Confirm's own comment
+ * claims "nothing runs that is not shown here first"; that promise rested on
+ * those constructions happening to agree, not on them being the same code.
+ * Routing every call site through this function makes it structural.
+ */
+export function argvFor(
+  config: Config,
+  unit: string,
+  target: Target,
+  mode: Mode,
+  opts: ArgvOptions = {},
+): string[] {
+  return buildArgv(
+    mode,
+    join(config.source, unit),
+    { ...target, path: join(target.path, unit) },
+    config.exclude,
+    opts,
+  );
 }
 
 /**

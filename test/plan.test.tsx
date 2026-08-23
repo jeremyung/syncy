@@ -1,10 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, type Config } from "../src/config.ts";
-import { buildArgv, DEFAULT_RSYNC } from "../src/rsync.ts";
+import { buildArgv, checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
+import { writeSentinel } from "../src/sentinel.ts";
+import { startSync } from "../src/sync.ts";
 import { deviations, Plan, planText } from "../src/tui/Plan.tsx";
 import { THEMES } from "../src/tui/theme.ts";
+import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
  * The plan screen exists so `q` and `d` are not opaque.
@@ -133,6 +137,59 @@ describe("the plan names every mode and what it costs", () => {
   });
 });
 
+describe("a repair sync shows the checksum flag it will actually run with", () => {
+  /**
+   * A repair sync (launched when a deep verify found drift by content) runs
+   * with -c, added by sync.ts's `checksum: true`. This screen's own doc
+   * comment claims the commands "cannot drift from what happens" — which was
+   * false for exactly this flag: planText/flagsFor never took a checksum
+   * option at all, so a target in repair state showed the same command as one
+   * that was not.
+   */
+  test("the on-screen sync command carries -c for a target that needs it", () => {
+    // Deep verify always carries -c regardless of repair state, so the
+    // assertion has to be scoped to the sync line specifically.
+    const syncLine = (text: string): string =>
+      text.split("\n").find((l) => l.includes("--partial-dir"))!;
+
+    expect(syncLine(frame("photos-2024", 120))).not.toContain(" -c ");
+
+    const { lastFrame } = render(
+      <Plan
+        config={config}
+        unit="photos-2024"
+        needsChecksum={new Set(["ext"])}
+        theme={THEMES.ansi}
+        width={120}
+        onClose={() => undefined}
+        onCopy={() => undefined}
+      />,
+    );
+    const withRepair = plain(lastFrame());
+    expect(syncLine(withRepair)).toContain(" -c ");
+    expect(withRepair).toContain("checksum");
+  });
+
+  test("deviations() flags a target needing checksum repair, even with otherwise identical flags", () => {
+    const same = parseConfig(
+      `source = "/src"\n` +
+        ["a", "b"].map((n, i) => `[[target]]\nname = "${n}"\npath = "/d${i}"\nsentinel = "s${i}"\n`).join(""),
+    );
+    const d = deviations(same, "u", new Set(["b"]));
+    expect(d).toHaveLength(1);
+    expect(d[0]!.name).toBe("b");
+    expect(d[0]!.why).toContain("checksum repair");
+  });
+
+  test("planText's sync line for a repairing target carries -c; a non-repairing one does not", () => {
+    const text = planText(config, "photos-2024", new Set(["ext"]));
+    const syncLines = text.split("\n").filter((l) => l.includes("--partial-dir"));
+    expect(syncLines).toHaveLength(2); // one per target: ext, nas
+    expect(syncLines[0]).toContain(" -c "); // ext: repairing
+    expect(syncLines[1]).not.toContain(" -c "); // nas: not
+  });
+});
+
 describe("the commands shown are the commands that run", () => {
   test("planText reproduces buildArgv exactly, for every mode and target", () => {
     // The guarantee. If these ever diverge, the screen is lying.
@@ -242,5 +299,60 @@ describe("the plan fits the window", () => {
   test("the copyable text still carries every destination", () => {
     const text = planText(many, "u");
     for (const n of ["a", "b", "c", "d", "e", "f"]) expect(text).toContain(`# target: ${n}`);
+  });
+});
+
+const build = await checkBuild(DEFAULT_RSYNC);
+const describeRsync = build.ok ? describe : describe.skip;
+
+describeRsync("what Plan renders is what startSync actually spawns", () => {
+  /**
+   * argvFor is now the one function both Plan and the executor go through, so
+   * this is provable directly against the real executor rather than against
+   * another copy of the same construction — the guarantee planText's doc
+   * comment claims, checked against the thing it claims parity with.
+   */
+  let root: string;
+  let real: Config;
+
+  beforeEach(async () => {
+    root = makeFixtureDir("syncy-plan-parity");
+    mkdirSync(join(root, "dst"), { recursive: true });
+    mkdirSync(join(root, "src/photos-2024"), { recursive: true });
+    writeFileSync(join(root, "src/photos-2024/a.txt"), "aaa");
+    const id = await writeSentinel(join(root, "dst"));
+    real = parseConfig(`
+source = "${join(root, "src")}"
+[[target]]
+name = "dst"
+path = "${join(root, "dst")}"
+sentinel = "${id}"
+`);
+  });
+
+  afterEach(() => removeFixtureDir(root));
+
+  test("the repair command Plan shows carries the same -c startSync spawns", async () => {
+    const text = planText(real, "photos-2024", new Set(["dst"]));
+    const syncLine = text.split("\n").find((l) => l.includes("--partial-dir"))!;
+    expect(syncLine).toContain(" -c ");
+
+    const h = startSync(real, "photos-2024", real.targets[0]!, { checksum: true });
+    expect(h.argv).toContain("-c");
+    expect(syncLine).toContain(h.argv.join(" "));
+    h.cancel();
+    await h.done;
+  });
+
+  test("without a repair pending, Plan's command matches startSync's plain one — no -c on either", async () => {
+    const text = planText(real, "photos-2024");
+    const syncLine = text.split("\n").find((l) => l.includes("--partial-dir"))!;
+    expect(syncLine).not.toContain(" -c ");
+
+    const h = startSync(real, "photos-2024", real.targets[0]!);
+    expect(h.argv).not.toContain("-c");
+    expect(syncLine).toContain(h.argv.join(" "));
+    h.cancel();
+    await h.done;
   });
 });

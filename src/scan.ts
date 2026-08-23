@@ -4,7 +4,7 @@ import type { Config, Target } from "./config.ts";
 import { fingerprint, type Fingerprint } from "./fingerprint.ts";
 import { parseItemizeLine, summarize, type Item } from "./itemize.ts";
 import { logDir } from "./paths.ts";
-import { buildArgv, runRsync, type Mode } from "./rsync.ts";
+import { argvFor, runRsync, type Mode } from "./rsync.ts";
 import { checkSentinel, type SentinelStatus } from "./sentinel.ts";
 import { checkVolume } from "./volume.ts";
 import type { Method, Scan } from "./state.ts";
@@ -126,7 +126,7 @@ export async function checkUnit(
     };
   }
 
-  const argv = buildArgv(mode, join(config.source, unit), { ...target, path: join(target.path, unit) }, config.exclude);
+  const argv = argvFor(config, unit, target, mode);
   const items: Item[] = [];
   // Counted as we go rather than by filtering `items` on every line: that
   // filter was O(n) per line, so a 40,000-file folder spent 800 million

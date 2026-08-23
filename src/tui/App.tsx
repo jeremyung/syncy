@@ -530,6 +530,9 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
         <Plan
           config={config}
           unit={row.status.unit}
+          needsChecksum={
+            new Set(row.status.cells.filter((c) => c.needsChecksum === true).map((c) => c.target))
+          }
           theme={theme}
           width={width}
           height={screen.rows}

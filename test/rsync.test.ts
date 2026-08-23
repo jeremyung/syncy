@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { explainFlags } from "../src/itemize.ts";
-import type { Target } from "../src/config.ts";
-import { assertDeleteIsDryRun, buildArgv, RsyncError } from "../src/rsync.ts";
+import { parseConfig, type Target } from "../src/config.ts";
+import { argvFor, assertDeleteIsDryRun, buildArgv, RsyncError } from "../src/rsync.ts";
 
 const target = (over: Partial<Target> = {}): Target => ({
   name: "nas",
@@ -71,6 +72,55 @@ describe("buildArgv", () => {
   test("syncy's own artefacts are always excluded", () => {
     const argv = buildArgv("sync", "/src/x", target(), [".DS_Store"]);
     expect(argv).toContain("--exclude=.syncy-*");
+    expect(argv).toContain("--exclude=.DS_Store");
+  });
+});
+
+describe("argvFor: one place that turns (config, unit, target) into a command", () => {
+  /**
+   * Five call sites used to build `{ ...target, path: join(target.path, unit)
+   * }` independently before calling buildArgv, and Confirm.tsx did it with
+   * template strings instead of join() — two constructions of the same paths
+   * that happened to agree rather than being the same code. argvFor is now
+   * the one place that does this.
+   */
+  const config = parseConfig(`
+source = "/src"
+exclude = [".DS_Store"]
+[[target]]
+name = "nas"
+path = "/Volumes/media/archive"
+sentinel = "s"
+`);
+
+  test("joins source and destination with the unit, the same way join() would", () => {
+    const argv = argvFor(config, "photos/2019", target(), "sync");
+    expect(argv.slice(-2)).toEqual([
+      join("/src", "photos/2019") + "/",
+      join(target().path, "photos/2019") + "/",
+    ]);
+  });
+
+  test("is exactly what buildArgv produces from the equivalent manual construction", () => {
+    for (const mode of ["quick", "deep", "sync"] as const) {
+      const viaHelper = argvFor(config, "photos/2019", target(), mode);
+      const viaManual = buildArgv(
+        mode,
+        join(config.source, "photos/2019"),
+        { ...target(), path: join(target().path, "photos/2019") },
+        config.exclude,
+      );
+      expect(viaHelper).toEqual(viaManual);
+    }
+  });
+
+  test("carries the checksum option through, for the repair case", () => {
+    const argv = argvFor(config, "photos/2019", target(), "sync", { checksum: true });
+    expect(argv).toContain("-c");
+  });
+
+  test("carries exclude patterns through", () => {
+    const argv = argvFor(config, "photos/2019", target(), "sync");
     expect(argv).toContain("--exclude=.DS_Store");
   });
 });

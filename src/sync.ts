@@ -4,7 +4,7 @@ import type { Config, Target } from "./config.ts";
 import { parseItemizeLine, type Item } from "./itemize.ts";
 import { debug } from "./log.ts";
 import { ensureLogDir } from "./scan.ts";
-import { assertDeleteIsDryRun, buildArgv, DEFAULT_RSYNC, RsyncError } from "./rsync.ts";
+import { argvFor, assertDeleteIsDryRun, DEFAULT_RSYNC, RsyncError } from "./rsync.ts";
 import { appendHistory } from "./state.ts";
 
 /**
@@ -62,8 +62,7 @@ export function startSync(
     throw new RsyncError(`no such unit at the source: ${source}`);
   }
 
-  const destination = join(target.path, unit);
-  const argv = buildArgv("sync", source, { ...target, path: destination }, config.exclude, {
+  const argv = argvFor(config, unit, target, "sync", {
     ...(opts.checksum === true ? { checksum: true } : {}),
   });
 

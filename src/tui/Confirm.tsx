@@ -1,9 +1,10 @@
 import { Box, Text, useInput } from "ink";
+import { join } from "node:path";
 import { useEffect, useState } from "react";
 import type { Config, Target } from "../config.ts";
 import { bytes, count } from "../format.ts";
 import { preflight, type Preflight } from "../guards.ts";
-import { buildArgv } from "../rsync.ts";
+import { argvFor } from "../rsync.ts";
 import { padEnd, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
 import type { Theme } from "./theme.ts";
@@ -36,13 +37,12 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
   const { config, unit, target, theme, width, height, onRun, onCancel } = props;
   const [pre, setPre] = useState<Preflight | null>(null);
 
-  const argv = buildArgv(
-    "sync",
-    `${config.source}/${unit}`,
-    { ...target, path: `${target.path}/${unit}` },
-    config.exclude,
-    { ...(props.needsChecksum === true ? { checksum: true } : {}) },
-  );
+  // The same argvFor the executor (startSync) calls — not a second construction
+  // of the same paths that merely happens to agree with it. This is what
+  // "nothing runs that is not shown here first" (below) actually rests on.
+  const argv = argvFor(config, unit, target, "sync", {
+    ...(props.needsChecksum === true ? { checksum: true } : {}),
+  });
 
   useEffect(() => {
     let live = true;
@@ -116,7 +116,7 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
           ? `${count(props.nExtra)} extra files at the target remain untouched`
           : "nothing — this command carries no --delete",
       )}
-      {row("destination", truncatePath(`${target.path}/${unit}`, 50))}
+      {row("destination", truncatePath(join(target.path, unit), 50))}
       {pre?.freeAfter != null ? row("free after", bytes(pre.freeAfter)) : null}
       <Text> </Text>
 
