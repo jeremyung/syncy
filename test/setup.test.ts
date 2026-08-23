@@ -4,8 +4,8 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, type Config, type Target } from "../src/config.ts";
 import { EMPTY_CONFIG, saveConfig, serializeConfig, withoutTarget, withTarget } from "../src/configio.ts";
-import { fstypeFor, modifyWindowFor, parseMount } from "../src/fstype.ts";
-import { completions, validateTargetPath } from "../src/tui/Setup.tsx";
+import { fstypeFor, mountEntryFor, modifyWindowFor, parseMount, type MountEntry } from "../src/fstype.ts";
+import { completions, resolveTarget, validateTargetPath } from "../src/tui/Setup.tsx";
 
 let root: string;
 beforeEach(() => {
@@ -259,4 +259,87 @@ describe("filesystem detection", () => {
   test("precise filesystems get no modify window", () => {
     for (const fs of ["apfs", "smbfs", "hfs", "unknown"]) expect(modifyWindowFor(fs)).toBe(0);
   });
+
+  describe("mountFor and fstypeFor share one search", () => {
+    /**
+     * `mountFor` (volume.ts) and `fstypeFor` used to run the same longest-prefix
+     * search independently — one returning the whole entry, one just its
+     * `fstype`. `fstypeFor` is now `mountEntryFor(...)?.fstype`, so the two can
+     * never again describe the same mount table differently.
+     */
+    test("fstypeFor answers with the same entry mountEntryFor picks", async () => {
+      const { mountFor } = await import("../src/volume.ts");
+      const entries = parseMount(MOUNT);
+      const path = "/Volumes/media/archive/2019";
+      expect(fstypeFor(path, entries)).toBe(mountEntryFor(path, entries)?.fstype ?? "unknown");
+      expect(mountFor(path, entries)).toBe(mountEntryFor(path, entries));
+    });
+
+    /**
+     * The comparison used to weigh a candidate's *normalised* prefix length
+     * against the current best's *raw*, unnormalised `mountPoint.length` — so a
+     * mount point recorded with a trailing slash carried one character of
+     * unearned advantage. Real BSD `mount` output never trails a mount point
+     * with `/` (the root mount is length 1 and handled specially), so this
+     * could not be observed from `/sbin/mount` directly; fixed anyway; because
+     * the search is now shared, a future caller that builds a MountEntry list
+     * some other way (a fixture, a different platform's mount format) no
+     * longer inherits a comparison that only worked by accident.
+     */
+    test("a trailing slash on the mount point does not change which entry wins", () => {
+      const mk = (mountPoint: string, device: string): MountEntry => ({
+        device, mountPoint, fstype: device, flags: [], local: true,
+      });
+      const withSlash = [mk("/Volumes/Archive/", "outer"), mk("/Volumes/Archive/Nested", "inner")];
+      const withoutSlash = [mk("/Volumes/Archive", "outer"), mk("/Volumes/Archive/Nested", "inner")];
+      const path = "/Volumes/Archive/Nested/file.jpg";
+      expect(mountEntryFor(path, withSlash)?.device).toBe("inner");
+      expect(mountEntryFor(path, withSlash)?.device).toBe(mountEntryFor(path, withoutSlash)?.device);
+    });
+  });
+});
+
+describe("resolveTarget: identify before anything is written", () => {
+  /**
+   * commitTarget's null-check ("identify before any write") could not be
+   * tested before this: identify() always read the real mount table, and
+   * every real absolute path matches at least the root mount, so there was no
+   * way to make identify() return null without spawning a destination with
+   * nothing mounted there at all. `identify` (and, through it, `resolveTarget`)
+   * now accepts a pre-parsed MountEntry list, the way fstypeFor already does —
+   * an empty one guarantees no match, however the real machine's volumes are
+   * arranged.
+   */
+  test("a volume that cannot be identified is refused, and nothing is probed", async () => {
+    const dir = makeFixtureDir("syncy-resolve");
+    try {
+      const before = readdirSync(dir);
+      const result = await resolveTarget(dir, "nas", []);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toContain("could not identify the volume");
+      // probeTarget rsyncs a payload into the target and removes it afterwards;
+      // never having run leaves the directory exactly as it started.
+      expect(readdirSync(dir)).toEqual(before);
+    } finally {
+      removeFixtureDir(dir);
+    }
+  });
+
+  test("a volume that can be identified is probed and returns a target", async () => {
+    const dir = makeFixtureDir("syncy-resolve-ok");
+    try {
+      const entries: MountEntry[] = [
+        { device: "/dev/disk9s1", mountPoint: dir, fstype: "apfs", flags: ["local"], local: true },
+      ];
+      const result = await resolveTarget(dir, "nas", entries);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.target.path).toBe(dir);
+        expect(result.target.fstype).toBe("apfs");
+        expect(result.target.identity).toBeTruthy();
+      }
+    } finally {
+      removeFixtureDir(dir);
+    }
+  }, 15_000);
 });

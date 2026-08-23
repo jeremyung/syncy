@@ -1,5 +1,5 @@
 import { statfsSync } from "node:fs";
-import { fstypeFor, parseMount, type MountEntry } from "./fstype.ts";
+import { fstypeFor, mountEntryFor, parseMount, type MountEntry } from "./fstype.ts";
 
 /**
  * Identifying a destination without writing anything to it.
@@ -26,18 +26,17 @@ export interface VolumeIdentity {
   readonly fstype: string;
 }
 
-/** The mount entry whose mount point is the longest prefix of `path`. */
-export function mountFor(path: string, entries: readonly MountEntry[]): MountEntry | undefined {
-  let best: MountEntry | undefined;
-  for (const e of entries) {
-    const point = e.mountPoint.endsWith("/") ? e.mountPoint.slice(0, -1) : e.mountPoint;
-    const prefix = point === "" ? "/" : point;
-    if (path === prefix || path.startsWith(prefix === "/" ? "/" : prefix + "/")) {
-      if (best === undefined || prefix.length > best.mountPoint.length) best = e;
-    }
-  }
-  return best;
-}
+/**
+ * The mount entry whose mount point is the longest prefix of `path`.
+ *
+ * This and `fstypeFor` used to carry the same eight-line search independently
+ * — one returning the entry, one just its `fstype` — and both compared a
+ * normalised prefix's length against a candidate's raw `mountPoint.length`,
+ * which a trailing slash could win unfairly. The search now lives once, in
+ * fstype.ts (`mountEntryFor`), with the comparison fixed there; this is that
+ * same function under the name this module's callers use.
+ */
+export const mountFor = mountEntryFor;
 
 export const isNetwork = (fstype: string): boolean =>
   NETWORK_FS.some((f) => fstype.toLowerCase().includes(f));
@@ -118,10 +117,17 @@ async function mountTable(): Promise<MountEntry[]> {
  * Network shares have no volume uuid — diskutil declines them entirely — so
  * their mount source (`//user@host/share`) is the identity. It distinguishes a
  * different share mounted at the same point, which is what matters.
+ *
+ * `entries`, when given, is used in place of the real mount table. Every real
+ * absolute path matches at least the root mount, so "the volume cannot be
+ * identified" is otherwise untestable without spawning a destination with
+ * nothing mounted there at all — this is the seam that lets that refusal path
+ * be exercised directly, the way `fstypeFor` already accepts a MountEntry
+ * list instead of reading `/sbin/mount` itself.
  */
-export async function identify(path: string): Promise<VolumeIdentity | null> {
-  const entries = await mountTable();
-  const entry = mountFor(path, entries);
+export async function identify(path: string, entries?: readonly MountEntry[]): Promise<VolumeIdentity | null> {
+  const table = entries ?? (await mountTable());
+  const entry = mountFor(path, table);
   if (entry === undefined) return null;
 
   const fstype = entry.fstype;
@@ -161,7 +167,7 @@ export async function fstypeOf(path: string): Promise<string> {
 }
 
 /** What a mounted volume is, in the terms someone choosing a destination cares about. */
-export type VolumeKind = "network" | "external" | "internal" | "image" | "unknown";
+export type VolumeKind = "network" | "external" | "internal" | "unknown";
 
 export interface MountedVolume {
   readonly mountPoint: string;
@@ -182,11 +188,19 @@ export interface MountedVolume {
  * external disk from an internal one, which is a slower question and a less
  * important one — and it declines network mounts outright ("Could not find
  * disk"), so calling it for those would be a spawn spent to learn nothing.
+ *
+ * This used to have a third local case: a `/dev/diskN` mismatch read as a disk
+ * image. macOS attaches disk images at `/dev/diskN` too — the same synthesised
+ * numbering real hardware gets — so that branch could never fire; every disk
+ * image on this machine classified as an internal disk regardless. Telling
+ * the two apart for real needs `hdiutil info` (attached-image devices are
+ * listed by device node, matched against `entry.device`), which is the kind
+ * of extra spawn this function exists specifically to avoid paying for every
+ * local volume. Not worth it for a listing whose only consumer is "which
+ * volume did you mean" — removed rather than left unreachable.
  */
 export function classify(entry: MountEntry): VolumeKind {
   if (!entry.local) return isNetwork(entry.fstype) ? "network" : "unknown";
-  // Disk images are backed by a synthesised device rather than real hardware.
-  if (/^\/dev\/disk\d+/.test(entry.device) === false) return "image";
   return "internal";
 }
 
@@ -199,8 +213,6 @@ export function describeVolume(v: MountedVolume): string {
       return `external disk · ${v.fstype}`;
     case "internal":
       return `this mac · ${v.fstype}`;
-    case "image":
-      return `disk image · ${v.fstype}`;
     default:
       return v.fstype;
   }
@@ -262,7 +274,7 @@ export async function mountedVolumes(): Promise<MountedVolume[]> {
     });
   }
   // Network and external first: those are what an archive gets replicated to.
-  const order: readonly VolumeKind[] = ["external", "network", "image", "internal", "unknown"];
+  const order: readonly VolumeKind[] = ["external", "network", "internal", "unknown"];
   return out.sort(
     (a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.name.localeCompare(b.name),
   );

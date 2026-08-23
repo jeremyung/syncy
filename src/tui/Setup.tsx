@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { isWithin, type Config, type Target } from "../config.ts";
 import { saveConfig, withoutTarget, withTarget } from "../configio.ts";
-import { detectFstype, modifyWindowFor } from "../fstype.ts";
+import { modifyWindowFor, type MountEntry } from "../fstype.ts";
 import { configFile } from "../paths.ts";
 import { probeTarget } from "../probe.ts";
 import { listUnits, targetReachability } from "../scan.ts";
@@ -95,6 +95,54 @@ export function validateTargetPath(path: string, config: Config): string | null 
   return null;
 }
 
+/** What `resolveTarget` produced: a usable target, or why there is none. */
+export type TargetResolution =
+  | { readonly ok: true; readonly target: Target; readonly detail: string }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * The identify-then-probe sequence a new target goes through, factored out of
+ * the `commitTarget` hook so its refusal path is directly testable.
+ *
+ * A destination is identified by asking the OS which volume is mounted there,
+ * BEFORE any write to it (DESIGN.md, and see the comment this replaced in
+ * commitTarget). A probe would rsync a directory into the destination, so
+ * identify() must succeed before probeTarget() ever runs — if the volume
+ * cannot be identified, nothing is written.
+ *
+ * `entries`, when given, bypasses identify()'s own mount-table read — the
+ * same seam fstypeFor already takes a MountEntry list through. Without it,
+ * "the volume cannot be identified" was true only of paths with nothing
+ * mounted there at all, which no fixture inside this project can produce (the
+ * root mount always matches); this is what makes the refusal path
+ * reproducible in a test without spawning a real, unidentifiable destination.
+ */
+export async function resolveTarget(
+  abs: string,
+  name: string,
+  entries?: readonly MountEntry[],
+  onProgress?: (message: string) => void,
+): Promise<TargetResolution> {
+  const found = await identify(abs, entries);
+  if (found === null) {
+    return { ok: false, reason: `could not identify the volume at ${abs}` };
+  }
+  const fstype = found.fstype;
+  onProgress?.(`probing ${name} for acl and xattr support…`);
+  const probe = await probeTarget(abs);
+  const target: Target = {
+    name,
+    path: abs,
+    required: true,
+    identity: found.id,
+    identityKind: found.kind,
+    fstype,
+    modifyWindow: modifyWindowFor(fstype),
+    flagsDrop: probe.flagsDrop,
+  };
+  return { ok: true, target, detail: `${name}: ${fstype} · ${found.kind} ${found.id} · ${probe.detail}` };
+}
+
 export function Setup({ config, theme, width, height, onChange, onExit }: SetupProps): React.ReactElement {
   const [mode, setMode] = useState<Mode>("list");
   const [cursor, setCursor] = useState(0);
@@ -171,30 +219,13 @@ export function Setup({ config, theme, width, height, onChange, onExit }: SetupP
     async (path: string, name: string) => {
       const abs = resolve(path);
       setStatus(`identifying ${name}…`);
-      // A destination is identified by asking the OS which volume is mounted
-      // there, BEFORE any write to it. A probe would rsync a directory into the
-      // destination, so we must check that identify() succeeded before calling
-      // probeTarget() — if the volume is not identified, we must not write.
-      const found = await identify(abs);
-      if (found === null) {
-        setStatus(`could not identify the volume at ${abs}`);
+      const result = await resolveTarget(abs, name, undefined, setStatus);
+      if (!result.ok) {
+        setStatus(result.reason);
         return;
       }
-      const fstype = await detectFstype(abs);
-      setStatus(`probing ${name} for acl and xattr support…`);
-      const probe = await probeTarget(abs);
-      const target: Target = {
-        name,
-        path: abs,
-        required: true,
-        identity: found.id,
-        identityKind: found.kind,
-        fstype,
-        modifyWindow: modifyWindowFor(fstype),
-        flagsDrop: probe.flagsDrop,
-      };
-      persist(withTarget(config, target));
-      setStatus(`${name}: ${fstype} · ${found.kind} ${found.id} · ${probe.detail}`);
+      persist(withTarget(config, result.target));
+      setStatus(result.detail);
     },
     [config, persist],
   );
