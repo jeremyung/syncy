@@ -5,3 +5,4 @@ syncy
 *.bun-build
 testdata/
 .impeccable.md
+.DS_Store

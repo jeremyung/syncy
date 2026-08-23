@@ -235,8 +235,8 @@ reasons, and a symbol you have to memorise should always earn its place.
 | `~` | **unverified** | Present and matching on size+date, but contents never checksummed — or were, and that verify has since expired or been invalidated | deep verify |
 | `▲` | **behind** | Present, N files not yet copied (count shown inline: `▲143`) | sync |
 | `✗` | **missing** | Not present at the destination at all | sync (full copy) |
-| `?` | **unchecked** | Cannot see this destination right now | mount the volume |
-| `!` | **error** | rsync exited non-zero; log linked | read the log |
+| `?` | **unchecked** | Nothing can be concluded: the destination cannot be seen right now, or the records held for it were made against a different volume | mount the volume, or re-check it |
+| `!` | **error** | rsync exited non-zero, other than 24 — files vanishing mid-walk is routine on a live archive, not a finding; log linked | read the log |
 
 Three former states merged into `~`: *quick-checked only*, *source changed since
 verify*, and *verify older than `max_verify_age_days`*. All three mean "the

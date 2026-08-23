@@ -39,7 +39,7 @@ folder's state is the weakest state among its required destinations.
 | `~` | unverified | Present, matching on size and date, but never checksummed — or the checksum has expired |
 | `▲` | behind | Present, but files are missing or differ |
 | `✗` | missing | Not present |
-| `?` | unchecked | Destination not reachable, so nothing can be concluded |
+| `?` | unchecked | Nothing can be concluded — the destination is unreachable, or its records were made against a different volume |
 
 States describe the files. They do not prescribe an action.
 
@@ -171,7 +171,8 @@ syncy adopt <path>     write a sentinel to a destination
 ```
 
 Keys: `enter` differences, `q` quick check, `d` deep verify, `s` sync,
-`p` commands, `e` evidence, `f` filter, `,` setup, `?` all keys, `ctrl-c` quit.
+`p` commands, `e` evidence, `f` filter, `,` setup, `?` all keys, `ctrl-c` quit
+(during a transfer the first press cancels it; a second quits).
 Hold shift to run a check against every folder rather than the selected one.
 
 syncy sets the terminal window and tab title, so a check running in a background
@@ -297,7 +298,7 @@ own palette.
 ## Development
 
 ```
-bun test               # 722 tests
+bun test               # 730 tests
 bunx tsc --noEmit
 bun run build
 bun run audit          # no machine-specific data in the tree or the history
