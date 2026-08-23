@@ -19,9 +19,20 @@ HOSTNAME_SHORT=$(hostname -s 2>/dev/null || echo "__no_such_host__")
 HOME_PATH=$(printf '%s' "$HOME" | sed 's/[.[\*^$]/\\&/g')
 
 # Mounted volume names, and the servers behind any network mounts.
-VOLUMES=$(mount 2>/dev/null | sed -n 's|.* on /Volumes/\([^ ]*\) .*|\1|p' \
+# Volume names can contain spaces, so capture up to the " (" that precedes the fstype.
+VOLUMES=$(mount 2>/dev/null | sed -n 's|.* on /Volumes/\([^(]*\) (.*|\1|p' | sed 's/ *$//' \
   | grep -v '^\.' | sed 's/[.[\*^$]/\\&/g' | sort -u)
-SERVERS=$(mount 2>/dev/null | sed -n 's|^//[^@]*@\([^/]*\)/.*|\1|p' | sort -u)
+# Server hostnames come from SMB (//host/share or //user@host/share) or NFS (host:/share) mounts.
+# Extract from the device field: remove leading //, strip any user@, then take up to the first / or :.
+# Only consider remote mounts: skip local device paths and pseudo-filesystems.
+SERVERS=$(mount 2>/dev/null | awk '$1 !~ /^\/dev\// && $1 !~ /^devfs$/ && $1 !~ /^map$/ && $1 !~ /^localhost/{
+  device=$1
+  host=device
+  gsub(/^\/\//, "", host)
+  gsub(/^[^@]*@/, "", host)
+  gsub(/[\/:].*/, "", host)
+  if (host != "") print host
+}' | sort -u)
 
 # The configured commit address. A generic address pattern matched
 # documentation instead: `//you@nas.local/share` is rsync's mount-source
@@ -36,6 +47,8 @@ PATTERNS=$(
     "([0-9]{1,3}\.){3}[0-9]{1,3}" \
     "([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}"
   [ -n "$GIT_EMAIL" ] && printf '%s\n' "$GIT_EMAIL"
+  # Preserve volume names containing spaces by splitting only on newlines.
+  IFS=$'\n'
   for v in $VOLUMES; do printf '/Volumes/%s\n' "$v"; done
   for s in $SERVERS; do printf '%s\n' "$s"; done
 )
