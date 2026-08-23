@@ -8,6 +8,7 @@ import { allReachability, checkUnit, listUnits, methodOf, type Reachability } fr
 import { appendHistory, estimateMs, loadState, saveState, upsertScan, type State } from "../state.ts";
 import { debug, timed, timedAsync } from "../log.ts";
 import { setTitle, titleFor } from "../title.ts";
+import { padEnd, truncatePath } from "../width.ts";
 import { evaluateUnit, reachWord, type CellState, type UnitState } from "../status.ts";
 import { Diff as DiffScreen } from "./Diff.tsx";
 import { buildDiff, loadDiff, saveDiff, type Diff } from "../diff.ts";
@@ -701,13 +702,13 @@ function Evidence({ row, config, state, theme, width, height }: EvidenceProps): 
         return (
           <Box key={t.name} flexDirection="column">
             <Box>
-              <Text color={theme.figure}>{"  " + t.name.padEnd(10)}</Text>
+              <Text color={theme.figure}>{"  " + padEnd(t.name, 10)}</Text>
               <Text color={theme[cell === undefined ? "unchecked" : cellToken(cell.state)]}>
-                {(cell?.state ?? "unchecked").padEnd(12)}
+                {padEnd(cell?.state ?? "unchecked", 12)}
               </Text>
               <Text color={theme.dim}>{cell?.reason ?? ""}</Text>
             </Box>
-            <Text color={theme.dim}>{`      path        ${t.path}`}</Text>
+            <Text color={theme.dim}>{`      path        ${truncatePath(t.path, width - 18)}`}</Text>
             <Text color={theme.dim}>
               {`      deep        ${deep === undefined ? "never" : `${deep.outcome} · ${new Date(deep.ts).toLocaleString()}`}`}
             </Text>
