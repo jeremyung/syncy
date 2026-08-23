@@ -266,6 +266,7 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
         // works from the second check onwards on *any* folder rather than only
         // on one that has been checked twice.
         const prior = estimateMs(working, job.target.name, methodOf(mode), job.size);
+        const jobStarted = Date.now();
         const base = {
           unit: job.unit,
           target: job.target.name,
@@ -275,12 +276,12 @@ export function App({ config: initialConfig }: AppProps): React.ReactElement {
           bytesDone,
           bytesTotal,
           startedAt,
+          jobStartedAt: jobStarted,
           filesTotal: job.files,
           unitBytes: job.size,
           ...(prior !== undefined ? { priorMs: prior } : {}),
         } as const;
         setRunning({ ...base, filesSeen: 0 });
-        const jobStarted = Date.now();
         debug("check.start", {
           mode,
           unit: job.unit,

@@ -279,7 +279,7 @@ describe("the ledger fits the window it is given", () => {
    */
   const running = {
     unit: "photos-2019", target: "ext", mode: "deep" as const, done: 0, total: 1,
-    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 164_000,
+    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 164_000, jobStartedAt: NOW - 164_000,
     filesTotal: 935, unitBytes: 13e9, priorMs: 720_000,
   };
   const NOTICE = "[d] ignored — the deep check on photos-2019 is still running";
@@ -374,7 +374,7 @@ describe("the folder list shows which folder a check is on", () => {
    */
   const running = {
     unit: "photos-2019", target: "nas", mode: "deep" as const, done: 1, total: 2,
-    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 292_000,
+    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 292_000, jobStartedAt: NOW - 292_000,
     filesTotal: 900, unitBytes: 78e9, priorMs: 600_000,
   };
   const lines = (selected: number): string[] => {
