@@ -453,4 +453,42 @@ describe("a deep verify must not erase a known extra", () => {
     }, 4);
     expect(line).toContain("deep verified");
   });
+
+  test("a deep check reporting behind still carries a known extra", () => {
+    // REPRODUCED: only the clean path read `input.knownExtras`; the "behind"
+    // branch read `latest.nExtra` directly, so a deep check that itemised the
+    // unit as behind reported 0 extras even though a quick check had found 5.
+    const behindDeep = scan({ method: "deep", ts: 2000, outcome: "behind", nChanges: 3, nExtra: 0 });
+    const c = cellState({
+      target: target("nas"),
+      sentinel: "ok",
+      fingerprintNow: FP,
+      deep: undefined,
+      quick: scan({ method: "quick", ts: 1000 }),
+      latest: behindDeep,
+      now: NOW,
+      maxVerifyAgeDays: 30,
+      maxQuickAgeDays: 7,
+      knownExtras: 5,
+    });
+    expect(c.state).toBe("behind");
+    expect(c.nExtra).toBe(5);
+  });
+
+  test("an error outcome still carries a known extra", () => {
+    const c = cellState({
+      target: target("nas"),
+      sentinel: "ok",
+      fingerprintNow: FP,
+      deep: undefined,
+      quick: scan({ method: "quick", ts: 1000 }),
+      latest: scan({ method: "deep", ts: 2000, outcome: "error", nExtra: 0 }),
+      now: NOW,
+      maxVerifyAgeDays: 30,
+      maxQuickAgeDays: 7,
+      knownExtras: 5,
+    });
+    expect(c.state).toBe("error");
+    expect(c.nExtra).toBe(5);
+  });
 });

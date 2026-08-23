@@ -180,18 +180,27 @@ export function cellState(input: CellInput): Cell {
   const latest = input.latest;
   if (latest === undefined) return { ...base, state: "unchecked", reason: "never checked" };
 
+  // Hoisted above every branch below, so all of them read the same count.
+  // `nExtra` comes from the input rather than from `latest`: a deep verify
+  // carries no `--delete` and always reports zero, not because the extras are
+  // gone but because it never looked. Reading the count from `latest.nExtra`
+  // only in the "behind" branch meant a deep check that found the unit
+  // behind — or one that simply failed — silently erased the destination's
+  // only known extra, recorded by an earlier quick check.
+  const extra = { ...base, nExtra: input.knownExtras ?? latest.nExtra };
+
   if (latest.outcome === "error") {
-    return { ...base, state: "error", reason: "last check failed — rerun with SYNCY_DEBUG=1" };
+    return { ...extra, state: "error", reason: "last check failed — rerun with SYNCY_DEBUG=1" };
   }
   if (latest.outcome === "missing") {
-    // `base` sets nChanges/bytesPending to 0 — true of a check that itemised
+    // `base`'s nChanges/bytesPending are 0 — true of a check that itemised
     // nothing, wrong as the figure everything downstream consumes. preflight
     // computes `needed = ceil(bytesPending * SPACE_MARGIN)`, so 0 pending
     // bytes disabled the free-space guard for exactly the case it exists to
     // catch: the first full copy of an archive onto a new drive. The real
     // figure is what a copy will actually move — the source as it stands now.
     return {
-      ...base,
+      ...extra,
       state: "missing",
       reason: "never copied",
       nChanges: input.fingerprintNow.nfiles,
@@ -201,7 +210,7 @@ export function cellState(input: CellInput): Cell {
   if (latest.outcome === "behind") {
     const byChecksum = latest.method === "deep";
     return {
-      ...base,
+      ...extra,
       state: "behind",
       // Says what the files actually are, not what the method was. A deep
       // check reporting 504 changes was described as "504 files differ by
@@ -211,18 +220,11 @@ export function cellState(input: CellInput): Cell {
       reason: behindReason(latest),
       nChanges: latest.nChanges,
       bytesPending: latest.bytesPending,
-      nExtra: latest.nExtra,
       ...(byChecksum ? { needsChecksum: true } : {}),
     };
   }
 
   // The most recent check came back clean. Now the two clocks.
-  //
-  // `nExtra` comes from the input rather than from `latest`: a deep verify
-  // always reports zero, having no `--delete` to find them with, so reading it
-  // from whichever scan is newest made a deep check erase a known extra.
-  const extra = { ...base, nExtra: input.knownExtras ?? latest.nExtra };
-
   if (!sameFingerprint(latest.fingerprint, input.fingerprintNow)) {
     return { ...extra, state: "unverified", reason: "source changed since last check" };
   }

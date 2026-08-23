@@ -2,7 +2,7 @@ import type { Config } from "./config.ts";
 import { ageAgo, bytes, stamp } from "./format.ts";
 import type { Scan, State } from "./state.ts";
 import { latestScan, findScan } from "./state.ts";
-import { evidencePhrase, GLYPH, type UnitStatus } from "./status.ts";
+import { evidencePhrase, GLYPH, knownExtras, type UnitStatus } from "./status.ts";
 import { shelfSummary } from "./tui/Shelf.tsx";
 import { displayWidth, fit, padEnd, padStart, truncate } from "./width.ts";
 
@@ -122,8 +122,16 @@ function detailLines(view: LedgerView): string[] {
     const identity = t.identity ?? t.sentinel ?? "";
     const deep = findScan(view.state, row.status.unit, t.name, "deep", identity);
     const last = latestScan(view.state, row.status.unit, t.name, identity);
+    // A deep verify carries no --delete and always reports zero extras, so
+    // the count comes from the quick check that could actually see them —
+    // `describe` accepts this precisely so a deep check does not read as
+    // having erased a known extra. This parameter existed and was never
+    // passed, so the printed ledger's evidence line lost "N extra at
+    // destination" the moment a deep check followed a quick one that found
+    // extras.
+    const extras = knownExtras(view.state, row.status.unit, t.name, identity)?.count;
     const prefix = i === 0 ? padEnd(label, 18) : padEnd("", 18);
-    out.push(`  ${prefix}${padEnd(t.name, 5)} ${describe(deep, last, view.now)}`);
+    out.push(`  ${prefix}${padEnd(t.name, 5)} ${describe(deep, last, view.now, extras)}`);
   });
   const fp = row.status.cells.length > 0 ? view.rows[view.selected] : undefined;
   if (fp !== undefined) {
