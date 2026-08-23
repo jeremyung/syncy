@@ -2,7 +2,7 @@ import type { Config } from "./config.ts";
 import { ageAgo, bytes, stamp } from "./format.ts";
 import type { Scan, State } from "./state.ts";
 import { latestScan, findScan } from "./state.ts";
-import { evidencePhrase, GLYPH, knownExtras, type UnitStatus } from "./status.ts";
+import { evidencePhrase, GLYPH, knownExtras, targetIdentity, type UnitStatus } from "./status.ts";
 import { shelfSummary } from "./tui/Shelf.tsx";
 import { displayWidth, fit, padEnd, padStart, truncate } from "./width.ts";
 
@@ -119,7 +119,7 @@ function detailLines(view: LedgerView): string[] {
     // Filtered to the identity this target resolves to now, or the printed
     // ledger — the path that works over ssh — keeps showing a foreign
     // volume's evidence after a remove-and-re-add under the same name.
-    const identity = t.identity ?? t.sentinel ?? "";
+    const identity = targetIdentity(t);
     const deep = findScan(view.state, row.status.unit, t.name, "deep", identity);
     const last = latestScan(view.state, row.status.unit, t.name, identity);
     // A deep verify carries no --delete and always reports zero extras, so

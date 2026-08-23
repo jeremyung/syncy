@@ -2,7 +2,7 @@ import { Box, Text } from "ink";
 import type { Config } from "../config.ts";
 import { ageAgo, bytes, stamp } from "../format.ts";
 import { findScan, latestScan, type State } from "../state.ts";
-import { evidencePhrase, GLYPH, knownExtras, type UnitStatus } from "../status.ts";
+import { evidencePhrase, GLYPH, knownExtras, targetIdentity, type UnitStatus } from "../status.ts";
 import { displayWidth, padEnd, padStart, truncate } from "../width.ts";
 import { Forklift, forkliftRows } from "./Forklift.tsx";
 import { Progress, progressLines, type RunProgress } from "./Progress.tsx";
@@ -264,15 +264,22 @@ export function Ledger(props: LedgerProps): React.ReactElement {
         <Text color={theme.dim}>{"  no subfolders under the source root"}</Text>
       ) : (
         config.targets.map((t, i) => {
-          const deep = findScan(state, selectedRow.status.unit, t.name, "deep");
-          const last = latestScan(state, selectedRow.status.unit, t.name);
+          // Filtered to the identity this target resolves to now — the same
+          // fix `evaluateUnit` and the printed ledger already carried. Left
+          // unfiltered here, this detail line kept showing a foreign volume's
+          // evidence after a remove-and-re-add under the same name: the third
+          // site of the bug commit 2d32532 fixed at the other two.
+          const identity = targetIdentity(t);
+          const deep = findScan(state, selectedRow.status.unit, t.name, "deep", identity);
+          const last = latestScan(state, selectedRow.status.unit, t.name, identity);
+          const extras = knownExtras(state, selectedRow.status.unit, t.name, identity)?.count;
           const prefix = i === 0 ? padEnd(truncate(selectedRow.status.unit, 17), 18) : padEnd("", 18);
           return (
             <Box key={t.name}>
               <Text color={theme.ink}>{"  " + prefix}</Text>
               <Text color={theme.dim}>{padEnd(t.name, 5) + " "}</Text>
               <Text color={theme.dim}>
-                {evidencePhrase(deep, last, now, { stamp, ageAgo }, knownExtras(state, selectedRow.status.unit, t.name)?.count)}
+                {evidencePhrase(deep, last, now, { stamp, ageAgo }, extras)}
               </Text>
             </Box>
           );

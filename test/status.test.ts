@@ -424,17 +424,17 @@ describe("a deep verify must not erase a known extra", () => {
         scan({ method: "deep", ts: 2000, nExtra: 0 }),
       ],
     };
-    expect(knownExtras(state, "maui", "external")?.count).toBe(1);
+    expect(knownExtras(state, "maui", "external", "s")?.count).toBe(1);
   });
 
   test("no quick check means nothing is claimed either way", () => {
     const state: State = { version: 1, scans: [scan({ method: "deep", ts: 2000 })] };
-    expect(knownExtras(state, "maui", "external")).toBeNull();
+    expect(knownExtras(state, "maui", "external", "s")).toBeNull();
   });
 
   test("a quick check that found none reports none", () => {
     const state: State = { version: 1, scans: [scan({ method: "quick", nExtra: 0 })] };
-    expect(knownExtras(state, "maui", "external")).toBeNull();
+    expect(knownExtras(state, "maui", "external", "s")).toBeNull();
   });
 
   test("the evidence line names them, and calls them a destination", () => {

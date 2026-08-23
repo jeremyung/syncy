@@ -134,12 +134,14 @@ export function upsertScan(state: State, scan: Scan): State {
  * empty recorded identity is treated as NOT matching: absence of provenance is
  * not evidence, so it can never satisfy a lookup.
  *
- * `identity` is optional so callers that have not been updated to resolve a
- * target's identity keep their prior, unfiltered behaviour rather than being
- * forced into either extreme by a default.
+ * `identity` is required on every caller below (not optional, no default): an
+ * optional identity that silently fell back to unfiltered matching is what let
+ * the interactive Ledger keep showing a foreign volume's evidence after
+ * `evaluateUnit` and the printed ledger were both fixed — a caller that
+ * forgets to resolve one now fails to compile instead of quietly reading
+ * wrong.
  */
-function matchesIdentity(s: Scan, identity: string | undefined): boolean {
-  if (identity === undefined) return true;
+function matchesIdentity(s: Scan, identity: string): boolean {
   return identity !== "" && s.sentinel === identity;
 }
 
@@ -148,7 +150,7 @@ export function findScan(
   unit: string,
   target: string,
   method: Method,
-  identity?: string,
+  identity: string,
 ): Scan | undefined {
   return state.scans.find(
     (s) => s.unit === unit && s.target === target && s.method === method && matchesIdentity(s, identity),
@@ -156,7 +158,7 @@ export function findScan(
 }
 
 /** The most recent check of either method, which drives the cheap clock. */
-export function latestScan(state: State, unit: string, target: string, identity?: string): Scan | undefined {
+export function latestScan(state: State, unit: string, target: string, identity: string): Scan | undefined {
   let best: Scan | undefined;
   for (const s of state.scans) {
     if (s.unit !== unit || s.target !== target) continue;

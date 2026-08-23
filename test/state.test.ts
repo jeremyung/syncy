@@ -78,15 +78,15 @@ describe("scans are keyed by unit, target AND method", () => {
     let s = upsertScan(EMPTY_STATE, scan({ method: "deep", ts: 1000 }));
     s = upsertScan(s, scan({ method: "quick", ts: 2000 }));
     expect(s.scans).toHaveLength(2);
-    expect(findScan(s, "photos/2019", "nas", "deep")!.ts).toBe(1000);
-    expect(findScan(s, "photos/2019", "nas", "quick")!.ts).toBe(2000);
+    expect(findScan(s, "photos/2019", "nas", "deep", "s")!.ts).toBe(1000);
+    expect(findScan(s, "photos/2019", "nas", "quick", "s")!.ts).toBe(2000);
   });
 
   test("re-running the same method replaces its record", () => {
     let s = upsertScan(EMPTY_STATE, scan({ method: "deep", ts: 1000 }));
     s = upsertScan(s, scan({ method: "deep", ts: 5000 }));
     expect(s.scans).toHaveLength(1);
-    expect(findScan(s, "photos/2019", "nas", "deep")!.ts).toBe(5000);
+    expect(findScan(s, "photos/2019", "nas", "deep", "s")!.ts).toBe(5000);
   });
 
   test("different targets are independent", () => {
@@ -98,13 +98,13 @@ describe("scans are keyed by unit, target AND method", () => {
   test("latestScan picks the most recent of either method", () => {
     let s = upsertScan(EMPTY_STATE, scan({ method: "deep", ts: 1000 }));
     s = upsertScan(s, scan({ method: "quick", ts: 9000 }));
-    expect(latestScan(s, "photos/2019", "nas")!.method).toBe("quick");
+    expect(latestScan(s, "photos/2019", "nas", "s")!.method).toBe("quick");
   });
 
   test("latestScan ignores other units", () => {
     let s = upsertScan(EMPTY_STATE, scan({ unit: "a", ts: 9000 }));
     s = upsertScan(s, scan({ unit: "b", ts: 1000 }));
-    expect(latestScan(s, "b", "nas")!.ts).toBe(1000);
+    expect(latestScan(s, "b", "nas", "s")!.ts).toBe(1000);
   });
 });
 
@@ -137,13 +137,13 @@ describe("a scan is only evidence for the identity it was recorded against", () 
     expect(findScan(s, "photos/2019", "nas", "deep", "")).toBeUndefined();
   });
 
-  test("omitting identity preserves the old, unfiltered lookup", () => {
-    // Callers that have not been taught a target's identity keep matching on
-    // unit+target+method alone, exactly as before this filter existed.
-    const s = upsertScan(EMPTY_STATE, scan({ sentinel: "VOLUME-A-UUID" }));
-    expect(findScan(s, "photos/2019", "nas", "deep")).toBeDefined();
-    expect(latestScan(s, "photos/2019", "nas")).toBeDefined();
-  });
+  // `identity` used to be optional here, so a caller that forgot to resolve
+  // one silently got unfiltered matching — exactly the gap that let the
+  // interactive Ledger keep showing a foreign volume's evidence after
+  // evaluateUnit and the printed ledger were both fixed. It is a required
+  // parameter now: a caller that omits it fails to compile, which is not
+  // something this runtime suite can assert directly, but every call site
+  // above and in status.ts/render.ts/Ledger.tsx passes one.
 });
 
 describe("history", () => {

@@ -10,6 +10,20 @@ import { latestScan, findScan, type Scan, type State } from "./state.ts";
  * of the files; it never prescribes what to do about them.
  */
 
+/**
+ * The identity a scan must have been recorded against to count as evidence for
+ * this target right now.
+ *
+ * Resolved in exactly one place so `evaluateUnit`, the printed ledger and the
+ * interactive ledger can never compute it three different ways and drift: a
+ * scan is written with the identity of whatever volume it actually ran
+ * against (see `checkUnit` in scan.ts), and every lookup against it has to
+ * agree on what "this target's identity" currently means.
+ */
+export function targetIdentity(target: Target): string {
+  return target.identity ?? target.sentinel ?? "";
+}
+
 export type CellState = "verified" | "unverified" | "behind" | "missing" | "unchecked" | "error";
 export type UnitState = "verified" | "unverified" | "behind" | "missing" | "unchecked" | "error";
 
@@ -123,7 +137,7 @@ export function knownExtras(
   state: State,
   unit: string,
   target: string,
-  identity?: string,
+  identity: string,
 ): { readonly count: number; readonly asOf: number } | null {
   const quick = findScan(state, unit, target, "quick", identity);
   if (quick === undefined || quick.nExtra <= 0) return null;
@@ -294,13 +308,7 @@ export function evaluateUnit(
 ): UnitStatus {
   const cells = config.targets.map((target) => {
     const sentinel = ev.sentinels.get(target.name) ?? "unreachable";
-    // The identity a scan must have been recorded against to count as
-    // evidence for this target. Never read back before this commit: a scan
-    // is written with the identity of whatever volume it actually ran
-    // against, but every lookup matched on unit+target name alone, so a
-    // record made against a removed volume kept counting as evidence for
-    // whatever was later added under the same name.
-    const identity = target.identity ?? target.sentinel ?? "";
+    const identity = targetIdentity(target);
     const latest = latestScan(state, ev.unit, target.name, identity);
     // Scans exist for this unit+target under *some* identity but none match
     // the current one — distinguishes "made against a different volume" from

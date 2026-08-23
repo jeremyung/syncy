@@ -188,6 +188,58 @@ describe("the detail line", () => {
   });
 });
 
+describe("the detail line filters evidence to the target's current identity", () => {
+  /**
+   * The same bug commit 2d32532 fixed for evaluateUnit and the printed
+   * ledger, at its third site: findScan/latestScan/knownExtras were called
+   * here without a target's identity, so a scan recorded against a removed
+   * volume kept reading as this interactive detail line's evidence for
+   * whatever was later mounted under the same target name.
+   */
+  const identityConfig: Config = parseConfig(`
+source = "/src"
+[[target]]
+name = "ext"
+path = "/ext"
+identity = "VOLUME-B-UUID"
+`);
+
+  function identityFrame(state: State): string[] {
+    const { lastFrame } = render(
+      <Ledger
+        rows={rows}
+        selected={0}
+        config={identityConfig}
+        state={state}
+        theme={THEMES.ansi}
+        width={92}
+        now={NOW}
+        busy={null}
+      />,
+    );
+    return (lastFrame() ?? "").split("\n");
+  }
+
+  test("a scan recorded under a different identity is not shown as deep verified", () => {
+    const state = upsertScan(
+      EMPTY_STATE,
+      scan({ target: "ext", method: "deep", ts: NOW, sentinel: "VOLUME-A-UUID" }),
+    );
+    const text = plain(identityFrame(state).join("\n"));
+    expect(text).not.toContain("deep verified");
+    expect(text).toContain("never checked");
+  });
+
+  test("a scan recorded under the current identity still shows as evidence", () => {
+    const state = upsertScan(
+      EMPTY_STATE,
+      scan({ target: "ext", method: "deep", ts: NOW, sentinel: "VOLUME-B-UUID" }),
+    );
+    const text = plain(identityFrame(state).join("\n"));
+    expect(text).toContain("deep verified");
+  });
+});
+
 describe("the footer states facts, never actions", () => {
   test("states what is proven out of the whole, in one phrase", () => {
     // A breakdown by state overflowed the line once several states were
