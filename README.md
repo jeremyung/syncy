@@ -167,6 +167,7 @@ syncy status           print the ledger and exit — works over ssh
 syncy check [folder]   quick check against every destination
 syncy verify [folder]  deep verify against every destination
 syncy doctor           check the rsync build and destination reachability
+syncy adopt <path>     write a sentinel to a destination
 ```
 
 Keys: `enter` differences, `q` quick check, `d` deep verify, `s` sync,

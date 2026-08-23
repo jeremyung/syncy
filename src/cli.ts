@@ -26,6 +26,7 @@ const USAGE = `syncy — replication ledger
   syncy verify [unit]       deep verify (checksum) against every target
   syncy doctor              check the rsync build and target reachability
   syncy init                write a starter config
+  syncy adopt <path>        write a sentinel to a target
 
 Configuration lives at ${configFile()}.
 State, logs and history live in ${stateDir()}.
@@ -150,7 +151,7 @@ min_targets         = 1   # every configured target must verify regardless
 # name     = "ext"
 # path     = "/Volumes/Archive/photos"
 # required = true
-# sentinel = "run 'syncy doctor' after adding, then paste the written id"
+# sentinel = "run 'syncy adopt <path>' to write the id here"
 `,
     "utf8",
   );
