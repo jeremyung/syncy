@@ -1,5 +1,6 @@
 node_modules/
 syncy
+syncy-*
 *.log
 .test-tmp/
 *.bun-build

@@ -9,7 +9,11 @@
   "scripts": {
     "start": "bun run src/cli.ts",
     "test": "bun test",
-    "build": "bun build --compile --minify --target=bun-darwin-arm64 src/cli.ts --outfile syncy",
+    "typecheck": "tsc --noEmit",
+    "lint": "bunx @biomejs/biome@2.5.10 check .",
+    "format": "bunx @biomejs/biome@2.5.10 check --write .",
+    "build": "bun run scripts/build.ts",
+    "build:all": "bun run scripts/build.ts --all",
     "testdata": "bun run scripts/testdata.ts",
     "audit": "sh scripts/audit-history.sh"
   },
