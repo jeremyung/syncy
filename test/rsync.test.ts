@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { explainFlags } from "../src/itemize.ts";
 import { parseConfig, type Target } from "../src/config.ts";
+import { explainFlags } from "../src/itemize.ts";
 import { argvFor, assertDeleteIsDryRun, buildArgv, RsyncError } from "../src/rsync.ts";
 
 const target = (over: Partial<Target> = {}): Target => ({
@@ -147,7 +147,9 @@ describe("the --delete invariant", () => {
   });
 
   test("does not mistake an unrelated flag containing n for a dry run", () => {
-    expect(() => assertDeleteIsDryRun(["-a", "--numeric-ids", "--delete", "/a/", "/b/"])).toThrow(RsyncError);
+    expect(() => assertDeleteIsDryRun(["-a", "--numeric-ids", "--delete", "/a/", "/b/"])).toThrow(
+      RsyncError,
+    );
   });
 
   test("leaves argvs without --delete alone", () => {
@@ -169,8 +171,15 @@ describe("a destination that cannot store permissions", () => {
    * resolved by syncing, so the flag has to come off.
    */
   const target = (flagsDrop: string[]) =>
-    ({ name: "t", path: "/d", required: true, sentinel: "s", fstype: "smbfs",
-       modifyWindow: 0, flagsDrop }) as unknown as Target;
+    ({
+      name: "t",
+      path: "/d",
+      required: true,
+      sentinel: "s",
+      fstype: "smbfs",
+      modifyWindow: 0,
+      flagsDrop,
+    }) as unknown as Target;
 
   test("permissions are preserved by default", () => {
     expect(buildArgv("quick", "/s", target([]), [])).not.toContain("--no-perms");

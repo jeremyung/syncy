@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { parseConfig, type Config } from "../src/config.ts";
-import { renderLedger, type LedgerRow } from "../src/render.ts";
+import { type Config, parseConfig } from "../src/config.ts";
+import { type LedgerRow, renderLedger } from "../src/render.ts";
 import type { Scan, State } from "../src/state.ts";
 import type { UnitStatus } from "../src/status.ts";
 
@@ -100,7 +100,12 @@ identity = "VOLUME-B-UUID"
     };
     const rows: LedgerRow[] = [
       {
-        status: { unit: "maui", state: "unchecked", reason: "r", cells: [cell("ext", "unchecked")] },
+        status: {
+          unit: "maui",
+          state: "unchecked",
+          reason: "r",
+          cells: [cell("ext", "unchecked")],
+        },
         size: 10e9,
       },
     ];

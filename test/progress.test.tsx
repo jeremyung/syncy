@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
-import { barFraction, clock, detailLine, Progress, progressLines, type RunProgress } from "../src/tui/Progress.tsx";
+import {
+  barFraction,
+  clock,
+  detailLine,
+  Progress,
+  progressLines,
+  type RunProgress,
+} from "../src/tui/Progress.tsx";
 import { THEMES } from "../src/tui/theme.ts";
 import { displayWidth } from "../src/width.ts";
 

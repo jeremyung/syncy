@@ -1,4 +1,4 @@
-import { opendirSync, statSync } from "node:fs";
+import { type Dir, opendirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -44,7 +44,7 @@ export function fingerprint(root: string, exclude: readonly string[] = []): Fing
   let maxMtime = 0n;
 
   const walk = (dir: string): void => {
-    let d;
+    let d: Dir;
     try {
       d = opendirSync(dir);
     } catch {

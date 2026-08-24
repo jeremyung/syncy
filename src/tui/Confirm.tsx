@@ -1,9 +1,9 @@
-import { Box, Text, useInput } from "ink";
 import { join } from "node:path";
+import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
 import type { Config, Target } from "../config.ts";
 import { bytes, count } from "../format.ts";
-import { preflight, type Preflight } from "../guards.ts";
+import { type Preflight, preflight } from "../guards.ts";
 import { argvFor } from "../rsync.ts";
 import { padEnd, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
@@ -44,6 +44,12 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
     ...(props.needsChecksum === true ? { checksum: true } : {}),
   });
 
+  // `argv` is deliberately not a dependency: it is the same argvFor call the
+  // executor makes, frozen for the lifetime of this page — the confirm screen
+  // owns the keyboard while it is up, so nothing that could change the argv
+  // can change the props either. Listing it (a fresh array every render)
+  // would re-run preflight — spawning rsync — on every parent render.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   useEffect(() => {
     let live = true;
     preflight(config, target, argv, props.bytesPending)
@@ -94,7 +100,13 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
   );
 
   return (
-    <Screen title="syncy · confirm sync" width={W} theme={theme} footer={footer} {...(height === undefined ? {} : { height })}>
+    <Screen
+      title="syncy · confirm sync"
+      width={W}
+      theme={theme}
+      footer={footer}
+      {...(height === undefined ? {} : { height })}
+    >
       <Box>
         <Text color={theme.figure}>{"  " + unit}</Text>
         <Text color={theme.dim}>{"  →  "}</Text>
@@ -127,7 +139,9 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
           <Box key={c.name}>
             <Text color={theme.dim}>{"  " + padEnd(i === 0 ? "checks" : "", 22)}</Text>
             <Text color={theme.dim}>{padEnd(c.name, 14)}</Text>
-            <Text color={c.ok ? (c.warn === true ? theme.unverified : theme.verified) : theme.missing}>
+            <Text
+              color={c.ok ? (c.warn === true ? theme.unverified : theme.verified) : theme.missing}
+            >
               {padEnd(c.ok ? (c.warn === true ? "no" : "ok") : "FAIL", 5)}
             </Text>
             <Text color={theme.dim}>{c.detail}</Text>

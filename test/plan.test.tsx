@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { render } from "ink-testing-library";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config } from "../src/config.ts";
+import { render } from "ink-testing-library";
+import { type Config, parseConfig } from "../src/config.ts";
 import { buildArgv, checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { writeSentinel } from "../src/sentinel.ts";
 import { startSync } from "../src/sync.ts";
@@ -116,7 +116,9 @@ describe("the plan names every mode and what it costs", () => {
   test("says nothing about deviation when the flags all agree", () => {
     const same = parseConfig(
       `source = "/src"\n` +
-        ["a", "b"].map((n, i) => `[[target]]\nname = "${n}"\npath = "/d${i}"\nsentinel = "s${i}"\n`).join(""),
+        ["a", "b"]
+          .map((n, i) => `[[target]]\nname = "${n}"\npath = "/d${i}"\nsentinel = "s${i}"\n`)
+          .join(""),
     );
     expect(deviations(same, "u")).toEqual([]);
   });
@@ -173,7 +175,9 @@ describe("a repair sync shows the checksum flag it will actually run with", () =
   test("deviations() flags a target needing checksum repair, even with otherwise identical flags", () => {
     const same = parseConfig(
       `source = "/src"\n` +
-        ["a", "b"].map((n, i) => `[[target]]\nname = "${n}"\npath = "/d${i}"\nsentinel = "s${i}"\n`).join(""),
+        ["a", "b"]
+          .map((n, i) => `[[target]]\nname = "${n}"\npath = "/d${i}"\nsentinel = "s${i}"\n`)
+          .join(""),
     );
     const d = deviations(same, "u", new Set(["b"]));
     expect(d).toHaveLength(1);

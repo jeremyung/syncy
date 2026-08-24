@@ -62,7 +62,11 @@ export function debug(message: string, detail?: Record<string, unknown>): void {
 }
 
 /** Times an async call. Same contract as `timed`, for anything that awaits. */
-export async function timedAsync<T>(label: string, slowMs: number, fn: () => Promise<T>): Promise<T> {
+export async function timedAsync<T>(
+  label: string,
+  slowMs: number,
+  fn: () => Promise<T>,
+): Promise<T> {
   if (!enabled()) return fn();
   const started = Date.now();
   try {

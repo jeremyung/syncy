@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import { bytes } from "../format.ts";
 import type { UnitState } from "../status.ts";
-import { unitToken, type Theme } from "./theme.ts";
+import { type Theme, unitToken } from "./theme.ts";
 
 /**
  * One block per folder, beside the wordmark, shaded by state.
@@ -43,9 +43,7 @@ export function verifiedPhrase(
   entries: ReadonlyArray<{ readonly state: UnitState; readonly size: number }>,
 ): string {
   const total = entries.reduce((a, e) => a + e.size, 0);
-  const verified = entries
-    .filter((e) => e.state === "verified")
-    .reduce((a, e) => a + e.size, 0);
+  const verified = entries.filter((e) => e.state === "verified").reduce((a, e) => a + e.size, 0);
   return `${bytes(verified)} verified of ${bytes(total)}`;
 }
 
@@ -55,10 +53,15 @@ export function shelfSummary(states: readonly UnitState[]): string {
   const counts = new Map<UnitState, number>();
   for (const s of states) counts.set(s, (counts.get(s) ?? 0) + 1);
   // Ordered worst-last, so the reassuring number is not the final word.
-  const order: readonly UnitState[] = ["verified", "unverified", "behind", "missing", "unchecked", "error"];
-  const parts = order
-    .filter((s) => (counts.get(s) ?? 0) > 0)
-    .map((s) => `${counts.get(s)!} ${s}`);
+  const order: readonly UnitState[] = [
+    "verified",
+    "unverified",
+    "behind",
+    "missing",
+    "unchecked",
+    "error",
+  ];
+  const parts = order.filter((s) => (counts.get(s) ?? 0) > 0).map((s) => `${counts.get(s)!} ${s}`);
   const n = states.length;
   return `${n} folder${n === 1 ? "" : "s"} · ${parts.join(", ")}`;
 }

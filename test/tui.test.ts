@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { GLYPH, type CellState, type UnitState } from "../src/status.ts";
-import { cellToken, resolveTheme, THEMES, unitToken, type Token } from "../src/tui/theme.ts";
+import { type CellState, GLYPH, type UnitState } from "../src/status.ts";
+import { cellToken, resolveTheme, THEMES, type Token, unitToken } from "../src/tui/theme.ts";
 import { displayWidth } from "../src/width.ts";
 
 /**
@@ -67,7 +67,11 @@ describe("theme tokens", () => {
       for (const token of ["ink", "dim", "rule", "figure"] as const) {
         const hex = THEMES[name][token];
         expect(hex).toMatch(/^#[0-9a-f]{6}$/);
-        const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
+        const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [
+          number,
+          number,
+          number,
+        ];
         expect(r === g && g === b, `${name}.${token} is neutral grey`).toBe(false);
         expect(hex).not.toBe("#000000");
         expect(hex).not.toBe("#ffffff");

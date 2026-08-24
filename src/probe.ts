@@ -47,7 +47,10 @@ async function run(argv: readonly string[]): Promise<{ code: number | null; out:
   return { code, out };
 }
 
-export async function probeTarget(targetRoot: string, bin: string = DEFAULT_RSYNC): Promise<ProbeResult> {
+export async function probeTarget(
+  targetRoot: string,
+  bin: string = DEFAULT_RSYNC,
+): Promise<ProbeResult> {
   const staging = makeStaging("probe");
   const landedDir = join(targetRoot, PROBE_DIR);
 

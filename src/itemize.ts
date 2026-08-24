@@ -36,8 +36,12 @@ export function parseMtime(field: string): number | null {
   const m = MTIME.exec(field.trim());
   if (m === null) return null;
   const ms = new Date(
-    Number(m[1]), Number(m[2]) - 1, Number(m[3]),
-    Number(m[4]), Number(m[5]), Number(m[6]),
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5]),
+    Number(m[6]),
   ).getTime();
   // rsync prints the epoch for an item with no source file — every `*deleting`
   // line carries it. A real archive holds nothing from before 1970, so

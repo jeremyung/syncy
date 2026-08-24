@@ -60,7 +60,11 @@ export function day(ts: number, now: number = Date.now()): string {
  * A shoot arrives over an afternoon or a long weekend, so the useful reading is
  * "4–14 feb", not two timestamps a reader has to subtract in their head.
  */
-export function span(from: number | null, to: number | null, now: number = Date.now()): string | null {
+export function span(
+  from: number | null,
+  to: number | null,
+  now: number = Date.now(),
+): string | null {
   if (from === null || to === null) return null;
   const a = day(from, now);
   const b = day(to, now);

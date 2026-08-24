@@ -1,20 +1,19 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseItemizeLine, parseMtime } from "../src/itemize.ts";
+import { render } from "ink-testing-library";
 import {
   ageAgainstSync,
   ageBucket,
   buildDiff,
+  type DiffEntry,
   folderOf,
   groupDiff,
   splitBySync,
   typeOf,
-  type DiffEntry,
 } from "../src/diff.ts";
+import { parseItemizeLine, parseMtime } from "../src/itemize.ts";
 import { lastSyncAt } from "../src/state.ts";
-import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { render } from "ink-testing-library";
 import {
   Diff,
   diffRows,
@@ -25,6 +24,7 @@ import {
   syncLine,
 } from "../src/tui/Diff.tsx";
 import { THEMES } from "../src/tui/theme.ts";
+import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
  * The differences screen could not answer the question it existed for: whether
@@ -267,7 +267,11 @@ describe("how far behind the destination is", () => {
   });
 
   test("a hand-edited fingerprint does not crash the screen", () => {
-    const d = { ...buildDiff("u", "t", "quick", []), sourceHolds: { nfiles: 1, bytes: 1, maxMtimeNs: "banana" }, targetHolds: fp(NOW) };
+    const d = {
+      ...buildDiff("u", "t", "quick", []),
+      sourceHolds: { nfiles: 1, bytes: 1, maxMtimeNs: "banana" },
+      targetHolds: fp(NOW),
+    };
     expect(lagLine(d)).toBeNull();
   });
 });

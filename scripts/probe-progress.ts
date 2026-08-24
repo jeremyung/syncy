@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { join } from "node:path";
 /**
  * Does rsync stream its itemize output for *this* archive?
  *
@@ -15,23 +16,29 @@
  * nothing: no state, no history, no diff, nothing to the target.
  */
 import { loadConfig } from "./../src/config.ts";
+import { parseItemizeLine } from "./../src/itemize.ts";
 import { configFile } from "./../src/paths.ts";
 import { assertDeleteIsDryRun, buildArgv, DEFAULT_RSYNC, type Mode } from "./../src/rsync.ts";
-import { join } from "node:path";
-import { parseItemizeLine } from "./../src/itemize.ts";
 
 const args = process.argv.slice(2);
-const outbuf = args.includes("--outbuf") ? (args.splice(args.indexOf("--outbuf"), 1), true) : false;
+let outbuf = false;
+if (args.includes("--outbuf")) {
+  args.splice(args.indexOf("--outbuf"), 1);
+  outbuf = true;
+}
 const [unitArg, targetArg, modeArg = "deep", secsArg = "120"] = args;
 if (unitArg === undefined) {
-  console.error("usage: bun scripts/probe-progress.ts <folder> [target] [quick|deep] [seconds] [--outbuf]");
+  console.error(
+    "usage: bun scripts/probe-progress.ts <folder> [target] [quick|deep] [seconds] [--outbuf]",
+  );
   process.exit(2);
 }
 const mode = modeArg as Mode;
 const limitMs = Number(secsArg) * 1000;
 
 const config = loadConfig(configFile());
-const target = targetArg === undefined ? config.targets[0] : config.targets.find((t) => t.name === targetArg);
+const target =
+  targetArg === undefined ? config.targets[0] : config.targets.find((t) => t.name === targetArg);
 if (target === undefined) {
   console.error(`no such target; configured: ${config.targets.map((t) => t.name).join(", ")}`);
   process.exit(2);
@@ -66,7 +73,8 @@ assertDeleteIsDryRun(argv);
  * near a shell, so this string is only ever documentation — but documentation
  * that gets pasted into a prompt needs to survive the paste.
  */
-const shellQuote = (s: string): string => (/^[A-Za-z0-9_.\/=:-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
+const shellQuote = (s: string): string =>
+  /^[A-Za-z0-9_./=:-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 console.log(`\n  ${shellQuote(DEFAULT_RSYNC)} ${argv.map(shellQuote).join(" ")}\n`);
 console.log(`  read-only · stopping after ${secsArg}s · ctrl-c any time\n`);
 
@@ -107,7 +115,9 @@ for await (const chunk of proc.stdout) {
     if (firstAt === null) firstAt = t;
     lastAt = t;
     if (n <= 5 || n % 50 === 0) {
-      console.log(`  ${String(n).padStart(6)}  ${(t / 1000).toFixed(1).padStart(7)}s  ${line.slice(0, 62)}`);
+      console.log(
+        `  ${String(n).padStart(6)}  ${(t / 1000).toFixed(1).padStart(7)}s  ${line.slice(0, 62)}`,
+      );
     }
   }
 }
@@ -117,12 +127,25 @@ clearInterval(beat);
 const elapsed = (Date.now() - t0) / 1000;
 console.log(`\n  ${n} lines in ${elapsed.toFixed(1)}s`);
 if (n === 0) {
-  console.log(`\n  VERDICT: no itemize lines in ${elapsed.toFixed(0)}s` + (outbuf ? " even with --outbuf=L." : "."));
-  console.log(outbuf
-    ? `  Line buffering is not the cause; the counter cannot work for this archive.`
-    : `  Re-run with --outbuf to test whether block buffering is the cause.`);
+  console.log(
+    `\n  VERDICT: no itemize lines in ${elapsed.toFixed(0)}s` +
+      (outbuf ? " even with --outbuf=L." : "."),
+  );
+  console.log(
+    outbuf
+      ? `  Line buffering is not the cause; the counter cannot work for this archive.`
+      : `  Re-run with --outbuf to test whether block buffering is the cause.`,
+  );
 } else {
-  console.log(`  first line at ${((firstAt ?? 0) / 1000).toFixed(1)}s, last at ${(lastAt / 1000).toFixed(1)}s`);
-  console.log(`\n  VERDICT: ${n} itemize lines arrived` + (outbuf ? " with --outbuf=L" : "") + `. rsync streams here,`);
-  console.log(`  so syncy can show real progress` + (outbuf ? ` — add --outbuf=L to the check argv.` : `.`));
+  console.log(
+    `  first line at ${((firstAt ?? 0) / 1000).toFixed(1)}s, last at ${(lastAt / 1000).toFixed(1)}s`,
+  );
+  console.log(
+    `\n  VERDICT: ${n} itemize lines arrived` +
+      (outbuf ? " with --outbuf=L" : "") +
+      `. rsync streams here,`,
+  );
+  console.log(
+    `  so syncy can show real progress` + (outbuf ? ` — add --outbuf=L to the check argv.` : `.`),
+  );
 }

@@ -1,5 +1,5 @@
 import { statfsSync } from "node:fs";
-import { fstypeFor, mountEntryFor, parseMount, type MountEntry } from "./fstype.ts";
+import { fstypeFor, type MountEntry, mountEntryFor, parseMount } from "./fstype.ts";
 
 /**
  * Identifying a destination without writing anything to it.
@@ -125,7 +125,10 @@ async function mountTable(): Promise<MountEntry[]> {
  * be exercised directly, the way `fstypeFor` already accepts a MountEntry
  * list instead of reading `/sbin/mount` itself.
  */
-export async function identify(path: string, entries?: readonly MountEntry[]): Promise<VolumeIdentity | null> {
+export async function identify(
+  path: string,
+  entries?: readonly MountEntry[],
+): Promise<VolumeIdentity | null> {
   const table = entries ?? (await mountTable());
   const entry = mountFor(path, table);
   if (entry === undefined) return null;

@@ -97,7 +97,8 @@ function validateScan(raw: unknown): Scan | string {
   if (typeof bytesPending !== "number") return "bytesPending is not a number";
   if (typeof sentinel !== "string") return "sentinel is not a string";
 
-  if (typeof fingerprint !== "object" || fingerprint === null) return "fingerprint is not an object";
+  if (typeof fingerprint !== "object" || fingerprint === null)
+    return "fingerprint is not an object";
   const fp = fingerprint as Record<string, unknown>;
   const nfiles = fp["nfiles"];
   const bytes = fp["bytes"];
@@ -107,7 +108,8 @@ function validateScan(raw: unknown): Scan | string {
   if (typeof maxMtimeNs !== "string") return "fingerprint.maxMtimeNs is not a string";
 
   if (nNew !== undefined && typeof nNew !== "number") return "nNew is not a number";
-  if (durationMs !== undefined && typeof durationMs !== "number") return "durationMs is not a number";
+  if (durationMs !== undefined && typeof durationMs !== "number")
+    return "durationMs is not a number";
   if (log !== undefined && typeof log !== "string") return "log is not a string";
 
   return {
@@ -240,12 +242,18 @@ export function findScan(
   identity: string,
 ): Scan | undefined {
   return state.scans.find(
-    (s) => s.unit === unit && s.target === target && s.method === method && matchesIdentity(s, identity),
+    (s) =>
+      s.unit === unit && s.target === target && s.method === method && matchesIdentity(s, identity),
   );
 }
 
 /** The most recent check of either method, which drives the cheap clock. */
-export function latestScan(state: State, unit: string, target: string, identity: string): Scan | undefined {
+export function latestScan(
+  state: State,
+  unit: string,
+  target: string,
+  identity: string,
+): Scan | undefined {
   let best: Scan | undefined;
   for (const s of state.scans) {
     if (s.unit !== unit || s.target !== target) continue;

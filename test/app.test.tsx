@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
-import { render } from "ink-testing-library";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config } from "../src/config.ts";
+import { render } from "ink-testing-library";
+import { type Config, parseConfig } from "../src/config.ts";
 import { EMPTY_CONFIG } from "../src/configio.ts";
 import { writeSentinel } from "../src/sentinel.ts";
 import { App } from "../src/tui/App.tsx";
+import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
 
 /**
  * Guards the first-run hang.

@@ -120,7 +120,10 @@ sentinel = "s"
   });
 
   test("relative paths", () => {
-    expectError(`source = "Pictures/Masters"\n[[target]]\nname="a"\npath="/b"\nsentinel="s"\n`, "absolute path");
+    expectError(
+      `source = "Pictures/Masters"\n[[target]]\nname="a"\npath="/b"\nsentinel="s"\n`,
+      "absolute path",
+    );
   });
 
   test("duplicate target names", () => {

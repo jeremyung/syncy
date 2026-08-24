@@ -2,7 +2,15 @@ import { describe, expect, test } from "bun:test";
 import type { Config, Target } from "../src/config.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import type { Scan, State } from "../src/state.ts";
-import { behindReason, cellState, evaluateUnit, rollUp, type Cell, knownExtras, evidencePhrase } from "../src/status.ts";
+import {
+  behindReason,
+  type Cell,
+  cellState,
+  evaluateUnit,
+  evidencePhrase,
+  knownExtras,
+  rollUp,
+} from "../src/status.ts";
 
 const NOW = Date.parse("2026-08-20T12:00:00Z");
 const DAY = 86_400_000;
@@ -84,7 +92,12 @@ describe("cell state ladder", () => {
   });
 
   test("behind reports the pending count and bytes", () => {
-    const s = scan({ outcome: "behind", method: "quick", nChanges: 143, bytesPending: 8_400_000_000 });
+    const s = scan({
+      outcome: "behind",
+      method: "quick",
+      nChanges: 143,
+      bytesPending: 8_400_000_000,
+    });
     const c = cell({ latest: s, quick: s });
     expect(c.state).toBe("behind");
     expect(c.nChanges).toBe(143);
@@ -171,7 +184,12 @@ describe("cellState: staleRecords marks evidence made against a different volume
   test("staleRecords is distinct from never having been checked at all", () => {
     const neverChecked = cell({ deep: undefined, quick: undefined, latest: undefined });
     expect(neverChecked.reason).toBe("never checked");
-    const stale = cell({ staleRecords: true, deep: undefined, quick: undefined, latest: undefined });
+    const stale = cell({
+      staleRecords: true,
+      deep: undefined,
+      quick: undefined,
+      latest: undefined,
+    });
     expect(stale.reason).not.toBe("never checked");
   });
 });
@@ -261,7 +279,9 @@ describe("unit roll-up precedence", () => {
   const required = new Set(["ext", "nas"]);
 
   test("all verified rolls up to verified", () => {
-    expect(rollUp("u", [mk("ext", "verified"), mk("nas", "verified")], required).state).toBe("verified");
+    expect(rollUp("u", [mk("ext", "verified"), mk("nas", "verified")], required).state).toBe(
+      "verified",
+    );
   });
 
   test("a known failure outranks an unchecked target", () => {
@@ -277,11 +297,17 @@ describe("unit roll-up precedence", () => {
   });
 
   test("behind outranks unverified", () => {
-    expect(rollUp("u", [mk("ext", "unverified"), mk("nas", "behind")], required).state).toBe("behind");
+    expect(rollUp("u", [mk("ext", "unverified"), mk("nas", "behind")], required).state).toBe(
+      "behind",
+    );
   });
 
   test("optional targets never hold a unit back", () => {
-    const s = rollUp("u", [mk("ext", "verified"), mk("nas", "verified"), mk("spare", "missing")], required);
+    const s = rollUp(
+      "u",
+      [mk("ext", "verified"), mk("nas", "verified"), mk("spare", "missing")],
+      required,
+    );
     expect(s.state).toBe("verified");
   });
 
@@ -311,7 +337,14 @@ describe("evaluateUnit", () => {
     const s = evaluateUnit(
       config,
       state,
-      { unit: "u", fingerprint: FP, sentinels: new Map([["ext", "ok"], ["nas", "ok"]]) },
+      {
+        unit: "u",
+        fingerprint: FP,
+        sentinels: new Map([
+          ["ext", "ok"],
+          ["nas", "ok"],
+        ]),
+      },
       NOW,
     );
     expect(s.state).toBe("verified");
@@ -325,7 +358,14 @@ describe("evaluateUnit", () => {
     const s = evaluateUnit(
       config,
       state,
-      { unit: "u", fingerprint: FP, sentinels: new Map([["ext", "unreachable"], ["nas", "ok"]]) },
+      {
+        unit: "u",
+        fingerprint: FP,
+        sentinels: new Map([
+          ["ext", "unreachable"],
+          ["nas", "ok"],
+        ]),
+      },
       NOW,
     );
     expect(s.state).toBe("unchecked");
@@ -341,7 +381,14 @@ describe("evaluateUnit", () => {
     const s = evaluateUnit(
       oneRequired,
       state,
-      { unit: "u", fingerprint: FP, sentinels: new Map([["ext", "ok"], ["nas", "ok"]]) },
+      {
+        unit: "u",
+        fingerprint: FP,
+        sentinels: new Map([
+          ["ext", "ok"],
+          ["nas", "ok"],
+        ]),
+      },
       NOW,
     );
     expect(s.state).toBe("unverified");
@@ -376,9 +423,17 @@ describe("a config with no targets can never report verified", () => {
 
 describe("behind says what the files actually are", () => {
   const scan = (over: Partial<Scan>): Scan => ({
-    unit: "u", target: "t", ts: 0, method: "deep", outcome: "behind",
-    nChanges: 504, nExtra: 0, bytesPending: 0,
-    fingerprint: { nfiles: 1, bytes: 1, maxMtimeNs: "1" }, sentinel: "s", ...over,
+    unit: "u",
+    target: "t",
+    ts: 0,
+    method: "deep",
+    outcome: "behind",
+    nChanges: 504,
+    nExtra: 0,
+    bytesPending: 0,
+    fingerprint: { nfiles: 1, bytes: 1, maxMtimeNs: "1" },
+    sentinel: "s",
+    ...over,
   });
 
   test("files absent from the destination are not called content differences", () => {
@@ -412,8 +467,17 @@ describe("a deep verify must not erase a known extra", () => {
    */
   const fp = { nfiles: 801, bytes: 10e9, maxMtimeNs: "1" };
   const scan = (over: Partial<Scan>): Scan => ({
-    unit: "maui", target: "external", ts: 1000, method: "quick", outcome: "clean",
-    nChanges: 0, nExtra: 0, bytesPending: 0, fingerprint: fp, sentinel: "s", ...over,
+    unit: "maui",
+    target: "external",
+    ts: 1000,
+    method: "quick",
+    outcome: "clean",
+    nChanges: 0,
+    nExtra: 0,
+    bytesPending: 0,
+    fingerprint: fp,
+    sentinel: "s",
+    ...over,
   });
 
   test("the quick check's count survives a later deep verify", () => {
@@ -439,18 +503,32 @@ describe("a deep verify must not erase a known extra", () => {
 
   test("the evidence line names them, and calls them a destination", () => {
     const last = scan({ method: "deep", ts: 2000, nExtra: 0 });
-    const line = evidencePhrase(last, last, 3000, {
-      stamp: () => "22 aug", ageAgo: () => "today",
-    }, 1);
+    const line = evidencePhrase(
+      last,
+      last,
+      3000,
+      {
+        stamp: () => "22 aug",
+        ageAgo: () => "today",
+      },
+      1,
+    );
     expect(line).toContain("1 extra at destination");
   });
 
   test("extras still never block verified", () => {
     // They cannot endanger source data, so they are reported and not counted
     // against the verdict (DESIGN.md section 3).
-    const line = evidencePhrase(scan({ method: "deep" }), scan({ method: "deep" }), 3000, {
-      stamp: () => "22 aug", ageAgo: () => "today",
-    }, 4);
+    const line = evidencePhrase(
+      scan({ method: "deep" }),
+      scan({ method: "deep" }),
+      3000,
+      {
+        stamp: () => "22 aug",
+        ageAgo: () => "today",
+      },
+      4,
+    );
     expect(line).toContain("deep verified");
   });
 
@@ -458,7 +536,13 @@ describe("a deep verify must not erase a known extra", () => {
     // REPRODUCED: only the clean path read `input.knownExtras`; the "behind"
     // branch read `latest.nExtra` directly, so a deep check that itemised the
     // unit as behind reported 0 extras even though a quick check had found 5.
-    const behindDeep = scan({ method: "deep", ts: 2000, outcome: "behind", nChanges: 3, nExtra: 0 });
+    const behindDeep = scan({
+      method: "deep",
+      ts: 2000,
+      outcome: "behind",
+      nChanges: 3,
+      nExtra: 0,
+    });
     const c = cellState({
       target: target("nas"),
       sentinel: "ok",

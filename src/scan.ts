@@ -1,17 +1,17 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { type Dirent, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Config, Target } from "./config.ts";
-import { fingerprint, type Fingerprint } from "./fingerprint.ts";
-import { parseItemizeLine, summarize, type Item } from "./itemize.ts";
+import { type Fingerprint, fingerprint } from "./fingerprint.ts";
+import { type Item, parseItemizeLine, summarize } from "./itemize.ts";
 import { logDir } from "./paths.ts";
-import { argvFor, runRsync, type Mode } from "./rsync.ts";
+import { argvFor, type Mode, runRsync } from "./rsync.ts";
 import { checkSentinel, type SentinelStatus } from "./sentinel.ts";
-import { checkVolume } from "./volume.ts";
 import type { Method, Scan } from "./state.ts";
+import { checkVolume } from "./volume.ts";
 
 /** Units are the immediate subfolders of the source root. Not a depth, not a list. */
 export function listUnits(source: string): string[] {
-  let entries;
+  let entries: Dirent[];
   try {
     entries = readdirSync(source, { withFileTypes: true });
   } catch {
@@ -140,7 +140,10 @@ export async function checkUnit(
       if (item === null) return;
       items.push(item);
       // Directories are not files; counting them would overshoot the total.
-      if (item.flags[1] === "f") opts.onFile?.((nFiles += 1), item.name);
+      if (item.flags[1] === "f") {
+        nFiles += 1;
+        opts.onFile?.(nFiles, item.name);
+      }
     },
   });
 
