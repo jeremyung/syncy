@@ -5,7 +5,15 @@ import type { Config } from "../config.ts";
 import { EMPTY as EMPTY_FINGERPRINT, fingerprint, type Fingerprint } from "../fingerprint.ts";
 import { bytes } from "../format.ts";
 import { allReachability, checkUnit, listUnits, methodOf, type Reachability } from "../scan.ts";
-import { appendHistory, estimateMs, loadState, saveState, upsertScan, type State } from "../state.ts";
+import {
+  appendHistory,
+  estimateMs,
+  lastSyncAt,
+  loadState,
+  saveState,
+  upsertScan,
+  type State,
+} from "../state.ts";
 import { debug, timed, timedAsync } from "../log.ts";
 import { setTitle, titleFor } from "../title.ts";
 import { padEnd, truncatePath } from "../width.ts";
@@ -232,6 +240,15 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     const unit = rows[clampedSelection]?.status.unit;
     if (!showDiff || unit === undefined) return new Map<string, Diff | null>();
     return new Map(config.targets.map((t) => [t.name, loadDiff(unit, t.name)]));
+  }, [showDiff, rows, clampedSelection, config.targets, state]);
+
+  // Read on the same terms as the diffs themselves: the differences screen is
+  // the only thing that asks when a sync last landed, and it has to be the
+  // sync that just finished rather than the one recorded when the app opened.
+  const lastSync: ReadonlyMap<string, number | null> = useMemo(() => {
+    const unit = rows[clampedSelection]?.status.unit;
+    if (!showDiff || unit === undefined) return new Map<string, number | null>();
+    return new Map(config.targets.map((t) => [t.name, lastSyncAt(unit, t.name)]));
   }, [showDiff, rows, clampedSelection, config.targets, state]);
 
   const runCheck = useCallback(
@@ -608,6 +625,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
           config={config}
           unit={row.status.unit}
           diffs={diffs}
+          lastSync={lastSync}
           theme={theme}
           width={width}
           height={screen.rows}
