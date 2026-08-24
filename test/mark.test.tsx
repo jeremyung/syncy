@@ -157,26 +157,49 @@ describe("the forklift moves only while work is happening", () => {
     }
   });
 
-  test("the wheels turn while work is running", () => {
-    const seen = new Set(Array.from({ length: 6 }, (_, f) => forkliftRows(f, true).join("\n")));
-    expect(seen.size).toBe(3);
+  test("it never stalls while work is running", () => {
+    // Every frame differs from the one before it, so the mark never looks
+    // frozen mid-run. There are three distinct poses, not four: the halfway
+    // rung is shared by the way up and the way down.
+    const pose = (f: number) => forkliftRows(f, true).join("\n");
+    for (let f = 1; f < 8; f++) expect(pose(f), `frame ${f}`).not.toBe(pose(f - 1));
+    expect(new Set(Array.from({ length: 8 }, (_, f) => pose(f))).size).toBe(3);
   });
 
   test("the cycle returns to where it started, so it loops cleanly", () => {
-    expect(forkliftRows(3, true)).toEqual(forkliftRows(0, true));
+    expect(forkliftRows(4, true)).toEqual(forkliftRows(0, true));
   });
 
-  test("the crate is always on the forks — it never vanishes", () => {
+  test("the crate is always on the mast — it never vanishes", () => {
+    // It changes height as the lift raises it, but there is always a load.
     for (const moving of [true, false]) {
-      for (let f = 0; f < 6; f++) {
-        expect(forkliftRows(f, moving)[0]?.startsWith("▓"), `frame ${f}`).toBe(true);
+      for (let f = 0; f < 8; f++) {
+        expect(["▄", "█", "▀"], `frame ${f}`).toContain(forkliftRows(f, moving)[0]![0]!);
       }
     }
   });
 
+  test("the crate rises and comes back down, rather than jumping to the top", () => {
+    // Height in half-cells: on the forks, halfway up, at the top.
+    const height = (f: number) => ["▄", "█", "▀"].indexOf(forkliftRows(f, true)[0]![0]!);
+    expect(Array.from({ length: 5 }, (_, f) => height(f))).toEqual([0, 1, 2, 1, 0]);
+  });
+
+  test("the wheels and the crate move in the same cycle, or it reads as two marks", () => {
+    // A lift that moved while the wheels stood still would not read as one machine.
+    const wheelsChanged = forkliftRows(1, true)[1] !== forkliftRows(0, true)[1];
+    const crateChanged = forkliftRows(1, true)[0] !== forkliftRows(0, true)[0];
+    expect(wheelsChanged && crateChanged).toBe(true);
+  });
+
+  test("at rest the crate sits down on the forks", () => {
+    // Idle has to be a pose a real forklift holds, not a frozen mid-lift.
+    expect(forkliftRows(0, false)[0]?.[0]).toBe("▄");
+  });
+
   test("every row is the same width, or the header would shear", () => {
     for (const moving of [true, false]) {
-      for (let f = 0; f < 6; f++) {
+      for (let f = 0; f < 8; f++) {
         const widths = new Set(forkliftRows(f, moving).map((r) => displayWidth(r)));
         expect(widths.size, `frame ${f} moving=${moving}`).toBe(1);
       }
@@ -189,15 +212,16 @@ describe("the forklift moves only while work is happening", () => {
     for (const r of rows) expect(displayWidth(r)).toBe(4);
   });
 
-  test("the back sits below the mast — a full-height back reads as a bar", () => {
-    const top = forkliftRows(0, true)[0]!;
-    expect(top.slice(top.indexOf("┃") + 1)).not.toContain("█");
+  test("the tail steps down behind the cab — a flat back reads as a bar", () => {
+    for (let f = 0; f < 8; f++) {
+      expect(forkliftRows(f, true)[0]?.endsWith("▄"), `frame ${f}`).toBe(true);
+    }
   });
 
   test("the forks are always drawn — they are the defining feature", () => {
     // The first attempt had none, and read as a box beside another box.
     for (const moving of [true, false]) {
-      for (let f = 0; f < 6; f++) expect(forkliftRows(f, moving)[1], `frame ${f}`).toContain("┻");
+      for (let f = 0; f < 8; f++) expect(forkliftRows(f, moving)[1], `frame ${f}`).toContain("┻");
     }
   });
 
