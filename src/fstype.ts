@@ -97,3 +97,85 @@ export function modifyWindowFor(fstype: string): number {
   if (f.includes("exfat") || f.includes("msdos") || f.includes("fat")) return 2;
   return 0;
 }
+
+export const PSEUDO_FSTYPES: ReadonlySet<string> = new Set([
+  "tmpfs",
+  "devtmpfs",
+  "devpts",
+  "proc",
+  "sysfs",
+  "cgroup",
+  "cgroup2",
+  "pstore",
+  "securityfs",
+  "debugfs",
+  "tracefs",
+  "configfs",
+  "fusectl",
+  "mqueue",
+  "hugetlbfs",
+  "bpf",
+  "autofs",
+  "binfmt_misc",
+  "rpc_pipefs",
+  "nsfs",
+  "ramfs",
+  "efivarfs",
+  "selinuxfs",
+  "swap",
+  "overlay",
+  "squashfs",
+  "fuse",
+  "fuse.lxcfs",
+  "fuse.portal",
+]);
+
+/**
+ * Parses Linux `/proc/mounts`: `device mountpoint fstype options 0 0`.
+ *
+ * A space, tab or newline inside a mount point is octal-escaped (`\\040`,
+ * `\\010`, `\\012`), so the line is split on raw whitespace first and each
+ * field is unescaped afterwards — splitting on spaces alone would mangle a
+ * mount point that contains one, and the unescape has to happen per field.
+ *
+ * `/proc/mounts` carries no `local` flag the way BSD `mount` does, so it is
+ * derived: a network filesystem's device is the remote source
+ * (`//server/share`, `host:/export`), never `/dev/...`, and everything that
+ * is neither a block device nor a known pseudo-filesystem (zfs, a FUSE remote)
+ * is reported as not local, which is the conservative answer.
+ */
+export function parseProcMounts(text: string): MountEntry[] {
+  // Not named `unescape`: that is a deprecated global, and shadowing it is
+  // exactly the kind of accident this parser is written to avoid.
+  const unescapeField = (field: string): string =>
+    field.replace(/\\([0-7]{3})/g, (_, octal: string) =>
+      String.fromCharCode(Number.parseInt(octal, 8)),
+    );
+  const entries: MountEntry[] = [];
+  for (const line of text.split("\n")) {
+    const parts = line.trim().split(/\s+/).map(unescapeField);
+    if (parts.length < 3) continue;
+    const device = parts[0]!;
+    const mountPoint = parts[1]!;
+    const fstype = parts[2]!;
+    // A real line always has a device, an absolute mount point and a type.
+    // Requiring the leading slash is what keeps "not a mount line" from
+    // parsing as a mount at `a` of type `mount`.
+    if (device === "" || mountPoint === "" || fstype === "" || !mountPoint.startsWith("/"))
+      continue;
+    const flags = (parts[3] ?? "")
+      .split(",")
+      .map((f) => f.trim())
+      .filter((f) => f !== "");
+    entries.push({
+      device,
+      mountPoint,
+      fstype,
+      flags,
+      local: device.startsWith("/dev/") || PSEUDO_FSTYPES.has(fstype.toLowerCase()),
+    });
+  }
+  return entries;
+}
+
+/** The longest matching mount point wins, since mounts nest. */

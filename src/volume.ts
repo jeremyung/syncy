@@ -1,5 +1,14 @@
-import { statfsSync } from "node:fs";
-import { fstypeFor, type MountEntry, mountEntryFor, parseMount } from "./fstype.ts";
+import { readFileSync, statfsSync, statSync } from "node:fs";
+import { join } from "node:path";
+import {
+  fstypeFor,
+  type MountEntry,
+  mountEntryFor,
+  PSEUDO_FSTYPES,
+  parseMount,
+  parseProcMounts,
+} from "./fstype.ts";
+import { IS_LINUX, IS_MACOS } from "./platform.ts";
 
 /**
  * Identifying a destination without writing anything to it.
@@ -15,7 +24,7 @@ import { fstypeFor, type MountEntry, mountEntryFor, parseMount } from "./fstype.
  */
 
 /** Filesystems with no block device, identified by their mount source instead. */
-const NETWORK_FS = ["smbfs", "nfs", "afpfs", "webdav", "ftp", "cifs"];
+const NETWORK_FS = ["smbfs", "nfs", "afpfs", "webdav", "ftp", "cifs", "sshfs", "9p"];
 
 export interface VolumeIdentity {
   /** A stable string for the volume: a volume uuid, or a mount source. */
@@ -57,10 +66,11 @@ export function forgetVolumeUuids(): void {
   uuidCache.clear();
 }
 
-/** Volume UUID from diskutil, for filesystems that have one. */
-export async function volumeUuid(mountPoint: string): Promise<string | null> {
+/** Volume UUID from diskutil (macOS) or sysfs (Linux), for filesystems that have one. */
+async function volumeUuid(entry: MountEntry): Promise<string | null> {
+  if (IS_LINUX) return volumeUuidLinux(entry);
   try {
-    const proc = Bun.spawn(["/usr/sbin/diskutil", "info", mountPoint], {
+    const proc = Bun.spawn(["/usr/sbin/diskutil", "info", entry.mountPoint], {
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -71,6 +81,63 @@ export async function volumeUuid(mountPoint: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Read a sysfs file, or null when it does not exist or is empty.
+ *
+ * Sysfs is how Linux publishes volume facts — a UUID per filesystem, a
+ * `removable` bit per block device — as plain files, in the spirit this
+ * project keeps its own record in. The reader is injectable so the decisions
+ * built on top of it can be tested without a matching piece of hardware.
+ */
+export function readSysText(path: string): string | null {
+  try {
+    const v = readFileSync(path, "utf8").trim();
+    return v === "" ? null : v;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Volume UUID on Linux, from the kernel's own sysfs — the equivalent of what
+ * diskutil answers on macOS.
+ *
+ * Two routes, because containers and namespaced systems filter `/sys/block`
+ * down to whatever the process sees: the device name first (`/sys/block/sdb1`
+ * holds `uuid` for ext4/xfs/btrfs and `partuuid` for FAT-family), then the
+ * devnum from `stat`, which resolves through `/sys/dev/block` on systems where
+ * the name-based path does not exist.
+ *
+ * Null when the kernel publishes no UUID for the device (LVM without one, some
+ * loop images). The caller falls back to the device path as a mount-source
+ * identity, which still separates one volume from another.
+ */
+export function volumeUuidLinux(
+  entry: MountEntry,
+  readText: (path: string) => string | null = readSysText,
+): string | null {
+  const candidates: string[] = [];
+  const name = entry.device.startsWith("/dev/") ? entry.device.slice("/dev/".length) : null;
+  if (name !== null && name !== "" && !name.includes("/")) {
+    candidates.push(join("/sys/block", name, "uuid"));
+    candidates.push(join("/sys/block", name, "partuuid"));
+  }
+  try {
+    const dev = statSync(entry.mountPoint).dev;
+    const maj = (dev >> 8) & 0xfff;
+    const min = (dev & 0xff) | ((dev >> 12) & 0xfff00);
+    candidates.push(join("/sys/dev/block", `${maj}:${min}`, "uuid"));
+    candidates.push(join("/sys/dev/block", `${maj}:${min}`, "partuuid"));
+  } catch {
+    // The mount point is gone or unreadable; the name-based route above stands.
+  }
+  for (const c of candidates) {
+    const v = readText(c);
+    if (v !== null) return v;
+  }
+  return null;
 }
 
 /**
@@ -99,16 +166,27 @@ export function forgetMountTable(): void {
 async function mountTable(): Promise<MountEntry[]> {
   const now = Date.now();
   if (mountCache !== null && now - mountCache.at < MOUNT_TABLE_TTL_MS) return mountCache.entries;
-  try {
-    const proc = Bun.spawn(["/sbin/mount"], { stdout: "pipe", stderr: "pipe" });
-    const out = await new Response(proc.stdout).text();
-    await proc.exited;
-    const entries = parseMount(out);
-    mountCache = { at: Date.now(), entries };
-    return entries;
-  } catch {
-    return [];
+  let entries: MountEntry[] = [];
+  if (IS_LINUX) {
+    // /proc/mounts is the kernel's own table, already in memory: no spawn, and
+    // no stall enumerating a dead share the way `mount` can.
+    try {
+      entries = parseProcMounts(readFileSync("/proc/mounts", "utf8"));
+    } catch {
+      entries = [];
+    }
+  } else {
+    try {
+      const proc = Bun.spawn(["/sbin/mount"], { stdout: "pipe", stderr: "pipe" });
+      const out = await new Response(proc.stdout).text();
+      await proc.exited;
+      entries = parseMount(out);
+    } catch {
+      entries = [];
+    }
   }
+  mountCache = { at: Date.now(), entries };
+  return entries;
 }
 
 /**
@@ -140,7 +218,7 @@ export async function identify(
   const cacheKey = `${entry.device}\u0000${entry.mountPoint}`;
   const uuid = uuidCache.has(cacheKey)
     ? uuidCache.get(cacheKey)!
-    : await volumeUuid(entry.mountPoint).then((u) => {
+    : await volumeUuid(entry).then((u) => {
         uuidCache.set(cacheKey, u);
         return u;
       });
@@ -204,7 +282,35 @@ export interface MountedVolume {
  */
 export function classify(entry: MountEntry): VolumeKind {
   if (!entry.local) return isNetwork(entry.fstype) ? "network" : "unknown";
-  return "internal";
+  if (IS_MACOS) return "internal";
+  return classifyLinuxDevice(entry.device);
+}
+
+/**
+ * Local disks on Linux, from the device node, then /sys.
+ *
+ * Loop devices back mounted disk images rather than hardware. "external" and
+ * "internal" are claims about hardware, and the vocabulary no longer has a
+ * word for "image" (it was removed as unreachable on macOS — DESIGN.md §10),
+ * so a loop mount is the one local device class that is honestly unknown.
+ */
+export function classifyLinuxDevice(device: string): VolumeKind {
+  if (device.startsWith("/dev/loop")) return "unknown";
+  if (!device.startsWith("/dev/")) return "unknown";
+  const name = device.slice("/dev/".length).split("/")[0] ?? "";
+  return isRemovableBlock(name) ? "external" : "internal";
+}
+
+/**
+ * `/sys/block/<name>/removable` is `1` for USB and similar hot-pluggable
+ * disks. The read is trimmed: sysfs files end in a newline, and a reader that
+ * returns surrounding whitespace must not read as "not removable".
+ */
+export function isRemovableBlock(
+  name: string,
+  readText: (path: string) => string | null = readSysText,
+): boolean {
+  return (readText(join("/sys/block", name, "removable")) ?? "").trim() === "1";
 }
 
 /** A short label for a volume, for a list someone is picking from. */
@@ -215,7 +321,8 @@ export function describeVolume(v: MountedVolume): string {
     case "external":
       return `external disk · ${v.fstype}`;
     case "internal":
-      return `this mac · ${v.fstype}`;
+      // The boot volume, in the words the platform uses for it.
+      return `${IS_MACOS ? "this mac" : "this computer"} · ${v.fstype}`;
     default:
       return v.fstype;
   }
@@ -230,6 +337,9 @@ export function describeVolume(v: MountedVolume): string {
 const locationCache = new Map<string, boolean>();
 
 async function isExternal(mountPoint: string, device: string): Promise<boolean> {
+  // On Linux classify() has already asked /sys the same question, so this is
+  // the no-op branch rather than a second, slower measurement.
+  if (IS_LINUX) return false;
   const hit = locationCache.get(device);
   if (hit !== undefined) return hit;
   try {
@@ -259,17 +369,38 @@ export async function mountedVolumes(): Promise<MountedVolume[]> {
   const entries = await mountTable();
   const out: MountedVolume[] = [];
   for (const e of entries) {
-    // Only volumes someone could plausibly point a destination at. Hidden
-    // mount points are excluded: Time Machine keeps its snapshots under
-    // /Volumes/.timemachine/… with names like a UUID inside a hostname, which
-    // is noise in a list meant to be scanned by eye.
-    if (e.mountPoint !== "/" && !e.mountPoint.startsWith("/Volumes/")) continue;
+    // Only volumes someone could plausibly point a destination at.
+    //
+    // macOS: that means the boot volume and /Volumes/* — Time Machine keeps
+    // its snapshots under /Volumes/.timemachine/… with names like a UUID
+    // inside a hostname, which the hidden-segment check below removes.
+    //
+    // Linux: the mount table lists the kernel's own filesystems too, and
+    // /proc/mounts on a real box is dozens of lines — so pseudo-filesystems
+    // are filtered out here, and anything still unclassifiable (a FUSE mount
+    // with no block device, zfs) is dropped rather than offered as a
+    // destination of unknown character. Typed paths are not affected: this
+    // list only annotates completions.
+    if (e.mountPoint === "") continue;
+    if (IS_MACOS) {
+      if (e.mountPoint !== "/" && !e.mountPoint.startsWith("/Volumes/")) continue;
+    } else {
+      if (PSEUDO_FSTYPES.has(e.fstype.toLowerCase())) continue;
+    }
     if (e.mountPoint.split("/").some((seg) => seg.startsWith("."))) continue;
     let kind = classify(e);
+    if (IS_LINUX && kind === "unknown") continue;
     if (kind === "internal" && (await isExternal(e.mountPoint, e.device))) kind = "external";
     out.push({
       mountPoint: e.mountPoint,
-      name: e.mountPoint === "/" ? "Macintosh HD" : e.mountPoint.slice("/Volumes/".length),
+      name:
+        e.mountPoint === "/"
+          ? IS_MACOS
+            ? "Macintosh HD"
+            : "root"
+          : IS_MACOS
+            ? e.mountPoint.slice("/Volumes/".length)
+            : e.mountPoint,
       kind,
       fstype: e.fstype,
       device: e.device,

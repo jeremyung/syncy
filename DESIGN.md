@@ -568,3 +568,23 @@ what this tool exists to detect, so it should not be the thing that creates one.
 
 Phase 1 alone already answers both original questions; phases 2–5 are ergonomics
 and packaging.
+
+## 10. Platforms — macOS and Linux
+
+macOS is the platform every constraint in §0 was measured on, and remains the
+reference. Linux support maps the same decisions onto the kernel's own
+interfaces, and assumes nothing new:
+
+| Concern | macOS | Linux |
+|---|---|---|
+| Mount table | `/sbin/mount` (BSD format, cached 1 s) | `/proc/mounts` — already in memory; no spawn, and no stall enumerating a dead share |
+| Volume identity | `diskutil` volume UUID | sysfs `uuid`/`partuuid` per block device, with a devnum route for namespaced `/sys`; the device path as mount-source when the kernel publishes nothing |
+| Local vs share | the kernel's `local` flag | network fstypes first, then `/dev/...` device versus pseudo-filesystem |
+| External vs internal | `diskutil` device location | `/sys/block/<name>/removable`; a loop device is `unknown`, not either — it backs a mounted image, not hardware, and the vocabulary has no word for images |
+| Capability probe | `xattr`, `chmod +a`, `ls -le` | `setfattr`/`getfattr`, `setfacl`/`getfacl`; a missing tool is reported as *unmeasurable* and drops the flag — the safe outcome, honestly labelled |
+| rsync | Homebrew and MacPorts only — never `/usr/bin`, which is openrsync | the distribution `/usr/bin/rsync`; `checkBuild` still refuses anything older than 3.x |
+| Clipboard | `/usr/bin/pbcopy` | first of `wl-copy`, `xclip`, `xsel`; absence is reported, not thrown |
+
+The two invariants do not move across platforms: reachability is decided by
+the destination proving it is itself, never by the path existing, and nothing
+lands in a target except through rsync.
