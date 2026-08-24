@@ -313,3 +313,50 @@ export function estimateMs(
   if (sampleBytes <= 0 || sampleMs <= 0) return undefined;
   return Math.round((bytes * sampleMs) / sampleBytes);
 }
+
+/**
+ * When a sync of this unit last reached this destination.
+ *
+ * The differences screen needs it to say which side of the last sync a missing
+ * file falls on, which is the difference between an ordinary backlog and a file
+ * that should already be there.
+ *
+ * Read from the history rather than from `state.json`, because a scan records
+ * only checks: the scan records say when syncy last *looked*, and this has to
+ * answer when it last *copied*. Exit 24 counts alongside 0 for the same reason
+ * `checkUnit` treats it as success — files vanishing mid-run is routine on a
+ * live archive and does not mean nothing was transferred.
+ *
+ * Returns null when nothing has ever synced, which the view reports as such
+ * rather than dating everything from the epoch.
+ */
+export function lastSyncAt(
+  unit: string,
+  target: string,
+  file: string = historyFile(),
+): number | null {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return null; // Nothing has ever synced; the file is written on first run.
+  }
+  let best: number | null = null;
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue; // One torn line at the tail must not hide every sync before it.
+    }
+    if (typeof raw !== "object" || raw === null) continue;
+    const o = raw as Record<string, unknown>;
+    if (o["unit"] !== unit || o["target"] !== target) continue;
+    if (o["exitCode"] !== 0 && o["exitCode"] !== 24) continue;
+    const ts = o["ts"];
+    if (typeof ts !== "number" || !Number.isFinite(ts)) continue;
+    if (best === null || ts > best) best = ts;
+  }
+  return best;
+}

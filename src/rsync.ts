@@ -36,7 +36,13 @@ export function resolveRsync(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 export const DEFAULT_RSYNC: string = resolveRsync();
-export const OUT_FORMAT = "%i|%l|%n";
+/**
+ * %M — the source file's mtime — rides along with the fields already asked
+ * for. It is what lets the differences screen separate a file written since
+ * the last sync from one that predates it and never copied; without it the
+ * listing has no time dimension at all and every difference looks alike.
+ */
+export const OUT_FORMAT = "%i|%l|%M|%n";
 export const PARTIAL_DIR = ".syncy-partial";
 
 export type Mode = "quick" | "deep" | "sync";
