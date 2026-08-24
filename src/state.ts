@@ -6,6 +6,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  statSync,
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -275,7 +276,34 @@ export interface HistoryEntry {
 /** Append-only, and separate from state so history writes can never endanger it. */
 export function appendHistory(entry: HistoryEntry, file: string = historyFile()): void {
   mkdirSync(dirname(file), { recursive: true });
+  rotateHistory(file);
   appendFileSync(file, JSON.stringify(entry) + "\n", "utf8");
+}
+
+/**
+ * Rotate at this size, keeping one previous file.
+ *
+ * The same discipline as the debug log: the plain-file format is the point —
+ * a record you can cat, grep and back up — and a single unbounded file
+ * eventually stops being that. Five megabytes is years of daily checks across
+ * a dozen folders and a couple of destinations, and still reads in one pass.
+ * The rotated file is `history.jsonl.1`; deleting it costs nothing, since it
+ * is a record of what ran, not of what is verified.
+ */
+export const MAX_HISTORY_BYTES = 5 * 1024 * 1024;
+
+/** Rolls the history over when it gets large, keeping exactly one previous file. */
+function rotateHistory(file: string): void {
+  try {
+    if (statSync(file).size < MAX_HISTORY_BYTES) return;
+  } catch {
+    return; // No file yet, nothing to rotate.
+  }
+  try {
+    renameSync(file, `${file}.1`);
+  } catch {
+    // A failed rotation must not stop the record being written.
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import {
@@ -9,6 +9,7 @@ import {
   findScan,
   latestScan,
   loadState,
+  MAX_HISTORY_BYTES,
   type Scan,
   type State,
   saveState,
@@ -227,6 +228,23 @@ describe("history", () => {
     const argv = ["-aAXc", "-n", "-i", "/src/", "/dst/"];
     appendHistory({ ts: 1, unit: "u", target: "nas", argv, exitCode: 0 }, file);
     expect(JSON.parse(readFileSync(file, "utf8").trim()).argv).toEqual(argv);
+  });
+
+  test("it rotates once it passes the cap, keeping one previous file", () => {
+    // The record is append-only by design; the rotation is what keeps
+    // append-only from growing without bound in a directory nobody watches.
+    const file = join(dir, "history.jsonl");
+    writeFileSync(file, "x".repeat(MAX_HISTORY_BYTES + 1));
+    appendHistory({ ts: 1, unit: "u", target: "nas", argv: ["-a"], exitCode: 0 }, file);
+    expect(existsSync(`${file}.1`), "previous history kept").toBe(true);
+    expect(readFileSync(file, "utf8")).toContain('"unit":"u"');
+    expect(statSync(file).size).toBeLessThan(MAX_HISTORY_BYTES);
+  });
+
+  test("a fresh history does not rotate", () => {
+    const file = join(dir, "history.jsonl");
+    appendHistory({ ts: 1, unit: "u", target: "nas", argv: ["-a"], exitCode: 0 }, file);
+    expect(existsSync(`${file}.1`)).toBe(false);
   });
 });
 
