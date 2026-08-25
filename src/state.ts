@@ -292,7 +292,17 @@ export function appendHistory(entry: HistoryEntry, file: string = historyFile())
  */
 export const MAX_HISTORY_BYTES = 5 * 1024 * 1024;
 
-/** Rolls the history over when it gets large, keeping exactly one previous file. */
+/**
+ * Rolls the history over when it gets large, keeping exactly one previous file.
+ *
+ * Checked before the append, against the size the file already has, so the
+ * cap is a floor rather than a ceiling: the entry that crosses 5 MB is
+ * written to the file that crossed it, and the *next* append is the one that
+ * rotates. Measuring the entry first to keep the file strictly under the cap
+ * would buy a stricter bound on a file whose whole point is that it is
+ * readable in one pass, at the cost of a size the caller has to compute
+ * twice.
+ */
 function rotateHistory(file: string): void {
   try {
     if (statSync(file).size < MAX_HISTORY_BYTES) return;

@@ -1,4 +1,4 @@
-import { readFileSync, statfsSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statfsSync } from "node:fs";
 import { join } from "node:path";
 import {
   fstypeFor,
@@ -84,58 +84,104 @@ async function volumeUuid(entry: MountEntry): Promise<string | null> {
 }
 
 /**
- * Read a sysfs file, or null when it does not exist or is empty.
+ * The three filesystem questions the Linux volume code asks the kernel.
  *
- * Sysfs is how Linux publishes volume facts — a UUID per filesystem, a
- * `removable` bit per block device — as plain files, in the spirit this
- * project keeps its own record in. The reader is injectable so the decisions
- * built on top of it can be tested without a matching piece of hardware.
+ * Injectable as one object so the decisions built on top can be tested
+ * without a matching piece of hardware — and so a test cannot accidentally
+ * pass by reading the real machine.
  */
-export function readSysText(path: string): string | null {
-  try {
-    const v = readFileSync(path, "utf8").trim();
-    return v === "" ? null : v;
-  } catch {
-    return null;
-  }
+export interface LinuxVolumeIo {
+  /** A sysfs file's contents, trimmed, or null when absent or empty. */
+  readonly readText: (path: string) => string | null;
+  /** A directory's entries, or empty when it does not exist. */
+  readonly list: (dir: string) => readonly string[];
+  /** A path with its symlinks resolved, or null when it does not resolve. */
+  readonly realpath: (path: string) => string | null;
 }
 
+export const realVolumeIo: LinuxVolumeIo = {
+  readText: (path) => {
+    try {
+      const v = readFileSync(path, "utf8").trim();
+      return v === "" ? null : v;
+    } catch {
+      return null;
+    }
+  },
+  list: (dir) => {
+    try {
+      return readdirSync(dir);
+    } catch {
+      return [];
+    }
+  },
+  realpath: (path) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return null;
+    }
+  },
+};
+
 /**
- * Volume UUID on Linux, from the kernel's own sysfs — the equivalent of what
- * diskutil answers on macOS.
+ * udev's by-uuid directories, in the order they answer.
  *
- * Two routes, because containers and namespaced systems filter `/sys/block`
- * down to whatever the process sees: the device name first (`/sys/block/sdb1`
- * holds `uuid` for ext4/xfs/btrfs and `partuuid` for FAT-family), then the
- * devnum from `stat`, which resolves through `/sys/dev/block` on systems where
- * the name-based path does not exist.
+ * `by-uuid` is the filesystem's own uuid, which is what `diskutil info`
+ * reports on macOS and what survives a reformat-free replug on any port.
+ * `by-partuuid` is the partition table's, one level weaker but still a
+ * property of the disk rather than of this boot — the FAT-family fallback,
+ * since a vfat volume's "uuid" is a four-byte serial that udev exposes here.
+ */
+const BY_ID_DIRS = ["/dev/disk/by-uuid", "/dev/disk/by-partuuid"] as const;
+
+/**
+ * Volume UUID on Linux — the equivalent of what diskutil answers on macOS.
  *
- * Null when the kernel publishes no UUID for the device (LVM without one, some
- * loop images). The caller falls back to the device path as a mount-source
- * identity, which still separates one volume from another.
+ * Not from sysfs. A *filesystem* uuid lives in the superblock, not in
+ * `/sys`: the kernel never publishes one for a block device, and the paths
+ * this used to read — `/sys/block/<name>/uuid`, `/sys/block/<name>/partuuid`
+ * — do not exist for the mounts syncy is pointed at. `/sys/block` holds
+ * whole disks only (a partition is a subdirectory of its disk), and neither
+ * a `uuid` nor a `partuuid` attribute is published there for either. Every
+ * Linux volume therefore fell through to the device path, and `/dev/sdb1` is
+ * a slot in this boot's enumeration order, not a name for a disk.
+ *
+ * udev publishes the real answer as symlinks under /dev/disk, so the lookup
+ * is: resolve the mount's device to its canonical node, then find the
+ * by-uuid (then by-partuuid) entry that resolves to the same node.
+ *
+ * sysfs is still consulted last, for the device classes that do publish a
+ * uuid of their own — an NVMe namespace, a device-mapper volume — which
+ * covers a whole-disk mount on a system running without udev. That read is
+ * `/sys/class/block`, which holds partitions as well as disks; `/sys/block`
+ * does not.
+ *
+ * Null when nothing stable is published (LVM without a uuid, a loop image,
+ * a container with no /dev/disk). The caller must then treat the device path
+ * as the weak identity it is — see `targetReachability`.
  */
 export function volumeUuidLinux(
   entry: MountEntry,
-  readText: (path: string) => string | null = readSysText,
+  io: LinuxVolumeIo = realVolumeIo,
 ): string | null {
-  const candidates: string[] = [];
-  const name = entry.device.startsWith("/dev/") ? entry.device.slice("/dev/".length) : null;
-  if (name !== null && name !== "" && !name.includes("/")) {
-    candidates.push(join("/sys/block", name, "uuid"));
-    candidates.push(join("/sys/block", name, "partuuid"));
+  if (!entry.device.startsWith("/dev/")) return null;
+  const node = io.realpath(entry.device) ?? entry.device;
+
+  for (const dir of BY_ID_DIRS) {
+    for (const name of io.list(dir)) {
+      if (io.realpath(join(dir, name)) === node) return name;
+    }
   }
-  try {
-    const dev = statSync(entry.mountPoint).dev;
-    const maj = (dev >> 8) & 0xfff;
-    const min = (dev & 0xff) | ((dev >> 12) & 0xfff00);
-    candidates.push(join("/sys/dev/block", `${maj}:${min}`, "uuid"));
-    candidates.push(join("/sys/dev/block", `${maj}:${min}`, "partuuid"));
-  } catch {
-    // The mount point is gone or unreadable; the name-based route above stands.
-  }
-  for (const c of candidates) {
-    const v = readText(c);
-    if (v !== null) return v;
+
+  const leaf = node.slice("/dev/".length);
+  if (leaf !== "" && !leaf.includes("/")) {
+    const own = io.readText(join("/sys/class/block", leaf, "uuid"));
+    if (own !== null) return own;
+    // Device-mapper keeps its uuid one level down, and prefixes it with the
+    // subsystem that made the volume (LVM-…, CRYPT-LUKS2-…).
+    const dm = io.readText(join("/sys/class/block", leaf, "dm", "uuid"));
+    if (dm !== null) return dm;
   }
   return null;
 }
@@ -294,23 +340,43 @@ export function classify(entry: MountEntry): VolumeKind {
  * word for "image" (it was removed as unreachable on macOS — DESIGN.md §10),
  * so a loop mount is the one local device class that is honestly unknown.
  */
-export function classifyLinuxDevice(device: string): VolumeKind {
+export function classifyLinuxDevice(device: string, io: LinuxVolumeIo = realVolumeIo): VolumeKind {
   if (device.startsWith("/dev/loop")) return "unknown";
   if (!device.startsWith("/dev/")) return "unknown";
-  const name = device.slice("/dev/".length).split("/")[0] ?? "";
-  return isRemovableBlock(name) ? "external" : "internal";
+  return isRemovableDevice(device, io) ? "external" : "internal";
 }
 
 /**
- * `/sys/block/<name>/removable` is `1` for USB and similar hot-pluggable
- * disks. The read is trimmed: sysfs files end in a newline, and a reader that
+ * Whether a device node sits on a hot-pluggable disk: `removable` is `1` for
+ * USB and similar.
+ *
+ * The attribute is published per *disk*, never per partition, and mounts name
+ * partitions — so `/sys/block/sdb1/removable`, which this used to read, does
+ * not exist on any machine and every external disk classified as internal.
+ * Two corrections: `/sys/class/block` holds partitions as well as disks
+ * (`/sys/block` holds only disks), and a partition's own directory has no
+ * `removable`, so `..` from it — resolved through the symlink by the kernel —
+ * is its disk.
+ *
+ * The device is realpath'd first, so /dev/mapper/vg-lv is asked about as the
+ * dm-N it actually is rather than as a directory name.
+ *
+ * The read is trimmed: sysfs files end in a newline, and a reader that
  * returns surrounding whitespace must not read as "not removable".
  */
-export function isRemovableBlock(
-  name: string,
-  readText: (path: string) => string | null = readSysText,
-): boolean {
-  return (readText(join("/sys/block", name, "removable")) ?? "").trim() === "1";
+export function isRemovableDevice(device: string, io: LinuxVolumeIo = realVolumeIo): boolean {
+  const node = io.realpath(device) ?? device;
+  if (!node.startsWith("/dev/")) return false;
+  const name = node.slice("/dev/".length);
+  if (name === "" || name.includes("/")) return false;
+  const base = join("/sys/class/block", name);
+  const own = io.readText(join(base, "removable"));
+  // Concatenated, not `join`ed: join normalises `..` away lexically, which
+  // would ask about /sys/class/block itself. The `..` has to survive into the
+  // path so the *kernel* resolves it — symlink first, then the parent — which
+  // is what turns a partition's directory into its disk's.
+  const value = own ?? io.readText(`${base}/../removable`);
+  return (value ?? "").trim() === "1";
 }
 
 /** A short label for a volume, for a list someone is picking from. */
