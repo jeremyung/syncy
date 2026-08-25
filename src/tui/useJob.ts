@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import type { Config } from "../config.ts";
 import { buildDiff, saveDiff } from "../diff.ts";
 import type { Fingerprint } from "../fingerprint.ts";
@@ -59,195 +59,199 @@ export function useJob(facts: JobFacts): Job {
    */
   const [running, setRunning] = useState<RunProgress | null>(null);
 
-  const runCheck = useCallback(
-    async (mode: "quick" | "deep", scope: "selected" | "all") => {
-      if (running !== null) {
-        facts.notify(
-          `[${mode === "deep" ? "d" : "q"}] ignored — the ${running.mode} check on ` +
-            `${running.unit} is still running`,
-        );
-        return;
-      }
-      const chosen =
-        scope === "all"
-          ? facts.rows
-          : facts.rows.slice(facts.clampedSelection, facts.clampedSelection + 1);
-      if (chosen.length === 0) return;
-
-      const reach = facts.scan?.reach ?? (await allReachability(facts.config));
-      const jobs = chosen.flatMap((row) =>
-        facts.config.targets.map((target) => ({
-          unit: row.status.unit,
-          target,
-          size: row.size,
-          files: row.files ?? 0,
-        })),
+  /**
+   * Not memoised, deliberately.
+   *
+   * `facts` is a fresh object every render and `rows` a fresh array whenever
+   * a filter is on, so a `useCallback` over them would rebuild the closure
+   * every render anyway — the memo would be a claim of stability that the
+   * dependencies cannot keep. Nothing depends on this function's identity:
+   * `useKeys` re-registers its handler each render regardless. A plain
+   * definition is what actually happens, so it is what is written.
+   */
+  const runCheck = async (mode: "quick" | "deep", scope: "selected" | "all"): Promise<void> => {
+    if (running !== null) {
+      facts.notify(
+        `[${mode === "deep" ? "d" : "q"}] ignored — the ${running.mode} check on ` +
+          `${running.unit} is still running`,
       );
-      // The bar fills by bytes: a 78 gb folder and a 442 mb one take wildly
-      // different times, so counting folders equally would make it lie.
-      const bytesTotal = jobs.reduce((a, j) => a + j.size, 0);
-      const startedAt = Date.now();
-      let working = facts.state;
-      let done = 0;
-      let bytesDone = 0;
+      return;
+    }
+    const chosen =
+      scope === "all"
+        ? facts.rows
+        : facts.rows.slice(facts.clampedSelection, facts.clampedSelection + 1);
+    if (chosen.length === 0) return;
 
-      // Destinations that could not be reached, so the run can say what it did
-      // not do. Skipping in silence and then reporting "deep check finished"
-      // was a claim that nothing had been checked — indistinguishable from a
-      // check that never started.
-      const skipped: { readonly target: string; readonly why: Reachability }[] = [];
+    const reach = facts.scan?.reach ?? (await allReachability(facts.config));
+    const jobs = chosen.flatMap((row) =>
+      facts.config.targets.map((target) => ({
+        unit: row.status.unit,
+        target,
+        size: row.size,
+        files: row.files ?? 0,
+      })),
+    );
+    // The bar fills by bytes: a 78 gb folder and a 442 mb one take wildly
+    // different times, so counting folders equally would make it lie.
+    const bytesTotal = jobs.reduce((a, j) => a + j.size, 0);
+    const startedAt = Date.now();
+    let working = facts.state;
+    let done = 0;
+    let bytesDone = 0;
 
-      for (const job of jobs) {
-        const status = reach.get(job.target.name);
-        if (status !== "ok") {
-          if (!skipped.some((s) => s.target === job.target.name)) {
-            skipped.push({
-              target: job.target.name,
-              why: status ?? "unreachable",
-            });
-          }
-          debug("check.skipped", {
-            unit: job.unit,
+    // Destinations that could not be reached, so the run can say what it did
+    // not do. Skipping in silence and then reporting "deep check finished"
+    // was a claim that nothing had been checked — indistinguishable from a
+    // check that never started.
+    const skipped: { readonly target: string; readonly why: Reachability }[] = [];
+
+    for (const job of jobs) {
+      const status = reach.get(job.target.name);
+      if (status !== "ok") {
+        if (!skipped.some((s) => s.target === job.target.name)) {
+          skipped.push({
             target: job.target.name,
-            reach: status,
+            why: status ?? "unreachable",
           });
-          done += 1;
-          bytesDone += job.size;
-          continue;
         }
-        // Estimated from measured throughput at this destination, so the bar
-        // works from the second check onwards on *any* folder rather than only
-        // on one that has been checked twice.
-        const prior = estimateMs(working, job.target.name, methodOf(mode), job.size);
-        const jobStarted = Date.now();
-        const base = {
+        debug("check.skipped", {
           unit: job.unit,
           target: job.target.name,
-          mode,
-          done,
-          total: jobs.length,
-          bytesDone,
-          bytesTotal,
-          startedAt,
-          jobStartedAt: jobStarted,
-          filesTotal: job.files,
-          unitBytes: job.size,
-          ...(prior !== undefined ? { priorMs: prior } : {}),
-        } as const;
-        setRunning({ ...base, filesSeen: 0 });
-        debug("check.start", {
-          mode,
-          unit: job.unit,
-          target: job.target.name,
-          bytes: job.size,
-          files: job.files,
-          estimateMs: prior ?? null,
+          reach: status,
         });
-        try {
-          const { scan, argv, items, targetFingerprint, exitCode } = await checkUnit(
-            facts.config,
-            job.unit,
-            job.target,
-            mode,
-            {
-              // Throttled: one render per 25 files keeps a large folder from
-              // driving the render loop instead of the check.
-              onFile: (seen) => {
-                if (seen % 25 === 0) setRunning({ ...base, filesSeen: seen });
-              },
-            },
-          );
-          const jobMs = Date.now() - jobStarted;
-          debug("check.done", {
-            mode,
-            unit: job.unit,
-            target: job.target.name,
-            ms: jobMs,
-            bytes: job.size,
-            outcome: scan.outcome,
-            nChanges: scan.nChanges,
-            // A rate only where one was actually achieved. A quick check reads
-            // no file contents, so dividing the folder's bytes by its elapsed
-            // time reported 90,353 MB/s — a number with no referent. Sub-second
-            // runs are excluded for the same reason: the divisor is noise.
-            ...(mode === "deep" && jobMs >= 1000
-              ? { readMBPerSec: Math.round(job.size / 1e6 / (jobMs / 1000)) }
-              : {}),
-          });
-          working = upsertScan(working, scan);
-          saveState(working);
-          // The itemized list is what the differences screen shows. rsync
-          // produced it during the check; discarding it would mean re-running
-          // the whole check to answer "which files?".
-          saveDiff(
-            buildDiff(job.unit, job.target.name, scan.method, items, {
-              ts: scan.ts,
-              wholeFolderMissing: scan.outcome === "missing",
-              source: scan.fingerprint,
-              target: targetFingerprint,
-            }),
-          );
-          appendHistory({
-            ts: scan.ts,
-            unit: job.unit,
-            target: job.target.name,
-            argv,
-            exitCode,
-          });
-          // Publish after every unit so the ledger fills in as it goes rather
-          // than staying blank until the whole run finishes.
-          facts.setState(working);
-          facts.setNow(Date.now());
-        } catch (e) {
-          // Explicit catch at the subprocess boundary; a swallowed rejection
-          // would leave the ledger showing stale state as if it were fresh.
-          debug("check.failed", {
-            unit: job.unit,
-            target: job.target.name,
-            ms: Date.now() - jobStarted,
-            error: (e as Error).message,
-          });
-          setBusy(`${job.unit} → ${job.target.name}: failed — ${(e as Error).message}`);
-        }
         done += 1;
         bytesDone += job.size;
+        continue;
       }
+      // Estimated from measured throughput at this destination, so the bar
+      // works from the second check onwards on *any* folder rather than only
+      // on one that has been checked twice.
+      const prior = estimateMs(working, job.target.name, methodOf(mode), job.size);
+      const jobStarted = Date.now();
+      const base = {
+        unit: job.unit,
+        target: job.target.name,
+        mode,
+        done,
+        total: jobs.length,
+        bytesDone,
+        bytesTotal,
+        startedAt,
+        jobStartedAt: jobStarted,
+        filesTotal: job.files,
+        unitBytes: job.size,
+        ...(prior !== undefined ? { priorMs: prior } : {}),
+      } as const;
+      setRunning({ ...base, filesSeen: 0 });
+      debug("check.start", {
+        mode,
+        unit: job.unit,
+        target: job.target.name,
+        bytes: job.size,
+        files: job.files,
+        estimateMs: prior ?? null,
+      });
+      try {
+        const { scan, argv, items, targetFingerprint, exitCode } = await checkUnit(
+          facts.config,
+          job.unit,
+          job.target,
+          mode,
+          {
+            // Throttled: one render per 25 files keeps a large folder from
+            // driving the render loop instead of the check.
+            onFile: (seen) => {
+              if (seen % 25 === 0) setRunning({ ...base, filesSeen: seen });
+            },
+          },
+        );
+        const jobMs = Date.now() - jobStarted;
+        debug("check.done", {
+          mode,
+          unit: job.unit,
+          target: job.target.name,
+          ms: jobMs,
+          bytes: job.size,
+          outcome: scan.outcome,
+          nChanges: scan.nChanges,
+          // A rate only where one was actually achieved. A quick check reads
+          // no file contents, so dividing the folder's bytes by its elapsed
+          // time reported 90,353 MB/s — a number with no referent. Sub-second
+          // runs are excluded for the same reason: the divisor is noise.
+          ...(mode === "deep" && jobMs >= 1000
+            ? { readMBPerSec: Math.round(job.size / 1e6 / (jobMs / 1000)) }
+            : {}),
+        });
+        working = upsertScan(working, scan);
+        saveState(working);
+        // The itemized list is what the differences screen shows. rsync
+        // produced it during the check; discarding it would mean re-running
+        // the whole check to answer "which files?".
+        saveDiff(
+          buildDiff(job.unit, job.target.name, scan.method, items, {
+            ts: scan.ts,
+            wholeFolderMissing: scan.outcome === "missing",
+            source: scan.fingerprint,
+            target: targetFingerprint,
+          }),
+        );
+        appendHistory({
+          ts: scan.ts,
+          unit: job.unit,
+          target: job.target.name,
+          argv,
+          exitCode,
+        });
+        // Publish after every unit so the ledger fills in as it goes rather
+        // than staying blank until the whole run finishes.
+        facts.setState(working);
+        facts.setNow(Date.now());
+      } catch (e) {
+        // Explicit catch at the subprocess boundary; a swallowed rejection
+        // would leave the ledger showing stale state as if it were fresh.
+        debug("check.failed", {
+          unit: job.unit,
+          target: job.target.name,
+          ms: Date.now() - jobStarted,
+          error: (e as Error).message,
+        });
+        setBusy(`${job.unit} → ${job.target.name}: failed — ${(e as Error).message}`);
+      }
+      done += 1;
+      bytesDone += job.size;
+    }
 
-      setRunning(null);
-      // A check can change what is at the target, and the source may have moved
-      // under us while it ran, so both facts are re-read once at the end.
-      facts.refresh();
-      // A run in which every destination was skipped checked nothing, and must
-      // not report otherwise.
-      const ran =
-        jobs.length -
-        skipped.reduce((n, s) => n + jobs.filter((j) => j.target.name === s.target).length, 0);
-      if (ran === 0 && skipped.length > 0) {
-        setBusy(
-          `nothing checked — ${skipped.map((s) => `${s.target} ${reachWord(s.why)}`).join(", ")}`,
-        );
-      } else if (skipped.length > 0) {
-        setBusy(
-          `${mode} check finished · ${ran} of ${jobs.length} · skipped ` +
-            skipped.map((s) => `${s.target} (${reachWord(s.why)})`).join(", "),
-        );
-      } else {
-        setBusy(
-          scope === "all"
-            ? `${mode} check finished · ${chosen.length} folders`
-            : `${mode} check finished · ${chosen[0]?.status.unit ?? ""}`,
-        );
-      }
-      facts.setNow(Date.now());
-      // A skip needs longer on screen than a success: it is the message the
-      // user has to read and act on.
-      setTimeout(() => setBusy(null), skipped.length > 0 ? 8000 : 2500);
-    },
-    // `facts` is rebuilt by the caller on every render — its members are the
-    // whole of the world the closure reads — and `running` is this hook's own
-    // state. Both change what a run will do, so both must re-make the callback.
-    [facts, running],
-  );
+    setRunning(null);
+    // A check can change what is at the target, and the source may have moved
+    // under us while it ran, so both facts are re-read once at the end.
+    facts.refresh();
+    // A run in which every destination was skipped checked nothing, and must
+    // not report otherwise.
+    const ran =
+      jobs.length -
+      skipped.reduce((n, s) => n + jobs.filter((j) => j.target.name === s.target).length, 0);
+    if (ran === 0 && skipped.length > 0) {
+      setBusy(
+        `nothing checked — ${skipped.map((s) => `${s.target} ${reachWord(s.why)}`).join(", ")}`,
+      );
+    } else if (skipped.length > 0) {
+      setBusy(
+        `${mode} check finished · ${ran} of ${jobs.length} · skipped ` +
+          skipped.map((s) => `${s.target} (${reachWord(s.why)})`).join(", "),
+      );
+    } else {
+      setBusy(
+        scope === "all"
+          ? `${mode} check finished · ${chosen.length} folders`
+          : `${mode} check finished · ${chosen[0]?.status.unit ?? ""}`,
+      );
+    }
+    facts.setNow(Date.now());
+    // A skip needs longer on screen than a success: it is the message the
+    // user has to read and act on.
+    setTimeout(() => setBusy(null), skipped.length > 0 ? 8000 : 2500);
+  };
 
   return { running, busy, runCheck };
 }

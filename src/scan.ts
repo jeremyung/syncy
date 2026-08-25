@@ -36,14 +36,31 @@ export type Reachability = SentinelStatus | "unreachable";
  * mounted at the path and compares that with what was recorded — nothing is
  * written to the destination. `sentinel` reads a file syncy placed at the
  * target root, which additionally catches the directory being deleted and
- * recreated. Identity wins when both are present.
+ * recreated.
+ *
+ * A volume uuid stands on its own: it names the filesystem, and no other
+ * filesystem can answer to it. A *mount source* does not, and `identityKind`
+ * is what separates the two. `//nas/media` is a real remote name, but the
+ * other thing that lands in that field is a local device path, which
+ * `identify` falls back to whenever the kernel publishes no uuid — and
+ * `/dev/sdb1` is a slot in this boot's enumeration order. Unplug the backup
+ * disk, plug a different one into the same port, and it answers to the same
+ * path. So where the identity is a mount source the sentinel is checked too,
+ * and it is the sentinel's answer that is returned: it is the one that
+ * survives the disk being swapped.
+ *
+ * Targets recorded before `identity_kind` existed have no kind, and are
+ * treated as mount-source for the same reason absence of provenance is
+ * treated as no evidence everywhere else here.
  */
 export async function targetReachability(target: Target): Promise<Reachability> {
   if (target.identity !== undefined && target.identity !== "") {
     const v = await checkVolume(target.path, target.identity);
     if (v !== "ok") return v === "unreachable" ? "unreachable" : "mismatch";
     // The volume is right; the directory still has to exist on it.
-    return existsSync(target.path) ? "ok" : "unreachable";
+    if (!existsSync(target.path)) return "unreachable";
+    if (target.identityKind === "volume-uuid" || target.sentinel === undefined) return "ok";
+    return checkSentinel(target.path, target.sentinel);
   }
   if (!existsSync(target.path)) return "unreachable";
   if (target.sentinel === undefined) return "missing";
