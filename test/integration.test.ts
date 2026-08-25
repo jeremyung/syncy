@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Config, parseConfig } from "../src/config.ts";
+import { type Config, parseConfig, type Target } from "../src/config.ts";
 import { fingerprint } from "../src/fingerprint.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { allReachability, checkUnit, listUnits, targetReachability } from "../src/scan.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import { EMPTY_STATE, type State, upsertScan } from "../src/state.ts";
 import { evaluateUnit } from "../src/status.ts";
+import { identify } from "../src/volume.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
@@ -112,6 +113,62 @@ describeRsync("units and reachability", () => {
   test("a different volume mounted at the same path is detected", async () => {
     writeFileSync(join(target("ext").path, SENTINEL_NAME), "some-other-uuid\n");
     expect(await targetReachability(target("ext"))).toBe("mismatch");
+  });
+});
+
+/**
+ * What a recorded identity is worth depends on what kind of identity it is.
+ *
+ * The identity of the fixture path is whatever this machine actually answers
+ * for it, so these run the real `checkVolume` against the real mount table on
+ * either platform; only the recorded `identityKind` varies, which is the
+ * thing under test.
+ */
+describeRsync("a mount-source identity does not outrank the sentinel", () => {
+  const withIdentity = async (
+    kind: "volume-uuid" | "mount-source" | undefined,
+    sentinel: string | undefined,
+  ): Promise<Target> => {
+    const found = await identify(join(root, "ext"));
+    return {
+      ...target("ext"),
+      identity: found!.id,
+      ...(kind !== undefined ? { identityKind: kind } : {}),
+      ...(sentinel !== undefined ? { sentinel } : {}),
+    } as Target;
+  };
+
+  test("a volume uuid stands on its own, sentinel or no sentinel", async () => {
+    // A uuid names the filesystem; nothing else can answer to it. Checking
+    // the sentinel as well would cost a read for no proof gained, so a
+    // target whose sentinel has drifted is still reachable.
+    expect(await targetReachability(await withIdentity("volume-uuid", "not-the-one"))).toBe("ok");
+  });
+
+  test("a mount source is checked against the sentinel as well", async () => {
+    // The failure this closes: `identity` falls back to the device path when
+    // the kernel publishes no uuid — the common case on Linux — and
+    // /dev/sdb1 is a slot in this boot's enumeration order. Unplug the
+    // backup disk, plug a different one into the same port, and it answers
+    // to the same path with the same device node. Only the sentinel knows.
+    expect(await targetReachability(await withIdentity("mount-source", "not-the-one"))).toBe(
+      "mismatch",
+    );
+  });
+
+  test("a mount source with the right sentinel is reachable", async () => {
+    const real = readFileSync(join(root, "ext", SENTINEL_NAME), "utf8").trim();
+    expect(await targetReachability(await withIdentity("mount-source", real))).toBe("ok");
+  });
+
+  test("a target recorded before identity_kind existed is treated as the weaker one", async () => {
+    expect(await targetReachability(await withIdentity(undefined, "not-the-one"))).toBe("mismatch");
+  });
+
+  test("a mount source with no sentinel to check is still reachable", async () => {
+    // No regression for a target that never had one: the identity is all
+    // there is, and it did match.
+    expect(await targetReachability(await withIdentity("mount-source", undefined))).toBe("ok");
   });
 });
 

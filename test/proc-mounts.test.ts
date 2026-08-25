@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { type MountEntry, parseProcMounts } from "../src/fstype.ts";
-import { classify, classifyLinuxDevice, isRemovableBlock, volumeUuidLinux } from "../src/volume.ts";
+import {
+  classify,
+  classifyLinuxDevice,
+  isRemovableDevice,
+  type LinuxVolumeIo,
+  volumeUuidLinux,
+} from "../src/volume.ts";
 
 /**
  * The Linux side of volume identity, tested against a fixed /proc/mounts
@@ -71,6 +77,25 @@ const proc = (device: string, mountPoint: string, fstype: string, local: boolean
   local,
 });
 
+/**
+ * A canned /sys and /dev/disk.
+ *
+ * Every path the Linux volume code touches goes through this, so a test
+ * cannot pass by reading the machine it runs on — which is the whole reason
+ * these decisions take an io object. An unlisted path does not exist:
+ * `realpath` of an unknown path returns it unchanged, the way a real
+ * non-symlink resolves to itself.
+ */
+const io = (
+  files: Record<string, string>,
+  links: Record<string, string> = {},
+  dirs: Record<string, string[]> = {},
+): LinuxVolumeIo => ({
+  readText: (path) => files[path] ?? null,
+  list: (dir) => dirs[dir] ?? [],
+  realpath: (path) => links[path] ?? path,
+});
+
 describe("classifying Linux mounts", () => {
   test("a network fstype is a share on any mount table", () => {
     expect(classify(proc("//nas.local/media", "/mnt/media", "cifs", false))).toBe("network");
@@ -83,53 +108,118 @@ describe("classifying Linux mounts", () => {
     // "internal" are claims about hardware, and the VolumeKind vocabulary
     // dropped "image" (unreachable on macOS — see classify), so the honest
     // answer for a loop mount is unknown.
-    expect(classifyLinuxDevice("/dev/loop0")).toBe("unknown");
+    expect(classifyLinuxDevice("/dev/loop0", io({}))).toBe("unknown");
   });
 
   test("no block device at all is not a destination", () => {
-    expect(classifyLinuxDevice("overlay")).toBe("unknown");
-    expect(classifyLinuxDevice("zfs")).toBe("unknown");
+    expect(classifyLinuxDevice("overlay", io({}))).toBe("unknown");
+    expect(classifyLinuxDevice("zfs", io({}))).toBe("unknown");
   });
 
-  test("a mapper volume is an internal disk", () => {
-    // `mapper` is not a block device name, so /sys has no removable bit for
-    // it on any machine, which makes the answer stable rather than a probe.
-    expect(classifyLinuxDevice("/dev/mapper/vg-lv")).toBe("internal");
+  test("a mapper volume is asked about as the dm-N it resolves to", () => {
+    // /dev/mapper/vg-lv is a symlink; /sys/class/block has no `mapper`. The
+    // realpath is what has a removable bit, and an LVM volume's is 0.
+    const links = { "/dev/mapper/vg-lv": "/dev/dm-0" };
+    expect(
+      classifyLinuxDevice(
+        "/dev/mapper/vg-lv",
+        io({ "/sys/class/block/dm-0/removable": "0" }, links),
+      ),
+    ).toBe("internal");
   });
 
-  test("removable comes from /sys, and no such file means not removable", () => {
-    expect(isRemovableBlock("sdb1", () => "1")).toBe(true);
-    expect(isRemovableBlock("sdb1", () => "0")).toBe(false);
-    expect(isRemovableBlock("sdb1", () => null)).toBe(false);
-    expect(isRemovableBlock("sdb1", () => " 1 ")).toBe(true);
+  test("a USB partition is external: `removable` lives on the disk, not the partition", () => {
+    // The bug this replaces: /sys/block/sdb1/removable was read, and neither
+    // half of that path is right. /sys/block holds whole disks only, and a
+    // partition publishes no `removable` of its own — so the file never
+    // existed on any machine and every external disk read as internal.
+    const usb = io({ "/sys/class/block/sdb1/../removable": "1" });
+    expect(isRemovableDevice("/dev/sdb1", usb)).toBe(true);
+    expect(classifyLinuxDevice("/dev/sdb1", usb)).toBe("external");
+  });
+
+  test("a whole disk answers from its own directory", () => {
+    expect(isRemovableDevice("/dev/sdb", io({ "/sys/class/block/sdb/removable": "1" }))).toBe(true);
+  });
+
+  test("an internal partition is internal, and a missing file is not removable", () => {
+    expect(
+      isRemovableDevice("/dev/nvme0n1p2", io({ "/sys/class/block/nvme0n1p2/../removable": "0" })),
+    ).toBe(false);
+    expect(isRemovableDevice("/dev/sdb1", io({}))).toBe(false);
+  });
+
+  test("the removable bit is trimmed: sysfs files end in a newline", () => {
+    expect(
+      isRemovableDevice("/dev/sdb1", io({ "/sys/class/block/sdb1/../removable": " 1 " })),
+    ).toBe(true);
   });
 });
 
-describe("volume UUID from sysfs", () => {
-  // A mount point that cannot exist, so the devnum route never touches a real
-  // device and only the injected reader answers.
+describe("volume UUID on Linux", () => {
   const ghost = (device: string, fstype: string): MountEntry =>
     proc(device, "/mnt/no/such/point", fstype, true);
 
-  test("the uuid file wins for the device name", () => {
-    const reader = (p: string): string | null =>
-      p === "/sys/block/sdb1/uuid" ? "ABCD-1234-ABCD" : null;
-    expect(volumeUuidLinux(ghost("/dev/sdb1", "ext4"), reader)).toBe("ABCD-1234-ABCD");
+  test("the filesystem uuid comes from udev's by-uuid symlinks", () => {
+    // Not from sysfs: a filesystem uuid lives in the superblock, and the
+    // kernel publishes none for a block device. udev resolves it and links
+    // it under /dev/disk/by-uuid, which is what `blkid` and every mount unit
+    // on the machine already agree is the name for the volume.
+    const found = io(
+      {},
+      { "/dev/disk/by-uuid/8f3b-ARCHIVE": "/dev/sdb1", "/dev/sdb1": "/dev/sdb1" },
+      { "/dev/disk/by-uuid": ["8f3b-ARCHIVE", "other-volume"] },
+    );
+    expect(volumeUuidLinux(ghost("/dev/sdb1", "ext4"), found)).toBe("8f3b-ARCHIVE");
   });
 
-  test("partuuid answers for FAT-family devices", () => {
-    const reader = (p: string): string | null =>
-      p === "/sys/block/sdb1/partuuid" ? "1122-3344" : null;
-    expect(volumeUuidLinux(ghost("/dev/sdb1", "exfat"), reader)).toBe("1122-3344");
+  test("by-partuuid answers when the filesystem publishes no uuid", () => {
+    const found = io(
+      {},
+      { "/dev/disk/by-partuuid/1122-3344": "/dev/sdb1", "/dev/sdb1": "/dev/sdb1" },
+      { "/dev/disk/by-uuid": [], "/dev/disk/by-partuuid": ["1122-3344"] },
+    );
+    expect(volumeUuidLinux(ghost("/dev/sdb1", "exfat"), found)).toBe("1122-3344");
   });
 
-  test("no published uuid means the caller falls back to the device path", () => {
-    expect(volumeUuidLinux(ghost("/dev/sdb1", "xfs"), () => null)).toBeNull();
+  test("a link that resolves elsewhere is not this volume's uuid", () => {
+    // The whole point of resolving both sides: by-uuid is full of entries,
+    // and only the one pointing at *this* node names *this* volume.
+    const other = io(
+      {},
+      { "/dev/disk/by-uuid/belongs-to-sda1": "/dev/sda1", "/dev/sdb1": "/dev/sdb1" },
+      { "/dev/disk/by-uuid": ["belongs-to-sda1"] },
+    );
+    expect(volumeUuidLinux(ghost("/dev/sdb1", "ext4"), other)).toBeNull();
   });
 
-  test("mapper names have no name-based route and no devnum on a ghost", () => {
-    expect(
-      volumeUuidLinux(ghost("/dev/mapper/vg-lv", "ext4"), () => "should-not-be-read"),
-    ).toBeNull();
+  test("a device that publishes its own uuid answers without udev", () => {
+    // An NVMe namespace and a device-mapper volume do have a uuid in sysfs,
+    // which covers a machine running without udev. /sys/class/block, not
+    // /sys/block: the latter holds whole disks only.
+    const nvme = io(
+      { "/sys/class/block/nvme0n1/uuid": "nvme-namespace-uuid" },
+      {
+        "/dev/nvme0n1": "/dev/nvme0n1",
+      },
+    );
+    expect(volumeUuidLinux(ghost("/dev/nvme0n1", "ext4"), nvme)).toBe("nvme-namespace-uuid");
+
+    const dm = io(
+      { "/sys/class/block/dm-0/dm/uuid": "LVM-abc123" },
+      {
+        "/dev/mapper/vg-lv": "/dev/dm-0",
+      },
+    );
+    expect(volumeUuidLinux(ghost("/dev/mapper/vg-lv", "ext4"), dm)).toBe("LVM-abc123");
+  });
+
+  test("nothing published means null, and the caller must not treat the path as proof", () => {
+    expect(volumeUuidLinux(ghost("/dev/sdb1", "xfs"), io({}))).toBeNull();
+  });
+
+  test("a source that is not a device node has no uuid to look up", () => {
+    expect(volumeUuidLinux(ghost("overlay", "overlay"), io({}))).toBeNull();
+    expect(volumeUuidLinux(ghost("//nas/media", "cifs"), io({}))).toBeNull();
   });
 });
