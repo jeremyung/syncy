@@ -64,9 +64,48 @@ function mount() {
   return {
     ...r,
     frame: () => plain(r.lastFrame()),
+    /**
+     * The ledger's first real frame.
+     *
+     * The opening frame is empty: there are no rows until the first scan
+     * resolves, and that is genuine work — a fingerprint of every unit and a
+     * reachability check per target. Every test here used to bet a fixed
+     * 120ms sleep on that finishing, which measured ~87ms on a laptop: a
+     * quarter of a second of headroom, and none at all on a loaded CI runner,
+     * where the footer assertion failed outright and two others flaked. What
+     * these tests are about is what the interface does with a key, never how
+     * quickly it got on screen, so they wait for the screen instead of
+     * guessing at it.
+     */
+    async ready() {
+      await waitFor(() => plain(r.lastFrame()).includes("[q]"), {
+        what: "the ledger's first frame",
+      });
+    },
+    /**
+     * Press a key and let the screen catch up.
+     *
+     * Also not a fixed sleep, and for the same reason: the two tests that
+     * flaked on CI — twice, on different runs of identical code — were a
+     * press followed by an assertion about what the press opened. This
+     * returns the moment the screen moves, which is a few milliseconds even
+     * on a busy machine, so the assertion is never racing a timer.
+     *
+     * The wait has to end somewhere, because a key that legitimately changes
+     * nothing is a real case: `j` at the bottom of the list moves no cursor,
+     * and one test presses it five times. So it gives up after a limit set to
+     * be generous against a slow runner and cheap to pay five times over, and
+     * gives up quietly — whether the key did its job is the test's assertion
+     * to make, not this helper's.
+     */
     async press(s: string) {
+      const before = plain(r.lastFrame());
       r.stdin.write(s);
-      await tick();
+      const deadline = Date.now() + 400;
+      while (Date.now() < deadline) {
+        await tick(5);
+        if (plain(r.lastFrame()) !== before) return;
+      }
     },
   };
 }
@@ -82,7 +121,7 @@ describe("the help screen lists each key once", () => {
     // A duplicated React key makes the renderer free to omit one of the pair,
     // so a key can disappear from help with nothing failing.
     const s = mount();
-    await tick();
+    await s.ready();
     await s.press("?");
     const listed = [...s.frame().matchAll(/^\s{2}(\S[^\s]*(?:\s\/\s\S+)?)\s{2,}\S/gm)].map(
       (m) => m[1]!,
@@ -101,7 +140,7 @@ describe("the help screen lists each key once", () => {
 describe("the footer advertises only keys that work", () => {
   test("it advertises a plausible set", async () => {
     const s = mount();
-    await tick();
+    await s.ready();
     const keys = advertisedKeys(s.frame());
     expect(keys.length).toBeGreaterThanOrEqual(4);
     // [?] is the disclosure for everything the line had no room for, so it is
@@ -115,7 +154,7 @@ describe("the footer advertises only keys that work", () => {
       // The regression: a key can be advertised in the footer and in help while
       // never reaching a dispatch branch, so pressing it does nothing at all.
       const s = mount();
-      await tick();
+      await s.ready();
       const before = s.frame();
       await s.press(key);
       expect(s.frame(), `[${key}] did nothing`).not.toBe(before);
@@ -125,7 +164,7 @@ describe("the footer advertises only keys that work", () => {
 
   test("[f] cycles the filter", async () => {
     const s = mount();
-    await tick();
+    await s.ready();
     await s.press("f");
     expect(s.frame()).toContain("filter:");
     s.unmount();
@@ -135,7 +174,7 @@ describe("the footer advertises only keys that work", () => {
 describe("the screens each key opens", () => {
   test("p opens the command list for the selected folder", async () => {
     const s = mount();
-    await tick();
+    await s.ready();
     await s.press("p");
     const f = s.frame();
     expect(f).toContain("what each key runs");
@@ -146,7 +185,7 @@ describe("the screens each key opens", () => {
 
   test("p shows the real rsync binary and flags, not a description", async () => {
     const s = mount();
-    await tick();
+    await s.ready();
     await s.press("p");
     expect(s.frame()).toContain("--partial-dir=.syncy-partial");
     s.unmount();
@@ -154,7 +193,7 @@ describe("the screens each key opens", () => {
 
   test("escape closes the command list", async () => {
     const s = mount();
-    await tick();
+    await s.ready();
     await s.press("p");
     expect(s.frame()).toContain("what each key runs");
     await s.press(ESC);
@@ -166,7 +205,7 @@ describe("the screens each key opens", () => {
   test("the keyboard is not left dead after closing", async () => {
     // The soft-lock risk: a screen that owns the keyboard but never renders.
     const s = mount();
-    await tick();
+    await s.ready();
     await s.press("p");
     await s.press(ESC);
     await s.press("?");
@@ -176,7 +215,7 @@ describe("the screens each key opens", () => {
 
   test("? lists the keys, and names which one writes", async () => {
     const s = mount();
-    await tick();
+    await s.ready();
     await s.press("?");
     const f = s.frame();
     expect(f).toContain("the only key that writes");
@@ -194,7 +233,7 @@ describe("a key that cannot act says so", () => {
    */
   test("pressing a check key mid-run reports the refusal instead of ignoring it", async () => {
     const s = mount();
-    await tick();
+    await s.ready();
     await s.press("d"); // starts a deep verify
     await s.press("d"); // arrives while the first is still running
     await tick(200);
@@ -209,7 +248,7 @@ describe("a key that cannot act says so", () => {
 
   test("the refusal names the key and what is holding it up", async () => {
     const s = mount();
-    await tick();
+    await s.ready();
     await s.press("q");
     await s.press("d");
     await tick(200);
@@ -233,7 +272,7 @@ describe("a check that could not run says so", () => {
    */
   test("an unreachable destination is reported, not skipped quietly", async () => {
     const s = mount();
-    await tick();
+    await s.ready();
     // Break reachability by removing the sentinel the config was built around.
     rmSync(join(root, "dst", SENTINEL_NAME), { force: true });
     await s.press("r"); // re-read reachability
@@ -262,7 +301,7 @@ describe("the debug log is readable", () => {
     process.env["SYNCY_DEBUG"] = "1";
     try {
       const s = mount();
-      await tick();
+      await s.ready();
       const after = existsSync(log) ? readFileSync(log, "utf8").split("\n").length : 0;
       // Move the cursor a few times: renders, and nothing worth logging.
       for (const _ of [0, 1, 2, 3, 4]) await s.press("j");
@@ -282,7 +321,7 @@ describe("the debug log is readable", () => {
     process.env["SYNCY_DEBUG"] = "1";
     try {
       const s = mount();
-      await tick();
+      await s.ready();
       await s.press("q");
       await waitFor(
         () => existsSync(log) && /check\.(done|skipped)/.test(readFileSync(log, "utf8")),
