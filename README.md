@@ -148,14 +148,18 @@ brew install rsync        # macOS
 sudo apt install rsync    # or the distro equivalent
 ```
 
-**Linux.** The mount table is read from `/proc/mounts` and volume UUIDs from
-sysfs, so no `diskutil` and no `mount` subprocess. Where the kernel publishes
-no UUID for a device the device path is the identity, which still separates
-one volume from another. The capability probe uses the `attr` and `acl`
-packages (`setfattr`/`getfattr`, `setfacl`/`getfacl`) when they are installed;
-a missing tool reports the capability as unmeasured and drops the flag
-rather than guessing. Copying the plan needs `wl-clipboard` or `xclip`;
-without one the button says so.
+**Linux.** The mount table is read from `/proc/mounts`, so no `diskutil` and
+no `mount` subprocess. A volume's UUID comes from `/dev/disk/by-uuid` — the
+same names `blkid` and your `fstab` use — falling back to `by-partuuid`, and
+to sysfs for the devices that publish one of their own. Where nothing stable
+is published the device path is recorded instead, and syncy then treats it as
+the weaker proof it is: `/dev/sdb1` is a slot in this boot's enumeration
+order, not a name for a disk, so a target identified that way gets a sentinel
+file and both are checked before anything is written to it. The capability
+probe uses the `attr` and `acl` packages (`setfattr`/`getfattr`,
+`setfacl`/`getfacl`) when they are installed; a missing tool reports the
+capability as unmeasured and drops the flag rather than guessing. Copying the
+plan needs `wl-clipboard` or `xclip`; without one the button says so.
 
 **Bun**, to build.
 
