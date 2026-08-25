@@ -578,9 +578,9 @@ interfaces, and assumes nothing new:
 | Concern | macOS | Linux |
 |---|---|---|
 | Mount table | `/sbin/mount` (BSD format, cached 1 s) | `/proc/mounts` — already in memory; no spawn, and no stall enumerating a dead share |
-| Volume identity | `diskutil` volume UUID | sysfs `uuid`/`partuuid` per block device, with a devnum route for namespaced `/sys`; the device path as mount-source when the kernel publishes nothing |
+| Volume identity | `diskutil` volume UUID | udev's `/dev/disk/by-uuid` (then `by-partuuid`), matched by resolving both sides to the same device node; sysfs `uuid` last, for the classes that publish their own (NVMe namespace, device-mapper). A filesystem uuid is in the superblock, never in `/sys` |
 | Local vs share | the kernel's `local` flag | network fstypes first, then `/dev/...` device versus pseudo-filesystem |
-| External vs internal | `diskutil` device location | `/sys/block/<name>/removable`; a loop device is `unknown`, not either — it backs a mounted image, not hardware, and the vocabulary has no word for images |
+| External vs internal | `diskutil` device location | `removable`, read from the device's *disk* — `/sys/class/block` holds partitions too, and the bit is published per disk — a loop device is `unknown`, not either: it backs a mounted image, not hardware, and the vocabulary has no word for images |
 | Capability probe | `xattr`, `chmod +a`, `ls -le` | `setfattr`/`getfattr`, `setfacl`/`getfacl`; a missing tool is reported as *unmeasurable* and drops the flag — the safe outcome, honestly labelled |
 | rsync | Homebrew and MacPorts only — never `/usr/bin`, which is openrsync | the distribution `/usr/bin/rsync`; `checkBuild` still refuses anything older than 3.x |
 | Clipboard | `/usr/bin/pbcopy` | first of `wl-copy`, `xclip`, `xsel`; absence is reported, not thrown |
@@ -588,3 +588,14 @@ interfaces, and assumes nothing new:
 The two invariants do not move across platforms: reachability is decided by
 the destination proving it is itself, never by the path existing, and nothing
 lands in a target except through rsync.
+
+Keeping the first of those honest costs one more thing on Linux than it does
+on macOS. `diskutil` answers for essentially every local volume, so the
+mount-source fallback in `identify` is rare there; where no uuid is published
+the fallback is the device path, and `/dev/sdb1` is a slot in this boot's
+enumeration order rather than a name for a disk — a different disk in the
+same port answers to it. So the two identity kinds are not interchangeable
+proof: a `volume-uuid` stands alone, a `mount-source` is checked against the
+sentinel as well, and adding a target that resolves to one writes a sentinel
+so there is something to check. The sentinel is the proof that survives the
+disk being swapped, which is why it is the one §2 calls the most important.
