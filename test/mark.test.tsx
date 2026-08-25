@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
-import { parseConfig, type Config } from "../src/config.ts";
+import { type Config, parseConfig } from "../src/config.ts";
 import type { CellState, UnitState } from "../src/status.ts";
-import { Mark } from "../src/tui/Mark.tsx";
 import { forkliftRows } from "../src/tui/Forklift.tsx";
-import { Shelf, shelfSummary, MAX_BLOCKS } from "../src/tui/Shelf.tsx";
+import { Mark } from "../src/tui/Mark.tsx";
+import { MAX_BLOCKS, Shelf, shelfSummary } from "../src/tui/Shelf.tsx";
 import { THEMES } from "../src/tui/theme.ts";
 import { displayWidth } from "../src/width.ts";
 
@@ -21,10 +21,16 @@ const plain = (s: string | undefined): string => (s ?? "").replace(/\[[0-9;]*m/g
 const configWith = (names: readonly string[]): Config =>
   parseConfig(
     `source = "/src"\n` +
-      names.map((n, i) => `[[target]]\nname = "${n}"\npath = "/dest/${n}"\nsentinel = "s${i}"\n`).join(""),
+      names
+        .map((n, i) => `[[target]]\nname = "${n}"\npath = "/dest/${n}"\nsentinel = "s${i}"\n`)
+        .join(""),
   );
 
-function mark(names: readonly string[], states?: ReadonlyMap<string, CellState>, units = 5): string {
+function mark(
+  names: readonly string[],
+  states?: ReadonlyMap<string, CellState>,
+  units = 5,
+): string {
   const { lastFrame } = render(
     <Mark
       config={configWith(names)}
@@ -80,7 +86,9 @@ describe("the replication mark shows the real configuration", () => {
   test("the box and its connectors line up at any destination count", () => {
     for (const n of [1, 2, 5]) {
       const names = Array.from({ length: n }, (_, i) => `d${i}`);
-      const lines = mark(names).split("\n").filter((l) => l.trim() !== "");
+      const lines = mark(names)
+        .split("\n")
+        .filter((l) => l.trim() !== "");
       const box = lines.filter((l) => l.includes("│") || l.includes("┌") || l.includes("└"));
       const offsets = box.map((l) => l.indexOf("┌") + l.indexOf("│") + l.indexOf("└"));
       expect(offsets.length, `${n} destinations`).toBeGreaterThan(0);

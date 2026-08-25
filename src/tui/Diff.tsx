@@ -2,20 +2,20 @@ import { Box, Text, useInput } from "ink";
 import { useMemo, useState } from "react";
 import type { Config } from "../config.ts";
 import {
-  diffCounts,
-  folderOf,
-  groupDiff,
-  splitBySync,
-  GROUP_BY,
-  type Diff,
+  type Diff as DiffData,
   type DiffEntry,
   type DiffGroup,
   type DiffKind,
+  diffCounts,
+  folderOf,
+  GROUP_BY,
   type GroupBy,
+  groupDiff,
   type SyncSplit,
+  splitBySync,
 } from "../diff.ts";
-import { explainFlags } from "../itemize.ts";
 import { ageAgo, bytes, count, day, span } from "../format.ts";
+import { explainFlags } from "../itemize.ts";
 import { displayWidth, padEnd, padStart, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
 import type { Theme } from "./theme.ts";
@@ -108,7 +108,7 @@ export interface DiffProps {
   readonly config: Config;
   readonly unit: string;
   /** One entry per configured target; null means no check has been recorded. */
-  readonly diffs: ReadonlyMap<string, Diff | null>;
+  readonly diffs: ReadonlyMap<string, DiffData | null>;
   /** When each destination last had a sync land, for the age split. */
   readonly lastSync?: ReadonlyMap<string, number | null>;
   /** The grouping the screen opens on. [b] cycles from wherever this leaves it. */
@@ -121,7 +121,7 @@ export interface DiffProps {
 }
 
 /** The one-line summary for a destination, or why there is nothing to show. */
-export function summaryLine(diff: Diff | null, now: number): string {
+export function summaryLine(diff: DiffData | null, now: number): string {
   if (diff === null) return "never checked — run a check to see what differs";
   if (diff.wholeFolderMissing) return "the whole folder is absent from this destination";
   const c = diffCounts(diff);
@@ -143,7 +143,7 @@ export function summaryLine(diff: Diff | null, now: number): string {
  * measured — the destination by a read-only walk during the check, because
  * rsync reports the source length for every item and never the destination's.
  */
-export function magnitudeLine(diff: Diff | null): string | null {
+export function magnitudeLine(diff: DiffData | null): string | null {
   const src = diff?.sourceHolds;
   if (diff === null || src === undefined) return null;
   const dst = diff.targetHolds;
@@ -186,7 +186,7 @@ function newestOf(ns: string | undefined): number | null {
  * plusses as the one sentence a reader wants — that nothing has landed here
  * since the third of February.
  */
-export function lagLine(diff: Diff | null, now: number = Date.now()): string | null {
+export function lagLine(diff: DiffData | null, now: number = Date.now()): string | null {
   const here = newestOf(diff?.sourceHolds?.maxMtimeNs);
   const there = newestOf(diff?.targetHolds?.maxMtimeNs);
   if (here === null || there === null) return null;
@@ -237,7 +237,7 @@ export function syncLine(split: SyncSplit, now: number): readonly string[] {
 }
 
 /** Bytes rsync would transfer: files it would create or replace, not extras. */
-export function pendingBytes(diff: Diff): number {
+export function pendingBytes(diff: DiffData): number {
   return diff.entries
     .filter((e) => !e.dir && e.sized && (e.kind === "new" || e.kind === "changed"))
     .reduce((a, e) => a + e.bytes, 0);
@@ -331,7 +331,9 @@ function Entry({
     <Box>
       <Text color={theme.ink}>{cursorMark(selected, indent)}</Text>
       <Text color={theme[TOKEN[entry.kind]]}>{`${GLYPH[entry.kind]} `}</Text>
-      <Text color={theme.ink} bold={selected}>{padEnd(truncatePath(name, nameW), nameW)}</Text>
+      <Text color={theme.ink} bold={selected}>
+        {padEnd(truncatePath(name, nameW), nameW)}
+      </Text>
       <Text color={theme.dim}>{padStart(size, 10)}</Text>
       <Text color={theme.dim}>{when}</Text>
       {why === null ? null : (
@@ -348,7 +350,7 @@ function Entry({
  * showed a fixed dozen and hid the rest with no way to reach them.
  */
 export type DiffRow =
-  | { readonly kind: "header"; readonly target: string; readonly diff: Diff | null }
+  | { readonly kind: "header"; readonly target: string; readonly diff: DiffData | null }
   | { readonly kind: "magnitude"; readonly text: string }
   | { readonly kind: "lag"; readonly text: string }
   | { readonly kind: "verdict"; readonly text: string; readonly alarm: boolean }
@@ -385,7 +387,7 @@ export function groupId(target: string, key: string): string {
 
 export function diffRows(
   targets: readonly string[],
-  diffs: ReadonlyMap<string, Diff | null>,
+  diffs: ReadonlyMap<string, DiffData | null>,
   opts: RowOptions = {},
 ): DiffRow[] {
   const by = opts.by ?? "folder";
@@ -428,7 +430,7 @@ export function diffRows(
           continue;
         }
         const id = groupId(target, group.key);
-        const open = (group.entries.length <= COLLAPSE_OVER) !== toggled.has(id);
+        const open = group.entries.length <= COLLAPSE_OVER !== toggled.has(id);
         rows.push({ kind: "group", target, id, group, open });
         if (!open) continue;
         // Only a folder group's label is a prefix of its entries' names; the
@@ -518,7 +520,9 @@ function Group({
   const labelW = Math.min(34, Math.max(16, Math.floor(width / 3)));
   return (
     <Box>
-      <Text color={selected ? theme.ink : theme.rule}>{`${cursorMark(selected, 2)}${marker} `}</Text>
+      <Text
+        color={selected ? theme.ink : theme.rule}
+      >{`${cursorMark(selected, 2)}${marker} `}</Text>
       <Text color={theme[TOKEN[g.kind]]}>{`${GLYPH[g.kind]} `}</Text>
       <Text color={theme.ink} bold={selected}>
         {padEnd(truncatePath(g.label, labelW), labelW)}
@@ -691,7 +695,7 @@ export function Diff(props: DiffProps): React.ReactElement {
 export function diffText(
   config: Config,
   unit: string,
-  diffs: ReadonlyMap<string, Diff | null>,
+  diffs: ReadonlyMap<string, DiffData | null>,
   now: number,
   lastSync?: ReadonlyMap<string, number | null>,
 ): string {
@@ -717,4 +721,4 @@ export function diffText(
 }
 
 // Kept for the tests, which assert the legend and the listing agree.
-export { LABEL as DIFF_LABELS, GLYPH as DIFF_GLYPHS, ORDER as DIFF_ORDER, displayWidth, folderOf };
+export { displayWidth, folderOf, GLYPH as DIFF_GLYPHS, LABEL as DIFF_LABELS, ORDER as DIFF_ORDER };

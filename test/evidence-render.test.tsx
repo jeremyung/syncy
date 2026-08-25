@@ -3,9 +3,9 @@ import { render } from "ink-testing-library";
 import type { Config } from "../src/config.ts";
 import { EMPTY_STATE } from "../src/state.ts";
 import { Evidence, Help } from "../src/tui/App.tsx";
+import type { Row } from "../src/tui/Ledger.tsx";
 import { Mark } from "../src/tui/Mark.tsx";
 import { THEMES } from "../src/tui/theme.ts";
-import type { Row } from "../src/tui/Ledger.tsx";
 import { displayWidth } from "../src/width.ts";
 
 /**
@@ -129,7 +129,14 @@ describe("the help screen fits the window it is given", () => {
       // the frame — see the `Mark` block below, which is why that component
       // is measured on its own rather than through this one.
       const { lastFrame } = render(
-        <Help theme={THEMES.ansi} width={width} height={24} config={config} units={3} states={states} />,
+        <Help
+          theme={THEMES.ansi}
+          width={width}
+          height={24}
+          config={config}
+          units={3}
+          states={states}
+        />,
       );
       for (const line of linesOf(lastFrame())) {
         expect(displayWidth(line), `width ${width}: ${line}`).toBeLessThanOrEqual(width + 2);

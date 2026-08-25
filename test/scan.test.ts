@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { parseConfig, type Config, type Target } from "../src/config.ts";
+import { type Config, parseConfig, type Target } from "../src/config.ts";
 import { checkUnit } from "../src/scan.ts";
 import { appendHistory } from "../src/state.ts";
+import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
  * `checkUnit` records the exit code rsync actually returned, not a code

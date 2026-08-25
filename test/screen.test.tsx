@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { render } from "ink-testing-library";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config } from "../src/config.ts";
+import { render } from "ink-testing-library";
+import { type Config, parseConfig } from "../src/config.ts";
+import { EMPTY_CONFIG } from "../src/configio.ts";
 import { EMPTY_STATE } from "../src/state.ts";
 import type { UnitStatus } from "../src/status.ts";
-import { EMPTY_CONFIG } from "../src/configio.ts";
 import { Ledger, type Row } from "../src/tui/Ledger.tsx";
 import { Setup } from "../src/tui/Setup.tsx";
 import { THEMES } from "../src/tui/theme.ts";
@@ -176,7 +176,6 @@ describe("the alternate screen is entered and always restored", () => {
   });
 });
 
-
 describe("enterFullscreen", () => {
   const fake = (isTTY: boolean) => {
     const writes: string[] = [];
@@ -224,7 +223,6 @@ describe("enterFullscreen", () => {
   });
 });
 
-
 describe("every screen fills the terminal, not just the ledger", () => {
   // The bug this guards: only the ledger got the fill treatment, so setup,
   // confirm, job, help and evidence bunched into the top-left of a large
@@ -268,7 +266,11 @@ describe("every screen fills the terminal, not just the ledger", () => {
   });
 
   test("no line overflows the width at any size", () => {
-    for (const [w, h] of [[76, 24], [110, 40], [90, 30]] as const) {
+    for (const [w, h] of [
+      [76, 24],
+      [110, 40],
+      [90, 30],
+    ] as const) {
       for (const line of renderSetup(w, h)) {
         expect(displayWidth(line), `${w}x${h}: ${line}`).toBeLessThanOrEqual(w + 2);
       }

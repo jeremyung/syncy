@@ -1,28 +1,28 @@
+import { join } from "node:path";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { join } from "node:path";
 import type { Config } from "../config.ts";
-import { EMPTY as EMPTY_FINGERPRINT, fingerprint, type Fingerprint } from "../fingerprint.ts";
+import { buildDiff, type Diff, loadDiff, saveDiff } from "../diff.ts";
+import { EMPTY as EMPTY_FINGERPRINT, type Fingerprint, fingerprint } from "../fingerprint.ts";
 import { bytes } from "../format.ts";
+import { debug, timed, timedAsync } from "../log.ts";
 import { allReachability, checkUnit, listUnits, methodOf, type Reachability } from "../scan.ts";
 import {
   appendHistory,
   estimateMs,
   lastSyncAt,
   loadState,
+  type State,
   saveState,
   upsertScan,
-  type State,
 } from "../state.ts";
-import { debug, timed, timedAsync } from "../log.ts";
+import { type CellState, evaluateUnit, reachWord, type UnitState } from "../status.ts";
 import { setTitle, titleFor } from "../title.ts";
 import { padEnd, truncatePath } from "../width.ts";
-import { evaluateUnit, reachWord, type CellState, type UnitState } from "../status.ts";
-import { Diff as DiffScreen } from "./Diff.tsx";
-import { buildDiff, loadDiff, saveDiff, type Diff } from "../diff.ts";
-import { Ledger, type Row } from "./Ledger.tsx";
 import { Confirm } from "./Confirm.tsx";
+import { Diff as DiffScreen } from "./Diff.tsx";
 import { Job } from "./Job.tsx";
+import { Ledger, type Row } from "./Ledger.tsx";
 import { Mark } from "./Mark.tsx";
 import { Plan } from "./Plan.tsx";
 import { barFraction, type RunProgress } from "./Progress.tsx";
@@ -123,7 +123,6 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   }, [runningSync]);
   const [now, setNow] = useState(() => Date.now());
   const [frame, setFrame] = useState(0);
-
 
   const screen = useScreen(stdout);
   const width = screen.width;
@@ -236,6 +235,10 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
 
   // Read only while the differences screen is open, and re-read whenever a
   // check finishes, so it never shows a listing older than the record above it.
+  // `state` is an intentional invalidation trigger: it changes exactly when a
+  // check finishes writing a new diff, and the memo body reads the diff files
+  // rather than state itself.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   const diffs: ReadonlyMap<string, Diff | null> = useMemo(() => {
     const unit = rows[clampedSelection]?.status.unit;
     if (!showDiff || unit === undefined) return new Map<string, Diff | null>();
@@ -245,6 +248,9 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   // Read on the same terms as the diffs themselves: the differences screen is
   // the only thing that asks when a sync last landed, and it has to be the
   // sync that just finished rather than the one recorded when the app opened.
+  // The same terms as the diffs memo above: `state` is an invalidation
+  // trigger, and the body reads the history rather than state itself.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   const lastSync: ReadonlyMap<string, number | null> = useMemo(() => {
     const unit = rows[clampedSelection]?.status.unit;
     if (!showDiff || unit === undefined) return new Map<string, number | null>();
@@ -326,13 +332,19 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
           estimateMs: prior ?? null,
         });
         try {
-          const { scan, argv, items, targetFingerprint, exitCode } = await checkUnit(config, job.unit, job.target, mode, {
-            // Throttled: one render per 25 files keeps a large folder from
-            // driving the render loop instead of the check.
-            onFile: (seen) => {
-              if (seen % 25 === 0) setRunning({ ...base, filesSeen: seen });
+          const { scan, argv, items, targetFingerprint, exitCode } = await checkUnit(
+            config,
+            job.unit,
+            job.target,
+            mode,
+            {
+              // Throttled: one render per 25 files keeps a large folder from
+              // driving the render loop instead of the check.
+              onFile: (seen) => {
+                if (seen % 25 === 0) setRunning({ ...base, filesSeen: seen });
+              },
             },
-          });
+          );
           const jobMs = Date.now() - jobStarted;
           debug("check.done", {
             mode,
@@ -395,9 +407,13 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
       refresh();
       // A run in which every destination was skipped checked nothing, and must
       // not report otherwise.
-      const ran = jobs.length - skipped.reduce((n, s) => n + jobs.filter((j) => j.target.name === s.target).length, 0);
+      const ran =
+        jobs.length -
+        skipped.reduce((n, s) => n + jobs.filter((j) => j.target.name === s.target).length, 0);
       if (ran === 0 && skipped.length > 0) {
-        setBusy(`nothing checked — ${skipped.map((s) => `${s.target} ${reachWord(s.why)}`).join(", ")}`);
+        setBusy(
+          `nothing checked — ${skipped.map((s) => `${s.target} ${reachWord(s.why)}`).join(", ")}`,
+        );
       } else if (skipped.length > 0) {
         setBusy(
           `${mode} check finished · ${ran} of ${jobs.length} · skipped ` +
@@ -456,13 +472,11 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
       // Enter on a row opens what differs about it. Guarded on there being a
       // row, or the keyboard guard above would swallow every key.
       if (rows[clampedSelection] !== undefined) setShowDiff(true);
-    }
-    else if (input === "p") {
+    } else if (input === "p") {
       // Only open it when there is a folder to describe, or the keyboard guard
       // above would swallow every key with nothing on screen.
       if (rows[clampedSelection] !== undefined) setShowPlan(true);
-    }
-    else if (input === "s") {
+    } else if (input === "s") {
       // Offer the target that is furthest behind; there is nothing to sync to a
       // target that is already clean.
       // A sync writes; starting one while a check is reading the same tree
@@ -481,8 +495,10 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   });
 
   const syncing = pendingSync ?? runningSync;
-  const syncRow = syncing === null ? undefined : allRows.find((r) => r.status.unit === syncing.unit);
-  const syncTarget = syncing === null ? undefined : config.targets.find((t) => t.name === syncing.target);
+  const syncRow =
+    syncing === null ? undefined : allRows.find((r) => r.status.unit === syncing.unit);
+  const syncTarget =
+    syncing === null ? undefined : config.targets.find((t) => t.name === syncing.target);
   const syncCell = syncRow?.status.cells.find((c) => c.target === syncing?.target);
 
   if (pendingSync !== null && syncRow !== undefined && syncTarget !== undefined) {
@@ -653,7 +669,9 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   return (
     <Box flexDirection="column">
       {active !== "all" ? (
-        <Text color={theme.unverified}>{`  filter: ${active} — ${rows.length} of ${allRows.length} units`}</Text>
+        <Text
+          color={theme.unverified}
+        >{`  filter: ${active} — ${rows.length} of ${allRows.length} units`}</Text>
       ) : null}
       <Ledger
         rows={rows}
@@ -716,7 +734,9 @@ export function Help({
       {line(",", "setup — source root and destinations")}
       {line("ctrl-c", "quit — during a transfer, the first press cancels it")}
       <Text> </Text>
-      <Text color={theme.dim}>{"  syncy never deletes, and writes to no destination from this screen."}</Text>
+      <Text color={theme.dim}>
+        {"  syncy never deletes, and writes to no destination from this screen."}
+      </Text>
     </Screen>
   );
 }
@@ -735,7 +755,14 @@ interface EvidenceProps {
  * The evidence view ends at the evidence. No recommendation, no command to
  * copy, nothing organised around deleting.
  */
-export function Evidence({ row, config, state, theme, width, height }: EvidenceProps): React.ReactElement {
+export function Evidence({
+  row,
+  config,
+  state,
+  theme,
+  width,
+  height,
+}: EvidenceProps): React.ReactElement {
   return (
     <Screen
       title="syncy · evidence"
@@ -750,8 +777,12 @@ export function Evidence({ row, config, state, theme, width, height }: EvidenceP
       </Box>
       <Rule width={width} theme={theme} />
       {config.targets.map((t) => {
-        const deep = state.scans.find((s) => s.unit === row.status.unit && s.target === t.name && s.method === "deep");
-        const quick = state.scans.find((s) => s.unit === row.status.unit && s.target === t.name && s.method === "quick");
+        const deep = state.scans.find(
+          (s) => s.unit === row.status.unit && s.target === t.name && s.method === "deep",
+        );
+        const quick = state.scans.find(
+          (s) => s.unit === row.status.unit && s.target === t.name && s.method === "quick",
+        );
         const cell = row.status.cells.find((c) => c.target === t.name);
         return (
           <Box key={t.name} flexDirection="column">

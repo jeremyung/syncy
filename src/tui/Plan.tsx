@@ -1,5 +1,5 @@
-import { Box, Text, useInput } from "ink";
 import { join } from "node:path";
+import { Box, Text, useInput } from "ink";
 import type { Config, Target } from "../config.ts";
 import { argvFor, DEFAULT_RSYNC, type Mode } from "../rsync.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
@@ -127,7 +127,9 @@ export function deviations(
   const out: { name: string; why: string }[] = [];
   for (const t of config.targets.slice(1)) {
     const differs = MODES.some(
-      (m) => flagsFor(config, unit, t, m.mode, needsChecksum) !== flagsFor(config, unit, first, m.mode, needsChecksum),
+      (m) =>
+        flagsFor(config, unit, t, m.mode, needsChecksum) !==
+        flagsFor(config, unit, first, m.mode, needsChecksum),
     );
     if (!differs) continue;
     const why = [
@@ -162,7 +164,9 @@ export function Plan(props: PlanProps): React.ReactElement {
       footer={
         <Box flexDirection="column">
           <Rule width={W} theme={theme} />
-          <Text color={theme.dim}>{"  none of these have run — this is what each key would run"}</Text>
+          <Text color={theme.dim}>
+            {"  none of these have run — this is what each key would run"}
+          </Text>
           <Text color={theme.dim}>{"  [c] copy all   [esc] back"}</Text>
         </Box>
       }
@@ -190,7 +194,10 @@ export function Plan(props: PlanProps): React.ReactElement {
               </Box>
               <Text color={theme.ink}>
                 {"       " +
-                  truncate(`${DEFAULT_RSYNC} ${flagsFor(config, unit, first, m.mode, needsChecksum)}`, W - 7)}
+                  truncate(
+                    `${DEFAULT_RSYNC} ${flagsFor(config, unit, first, m.mode, needsChecksum)}`,
+                    W - 7,
+                  )}
               </Text>
               {m.note === undefined ? null : <Note text={m.note} theme={theme} width={W} />}
               {m.mode === "sync" && checksumFor(first, needsChecksum) ? (
@@ -211,14 +218,14 @@ export function Plan(props: PlanProps): React.ReactElement {
           <Rule width={W} theme={theme} char="·" />
           <Box>
             <Text color={theme.dim}>{"  from  "}</Text>
-            <Text color={theme.ink}>
-              {truncatePath(join(config.source, unit) + "/", W - 10)}
-            </Text>
+            <Text color={theme.ink}>{truncatePath(join(config.source, unit) + "/", W - 10)}</Text>
           </Box>
           {config.targets.map((t, i) => (
             <Box key={t.name}>
               <Text color={theme.dim}>{i === 0 ? "  to    " : "        "}</Text>
-              <Text color={theme.ink}>{padEnd(truncatePath(join(t.path, unit) + "/", W - 26), W - 24)}</Text>
+              <Text color={theme.ink}>
+                {padEnd(truncatePath(join(t.path, unit) + "/", W - 26), W - 24)}
+              </Text>
               <Text color={theme.dim}>{t.name}</Text>
             </Box>
           ))}

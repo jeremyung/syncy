@@ -1,7 +1,15 @@
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
-import { isNew, type Item } from "./itemize.ts";
 import type { Fingerprint } from "./fingerprint.ts";
+import { type Item, isNew } from "./itemize.ts";
 import { diffDir } from "./paths.ts";
 
 /**
@@ -175,7 +183,10 @@ function isValidEntry(raw: unknown): raw is DiffEntry {
   if (typeof raw !== "object" || raw === null) return false;
   const o = raw as Record<string, unknown>;
   return (
-    (o["kind"] === "new" || o["kind"] === "changed" || o["kind"] === "metadata" || o["kind"] === "extra") &&
+    (o["kind"] === "new" ||
+      o["kind"] === "changed" ||
+      o["kind"] === "metadata" ||
+      o["kind"] === "extra") &&
     typeof o["name"] === "string" &&
     typeof o["bytes"] === "number" &&
     typeof o["flags"] === "string" &&
@@ -221,7 +232,6 @@ export function diffCounts(diff: Diff): Readonly<Record<DiffKind, number>> {
   for (const e of diff.entries) out[e.kind] += 1;
   return out;
 }
-
 
 /**
  * When a difference was written, relative to the last sync that ran.
@@ -350,7 +360,8 @@ export function groupDiff(
     // Only the copyable kinds are split by the sync: an extra or an attribute
     // difference is not waiting to be copied, so "before the last sync" says
     // nothing about it.
-    const side = (e.kind === "new" || e.kind === "changed") && age === "before" ? "before" : "since";
+    const side =
+      (e.kind === "new" || e.kind === "changed") && age === "before" ? "before" : "since";
     const label =
       by === "folder"
         ? folderOf(e.name) || "."
@@ -395,7 +406,9 @@ export function groupDiff(
       before: sides.get(key)!,
     });
   }
-  return out.sort((a, b) => rank(a) - rank(b) || b.bytes - a.bytes || a.label.localeCompare(b.label));
+  return out.sort(
+    (a, b) => rank(a) - rank(b) || b.bytes - a.bytes || a.label.localeCompare(b.label),
+  );
 }
 
 /**

@@ -84,9 +84,7 @@ describe("multiplexers need the sequence wrapped", () => {
   });
 
   test("a plain terminal gets it unchanged", () => {
-    expect(wrap(`${ESC}]0;x`, { TERM: "xterm-256color" } as NodeJS.ProcessEnv)).toBe(
-      `${ESC}]0;x`,
-    );
+    expect(wrap(`${ESC}]0;x`, { TERM: "xterm-256color" } as NodeJS.ProcessEnv)).toBe(`${ESC}]0;x`);
   });
 });
 
@@ -100,9 +98,9 @@ describe("what the title says", () => {
   });
 
   test("with no estimate it still names the folder", () => {
-    expect(titleFor({ running: { mode: "quick", unit: "photos-2019", percent: null } })).toStartWith(
-      "quick photos-2019",
-    );
+    expect(
+      titleFor({ running: { mode: "quick", unit: "photos-2019", percent: null } }),
+    ).toStartWith("quick photos-2019");
   });
 
   test("at rest it reports how much of the archive is proven", () => {

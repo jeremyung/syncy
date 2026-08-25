@@ -33,7 +33,10 @@ export function parseMount(output: string): MountEntry[] {
     // keep current. Stopping at the first comma threw it away.
     const m = /^(.*?) on (.*?) \(([^)]*)\)/.exec(line.trim());
     if (m === null) continue;
-    const flags = m[3]!.split(",").map((f) => f.trim()).filter((f) => f !== "");
+    const flags = m[3]!
+      .split(",")
+      .map((f) => f.trim())
+      .filter((f) => f !== "");
     const fstype = flags[0] ?? "unknown";
     entries.push({
       device: m[1]!,
@@ -61,7 +64,10 @@ export function parseMount(output: string): MountEntry[] {
  * with a trailing slash could then beat a longer, correct match by looking
  * one character longer than it actually was.
  */
-export function mountEntryFor(path: string, entries: readonly MountEntry[]): MountEntry | undefined {
+export function mountEntryFor(
+  path: string,
+  entries: readonly MountEntry[],
+): MountEntry | undefined {
   let best: MountEntry | undefined;
   let bestPrefixLen = -1;
   for (const e of entries) {

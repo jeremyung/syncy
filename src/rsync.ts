@@ -160,7 +160,9 @@ export function argvFor(
 export function assertDeleteIsDryRun(argv: readonly string[]): void {
   const deletes = argv.some((a) => a === "--delete" || a.startsWith("--delete-"));
   if (!deletes) return;
-  const dryRun = argv.some((a) => a === "-n" || a === "--dry-run" || (/^-[a-zA-Z]+$/.test(a) && a.includes("n")));
+  const dryRun = argv.some(
+    (a) => a === "-n" || a === "--dry-run" || (/^-[a-zA-Z]+$/.test(a) && a.includes("n")),
+  );
   if (!dryRun) {
     throw new RsyncError(
       `refusing to run: argv contains --delete without --dry-run\n  ${argv.join(" ")}`,
@@ -232,7 +234,11 @@ export async function checkBuild(bin: string = DEFAULT_RSYNC): Promise<RsyncBuil
     await proc.exited;
     const first = out.split("\n")[0] ?? "";
     if (/openrsync/i.test(out)) {
-      return { ok: false, version: first.trim(), detail: `${bin} is openrsync; it rejects -A and -X` };
+      return {
+        ok: false,
+        version: first.trim(),
+        detail: `${bin} is openrsync; it rejects -A and -X`,
+      };
     }
     const m = /rsync\s+version\s+(\d+)\.(\d+)/i.exec(out);
     if (!m || Number(m[1]) < 3) {

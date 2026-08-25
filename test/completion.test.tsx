@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { render } from "ink-testing-library";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { render } from "ink-testing-library";
 import { EMPTY_CONFIG } from "../src/configio.ts";
 import { Setup } from "../src/tui/Setup.tsx";
 import { THEMES } from "../src/tui/theme.ts";
+import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
  * Browsing completions with the arrow keys.

@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir, PROJECT_ROOT } from "./helpers.ts";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config, type Target } from "../src/config.ts";
+import { type Config, parseConfig, type Target } from "../src/config.ts";
 import { PROBE_DIR, probeTarget, removeProbeDir } from "../src/probe.ts";
 import { buildArgv, checkBuild, DEFAULT_RSYNC, OUT_FORMAT, PARTIAL_DIR } from "../src/rsync.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import { isInsideStaging, makeStaging, removeStaging, stagingRoot } from "../src/staging.ts";
 import { startSync } from "../src/sync.ts";
+import { makeFixtureDir, PROJECT_ROOT, removeFixtureDir } from "./helpers.ts";
 
 /**
  * The write policy: syncy writes directly only inside its own config and state
@@ -105,7 +105,9 @@ describe("no source file writes outside the allowed modules", () => {
       const offenders = src
         .split("\n")
         .map((line, i) => ({ line: line.trim(), n: i + 1 }))
-        .filter(({ line }) => WRITE_CALLS.test(line) && !line.startsWith("//") && !line.startsWith("*"));
+        .filter(
+          ({ line }) => WRITE_CALLS.test(line) && !line.startsWith("//") && !line.startsWith("*"),
+        );
       expect(
         offenders.map((o) => `${name}:${o.n} ${o.line}`),
         `${name} writes directly; deliver it through rsync or justify it in the allow list`,
@@ -263,7 +265,13 @@ describe("the rsync arguments, stated exactly", () => {
     // Each of these could leave a truncated file or remove source data.
     for (const mode of ["quick", "deep", "sync"] as const) {
       const argv = buildArgv(mode, "/src/u", target(), exclude);
-      for (const forbidden of ["-P", "--partial", "--inplace", "--remove-source-files", "--force"]) {
+      for (const forbidden of [
+        "-P",
+        "--partial",
+        "--inplace",
+        "--remove-source-files",
+        "--force",
+      ]) {
         expect(argv, `${mode} carries ${forbidden}`).not.toContain(forbidden);
       }
     }
@@ -273,9 +281,9 @@ describe("the rsync arguments, stated exactly", () => {
     expect(buildArgv("sync", "/src/u", target({ modifyWindow: 2 }), [])).toContain(
       "--modify-window=2",
     );
-    expect(buildArgv("sync", "/src/u", target(), []).some((a) => a.startsWith("--modify-window"))).toBe(
-      false,
-    );
+    expect(
+      buildArgv("sync", "/src/u", target(), []).some((a) => a.startsWith("--modify-window")),
+    ).toBe(false);
   });
 
   test("flags_drop removes only the metadata flags", () => {

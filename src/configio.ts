@@ -1,6 +1,6 @@
 import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DEFAULTS, parseConfig, type Config, type Target } from "./config.ts";
+import { type Config, DEFAULTS, parseConfig, type Target } from "./config.ts";
 
 /**
  * Writing the config back out (DESIGN.md section 7).
@@ -12,16 +12,23 @@ import { DEFAULTS, parseConfig, type Config, type Target } from "./config.ts";
 
 /** TOML basic strings: escape backslash and quote, reject control characters. */
 function tomlString(value: string): string {
-  // Control characters cannot appear in a TOML basic string. The class is
-  // written explicitly because a literal range here is easy to mangle.
-  if (/[\u0000-\u001f\u007f]/.test(value)) {
-    throw new Error(`value contains a control character and cannot be written: ${JSON.stringify(value)}`);
+  // Control characters cannot appear in a TOML basic string. The range is
+  // written out by code point rather than as a regex class, because a literal
+  // range or a \u-escape in the pattern is easy to mangle.
+  if (
+    Array.from(value).some((c) => {
+      const code = c.codePointAt(0) ?? 0;
+      return code < 0x20 || code === 0x7f;
+    })
+  ) {
+    throw new Error(
+      `value contains a control character and cannot be written: ${JSON.stringify(value)}`,
+    );
   }
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-const tomlArray = (values: readonly string[]): string =>
-  `[${values.map(tomlString).join(", ")}]`;
+const tomlArray = (values: readonly string[]): string => `[${values.map(tomlString).join(", ")}]`;
 
 function target(t: Target): string {
   return [

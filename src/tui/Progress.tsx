@@ -95,7 +95,10 @@ const QUIET_GRACE_MS = 4000;
  * (`bytesDone`, real across the whole run) with how far the *current* job has
  * gotten against its own estimate (`jobStartedAt`, not `startedAt`).
  */
-export function barFraction(p: RunProgress, now: number): {
+export function barFraction(
+  p: RunProgress,
+  now: number,
+): {
   readonly fraction: number;
   readonly estimated: boolean;
   /**
@@ -173,7 +176,13 @@ export function progressLines(p: RunProgress, now: number, hasNotice: boolean): 
   return (barFraction(p, now).drawable ? 1 : 0) + 1 + (hasNotice ? 1 : 0);
 }
 
-export function Progress({ progress, now, width, theme, notice }: ProgressProps): React.ReactElement {
+export function Progress({
+  progress,
+  now,
+  width,
+  theme,
+  notice,
+}: ProgressProps): React.ReactElement {
   const { fraction, estimated, drawable } = barFraction(progress, now);
 
   const barWidth = Math.max(10, width - 22);

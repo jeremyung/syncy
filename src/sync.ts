@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Config, Target } from "./config.ts";
-import { parseItemizeLine, type Item } from "./itemize.ts";
+import { type Item, parseItemizeLine } from "./itemize.ts";
 import { debug } from "./log.ts";
-import { ensureLogDir } from "./scan.ts";
 import { argvFor, assertDeleteIsDryRun, DEFAULT_RSYNC, RsyncError } from "./rsync.ts";
+import { ensureLogDir } from "./scan.ts";
 import { appendHistory } from "./state.ts";
 
 /**
@@ -76,7 +76,9 @@ export function startSync(
   // No mkdir: rsync creates the destination itself. syncy writes directly
   // only inside its own state directory (DESIGN.md section 2).
   const writer = Bun.file(logPath).writer();
-  writer.write(`# ${new Date(now).toISOString()}\n# ${[opts.bin ?? DEFAULT_RSYNC, ...argv].join(" ")}\n`);
+  writer.write(
+    `# ${new Date(now).toISOString()}\n# ${[opts.bin ?? DEFAULT_RSYNC, ...argv].join(" ")}\n`,
+  );
 
   // Its own process group (POSIX setsid): a cancellation must reach everything
   // the transfer forked, not just this process — and a terminal ctrl-c can no

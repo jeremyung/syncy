@@ -32,7 +32,10 @@ export const DEFAULTS = {
 } as const;
 
 export class ConfigError extends Error {
-  constructor(readonly where: string, message: string) {
+  constructor(
+    readonly where: string,
+    message: string,
+  ) {
     super(`config: ${where}: ${message}`);
     this.name = "ConfigError";
   }
@@ -72,12 +75,19 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 function str(obj: Record<string, unknown>, key: string, where: string): string {
   const v = obj[key];
-  if (typeof v !== "string") throw new ConfigError(`${where}.${key}`, `expected a string, got ${typeof v}`);
+  if (typeof v !== "string")
+    throw new ConfigError(`${where}.${key}`, `expected a string, got ${typeof v}`);
   if (v.trim() === "") throw new ConfigError(`${where}.${key}`, "must not be empty");
   return v;
 }
 
-function num(obj: Record<string, unknown>, key: string, where: string, dflt: number, min: number): number {
+function num(
+  obj: Record<string, unknown>,
+  key: string,
+  where: string,
+  dflt: number,
+  min: number,
+): number {
   const v = obj[key];
   if (v === undefined) return dflt;
   if (typeof v !== "number" || !Number.isFinite(v)) {
@@ -90,7 +100,8 @@ function num(obj: Record<string, unknown>, key: string, where: string, dflt: num
 function bool(obj: Record<string, unknown>, key: string, where: string, dflt: boolean): boolean {
   const v = obj[key];
   if (v === undefined) return dflt;
-  if (typeof v !== "boolean") throw new ConfigError(`${where}.${key}`, `expected true or false, got ${typeof v}`);
+  if (typeof v !== "boolean")
+    throw new ConfigError(`${where}.${key}`, `expected true or false, got ${typeof v}`);
   return v;
 }
 
@@ -99,7 +110,8 @@ function strArray(obj: Record<string, unknown>, key: string, where: string): rea
   if (v === undefined) return [];
   if (!Array.isArray(v)) throw new ConfigError(`${where}.${key}`, "expected an array of strings");
   return v.map((item, i) => {
-    if (typeof item !== "string") throw new ConfigError(`${where}.${key}[${i}]`, "expected a string");
+    if (typeof item !== "string")
+      throw new ConfigError(`${where}.${key}[${i}]`, "expected a string");
     return item;
   });
 }
@@ -131,7 +143,13 @@ export function parseConfig(text: string): Config {
   const status = statusRaw === undefined ? {} : statusRaw;
   if (!isRecord(status)) throw new ConfigError("status", "expected a table");
 
-  const maxVerifyAgeDays = num(status, "max_verify_age_days", "status", DEFAULTS.maxVerifyAgeDays, 1);
+  const maxVerifyAgeDays = num(
+    status,
+    "max_verify_age_days",
+    "status",
+    DEFAULTS.maxVerifyAgeDays,
+    1,
+  );
   const maxQuickAgeDays = num(status, "max_quick_age_days", "status", DEFAULTS.maxQuickAgeDays, 1);
   const minTargets = num(status, "min_targets", "status", DEFAULTS.minTargets, 1);
 
@@ -158,11 +176,13 @@ export function parseConfig(text: string): Config {
     if (!isRecord(entry)) throw new ConfigError(where, "expected a table");
 
     const name = str(entry, "name", where);
-    if (seenNames.has(name)) throw new ConfigError(`${where}.name`, `duplicate target name "${name}"`);
+    if (seenNames.has(name))
+      throw new ConfigError(`${where}.name`, `duplicate target name "${name}"`);
     seenNames.add(name);
 
     const path = absolutePath(str(entry, "path", where), `${where}.path`);
-    if (seenPaths.has(path)) throw new ConfigError(`${where}.path`, `duplicate target path "${path}"`);
+    if (seenPaths.has(path))
+      throw new ConfigError(`${where}.path`, `duplicate target path "${path}"`);
     seenPaths.add(path);
 
     // Nested source and target is data loss waiting to happen (DESIGN.md §7).
@@ -173,8 +193,10 @@ export function parseConfig(text: string): Config {
       throw new ConfigError(`${where}.path`, `source root is inside this target (${path})`);
     }
 
-    const identity = typeof entry["identity"] === "string" ? (entry["identity"] as string) : undefined;
-    const sentinel = typeof entry["sentinel"] === "string" ? (entry["sentinel"] as string) : undefined;
+    const identity =
+      typeof entry["identity"] === "string" ? (entry["identity"] as string) : undefined;
+    const sentinel =
+      typeof entry["sentinel"] === "string" ? (entry["sentinel"] as string) : undefined;
     if ((identity ?? "") === "" && (sentinel ?? "") === "") {
       throw new ConfigError(
         `${where}`,

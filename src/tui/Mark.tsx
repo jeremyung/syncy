@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { Config } from "../config.ts";
-import { GLYPH, type CellState } from "../status.ts";
+import { type CellState, GLYPH } from "../status.ts";
 import { displayWidth, padEnd, truncate } from "../width.ts";
 import { cellToken, type Theme } from "./theme.ts";
 

@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { FIXTURE_ROOT, isInside, makeFixtureDir, PROJECT_ROOT, removeFixtureDir } from "./helpers.ts";
+import {
+  FIXTURE_ROOT,
+  isInside,
+  makeFixtureDir,
+  PROJECT_ROOT,
+  removeFixtureDir,
+} from "./helpers.ts";
 
 /**
  * Enforces that the suite never writes outside the project.
@@ -161,7 +167,9 @@ describe("no test names a path that actually exists on this machine", () => {
   for (const file of testFiles) {
     test(`${file} names no real home or volume path`, () => {
       const src = readFileSync(join(import.meta.dir, file), "utf8");
-      const literals = [...src.matchAll(/["'`](\/(?:[A-Za-z0-9._ -]+\/?)+)["'`]/g)].map((m) => m[1]!);
+      const literals = [...src.matchAll(/["'`](\/(?:[A-Za-z0-9._ -]+\/?)+)["'`]/g)].map(
+        (m) => m[1]!,
+      );
       const offenders = literals.filter((lit) => {
         const abs = resolve(lit);
         // Paths inside the project are the point of the fixture helpers.

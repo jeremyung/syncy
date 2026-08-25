@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config } from "../src/config.ts";
+import { type Config, parseConfig } from "../src/config.ts";
 import { fingerprint } from "../src/fingerprint.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { allReachability, checkUnit, listUnits, targetReachability } from "../src/scan.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
-import { EMPTY_STATE, upsertScan, type State } from "../src/state.ts";
+import { EMPTY_STATE, type State, upsertScan } from "../src/state.ts";
 import { evaluateUnit } from "../src/status.ts";
+import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
  * End-to-end against the real rsync binary. These codify the behaviours that

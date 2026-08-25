@@ -1,16 +1,25 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config, type Target } from "../src/config.ts";
+import { type Config, parseConfig, type Target } from "../src/config.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import { deleteCheck, freeBytes, preflight, SPACE_MARGIN } from "../src/guards.ts";
 import { buildArgv, checkBuild, DEFAULT_RSYNC, RsyncError } from "../src/rsync.ts";
-import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import { checkUnit } from "../src/scan.ts";
+import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import type { Scan } from "../src/state.ts";
 import { cellState } from "../src/status.ts";
 import { startSync } from "../src/sync.ts";
+import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 const build = await checkBuild(DEFAULT_RSYNC);
 const describeRsync = build.ok ? describe : describe.skip;
@@ -187,7 +196,12 @@ describeRsync("a first copy states what it will actually move", () => {
     // check produced.
     expect(c.bytesPending).toBe(tooBig.bytes);
 
-    const p = await preflight(config, target(), buildArgv("sync", "/a", target(), []), c.bytesPending);
+    const p = await preflight(
+      config,
+      target(),
+      buildArgv("sync", "/a", target(), []),
+      c.bytesPending,
+    );
     expect(p.ok).toBe(false);
     expect(p.checks.find((ch) => ch.name === "space")!.ok).toBe(false);
   });
