@@ -83,17 +83,19 @@ const proc = (device: string, mountPoint: string, fstype: string, local: boolean
  * Every path the Linux volume code touches goes through this, so a test
  * cannot pass by reading the machine it runs on — which is the whole reason
  * these decisions take an io object. An unlisted path does not exist:
- * `realpath` of an unknown path returns it unchanged, the way a real
- * non-symlink resolves to itself.
+ * `realpath` of an unknown path returns null, the way a path with nothing
+ * behind it does — which is exactly the /dev/root case below.
  */
 const io = (
   files: Record<string, string>,
   links: Record<string, string> = {},
   dirs: Record<string, string[]> = {},
+  devnums: Record<string, number> = {},
 ): LinuxVolumeIo => ({
   readText: (path) => files[path] ?? null,
   list: (dir) => dirs[dir] ?? [],
-  realpath: (path) => links[path] ?? path,
+  realpath: (path) => links[path] ?? null,
+  deviceNumber: (path) => devnums[path] ?? null,
 });
 
 describe("classifying Linux mounts", () => {
@@ -133,25 +135,39 @@ describe("classifying Linux mounts", () => {
     // half of that path is right. /sys/block holds whole disks only, and a
     // partition publishes no `removable` of its own — so the file never
     // existed on any machine and every external disk read as internal.
-    const usb = io({ "/sys/class/block/sdb1/../removable": "1" });
+    const usb = io({ "/sys/class/block/sdb1/../removable": "1" }, { "/dev/sdb1": "/dev/sdb1" });
     expect(isRemovableDevice("/dev/sdb1", usb)).toBe(true);
     expect(classifyLinuxDevice("/dev/sdb1", usb)).toBe("external");
   });
 
   test("a whole disk answers from its own directory", () => {
-    expect(isRemovableDevice("/dev/sdb", io({ "/sys/class/block/sdb/removable": "1" }))).toBe(true);
+    expect(
+      isRemovableDevice(
+        "/dev/sdb",
+        io({ "/sys/class/block/sdb/removable": "1" }, { "/dev/sdb": "/dev/sdb" }),
+      ),
+    ).toBe(true);
   });
 
   test("an internal partition is internal, and a missing file is not removable", () => {
     expect(
-      isRemovableDevice("/dev/nvme0n1p2", io({ "/sys/class/block/nvme0n1p2/../removable": "0" })),
+      isRemovableDevice(
+        "/dev/nvme0n1p2",
+        io(
+          { "/sys/class/block/nvme0n1p2/../removable": "0" },
+          { "/dev/nvme0n1p2": "/dev/nvme0n1p2" },
+        ),
+      ),
     ).toBe(false);
-    expect(isRemovableDevice("/dev/sdb1", io({}))).toBe(false);
+    expect(isRemovableDevice("/dev/sdb1", io({}, { "/dev/sdb1": "/dev/sdb1" }))).toBe(false);
   });
 
   test("the removable bit is trimmed: sysfs files end in a newline", () => {
     expect(
-      isRemovableDevice("/dev/sdb1", io({ "/sys/class/block/sdb1/../removable": " 1 " })),
+      isRemovableDevice(
+        "/dev/sdb1",
+        io({ "/sys/class/block/sdb1/../removable": " 1 " }, { "/dev/sdb1": "/dev/sdb1" }),
+      ),
     ).toBe(true);
   });
 });
@@ -212,6 +228,25 @@ describe("volume UUID on Linux", () => {
       },
     );
     expect(volumeUuidLinux(ghost("/dev/mapper/vg-lv", "ext4"), dm)).toBe("LVM-abc123");
+  });
+
+  test("a device with no node — /dev/root — is found by its device number", () => {
+    // What the CI runners actually mount: an initramfs names the root
+    // filesystem /dev/root and no such node exists, so resolving the name
+    // gets nowhere. The mount's device number is real, and
+    // /sys/dev/block/<major>:<minor> resolves to the kernel's own name for
+    // it. Without this route the most likely mount on the machine has no
+    // uuid at all — which is what CI reported. 8:1 is sda1.
+    const runner = io(
+      {},
+      {
+        "/sys/dev/block/8:1": "/sys/devices/pci0000:00/x/block/sda/sda1",
+        "/dev/disk/by-uuid/root-fs-uuid": "/dev/sda1",
+      },
+      { "/dev/disk/by-uuid": ["root-fs-uuid"] },
+      { "/": (8 << 8) | 1 },
+    );
+    expect(volumeUuidLinux(proc("/dev/root", "/", "ext4", true), runner)).toBe("root-fs-uuid");
   });
 
   test("nothing published means null, and the caller must not treat the path as proof", () => {
