@@ -589,13 +589,26 @@ The two invariants do not move across platforms: reachability is decided by
 the destination proving it is itself, never by the path existing, and nothing
 lands in a target except through rsync.
 
-Keeping the first of those honest costs one more thing on Linux than it does
-on macOS. `diskutil` answers for essentially every local volume, so the
-mount-source fallback in `identify` is rare there; where no uuid is published
-the fallback is the device path, and `/dev/sdb1` is a slot in this boot's
-enumeration order rather than a name for a disk — a different disk in the
-same port answers to it. So the two identity kinds are not interchangeable
-proof: a `volume-uuid` stands alone, a `mount-source` is checked against the
-sentinel as well, and adding a target that resolves to one writes a sentinel
-so there is something to check. The sentinel is the proof that survives the
-disk being swapped, which is why it is the one §2 calls the most important.
+Keeping the first of those honest turns on a distinction macOS never had to
+draw. `identify` returns one of three things, and only two of them are names
+for a volume: a filesystem uuid, a network share's host and export, or — when
+the kernel publishes no uuid — the device path. `/dev/sdb1` is a slot in this
+boot's enumeration order, and a different disk in the same port answers to
+it, so it is not proof of anything. `diskutil` answers for essentially every
+local volume and udev for essentially every Linux one, which makes that
+fallback rare on both; rare is not never, and the fallback used to be
+accepted as proof outright.
+
+So reachability asks `identityIsProof` first. A uuid or a share name resolves
+on its own, as before. A device path is still checked — it catches the volume
+being unmounted — and then handed to the sentinel, whose answer is returned:
+the sentinel is the proof that survives the disk being swapped, which is why
+§2 calls it the most important one, and where one exists it should decide.
+
+With no sentinel to hand it to, the device path is accepted. That is the
+weakest branch and it is a deliberate one: refusing makes syncy unusable on a
+machine that publishes no uuid, and a tool that will not run is not safer
+than one that runs with a proof it has labelled as weak. Adding such a target
+says so on the line it prints, and `syncy sentinel` is the upgrade. What is
+not allowed is the old behaviour — treating it as equal to a uuid and never
+reading the sentinel at all.

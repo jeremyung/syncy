@@ -9,8 +9,7 @@ import { bytes } from "../format.ts";
 import { type MountEntry, modifyWindowFor } from "../fstype.ts";
 import { configFile } from "../paths.ts";
 import { probeTarget } from "../probe.ts";
-import { listUnits, targetReachability } from "../scan.ts";
-import { writeSentinel } from "../sentinel.ts";
+import { identityIsProof, listUnits, targetReachability } from "../scan.ts";
 import { describeVolume, identify, type MountedVolume, mountedVolumes } from "../volume.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
@@ -132,55 +131,25 @@ export async function resolveTarget(
   onProgress?.(`probing ${name} for acl and xattr support…`);
   const probe = await probeTarget(abs);
 
-  /**
-   * A sentinel, when the identity is not a volume uuid.
-   *
-   * A uuid names the filesystem and nothing else can answer to it, so it is
-   * proof on its own. A mount source is not: `//nas/media` is a real remote
-   * name, but the same field also holds the local device path `identify`
-   * falls back to when no uuid is published — which on Linux is the common
-   * case — and `/dev/sdb1` is a slot in this boot's enumeration order, not a
-   * disk. `targetReachability` checks the sentinel for exactly these targets,
-   * so this is where the file it reads has to come from.
-   *
-   * After the probe, never before: identify() decides whether anything is
-   * written here at all, and the probe is the write that proves the target
-   * accepts one.
-   */
-  let sentinel: string | undefined;
-  if (found.kind !== "volume-uuid") {
-    onProgress?.(`writing the sentinel at ${name}…`);
-    try {
-      sentinel = await writeSentinel(abs);
-    } catch {
-      // The target is still usable, with the weaker proof. Said out loud in
-      // `detail` rather than silently downgraded.
-      sentinel = undefined;
-    }
-  }
-
   const target: Target = {
     name,
     path: abs,
     required: true,
     identity: found.id,
     identityKind: found.kind,
-    ...(sentinel !== undefined ? { sentinel } : {}),
     fstype,
     modifyWindow: modifyWindowFor(fstype),
     flagsDrop: probe.flagsDrop,
   };
-  const proof =
-    found.kind === "volume-uuid"
-      ? `${found.kind} ${found.id}`
-      : sentinel !== undefined
-        ? `${found.kind} ${found.id} + sentinel`
-        : `${found.kind} ${found.id} · no sentinel could be written`;
-  return {
-    ok: true,
-    target,
-    detail: `${name}: ${fstype} · ${proof} · ${probe.detail}`,
-  };
+  // A device path is recorded like any other identity, and said out loud as
+  // the weaker thing it is: `targetReachability` will not accept it as proof
+  // on its own, so the person adding the target should hear that here rather
+  // than discover it as an "unverified" row later.
+  const detail = identityIsProof(target)
+    ? `${name}: ${fstype} · ${found.kind} ${found.id} · ${probe.detail}`
+    : `${name}: ${fstype} · device path ${found.id}, not a volume name — ` +
+      `run \`syncy sentinel ${abs}\` to prove it by a file instead · ${probe.detail}`;
+  return { ok: true, target, detail };
 }
 
 export function Setup({
