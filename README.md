@@ -173,7 +173,15 @@ cp syncy ~/.local/bin/
 ```
 
 Supported targets: macOS (Apple Silicon and Intel) and Linux (x64 and
-arm64). The release workflow builds all four from a `v*` tag.
+arm64). Pushing a `v*` tag builds all four, attaches them to the GitHub
+release with a `checksums.txt`, and generates the notes from the commits
+since the previous tag. A downloaded binary arrives without its executable
+bit, as anything fetched over HTTP does:
+
+```
+shasum -a 256 -c checksums.txt --ignore-missing
+chmod +x syncy-bun-darwin-arm64 && mv syncy-bun-darwin-arm64 ~/.local/bin/syncy
+```
 
 ## Use
 

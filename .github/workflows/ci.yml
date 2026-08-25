@@ -6,6 +6,18 @@ on:
     tags: ["v*"]
   pull_request:
 
+# A second push to the same branch supersedes the first. Tags are exempt: a
+# release build that is cancelled halfway leaves a release with some of its
+# assets, which is worse than a wasted runner.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+# Pinned for the same reason the linter is: CI must fail because the code
+# changed, not because a toolchain moved underneath it.
+env:
+  BUN_VERSION: "1.3.14"
+
 jobs:
   check:
     name: check · ${{ matrix.os }}
@@ -22,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
       - name: Install
         run: bun install --frozen-lockfile
       - name: Install rsync 3.x
@@ -38,7 +50,7 @@ jobs:
       - name: Test
         run: bun test
 
-  release:
+  build:
     name: build · ${{ matrix.target }}
     runs-on: ${{ matrix.runs-on }}
     if: github.ref_type == 'tag'
@@ -61,7 +73,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
       - name: Install
         run: bun install --frozen-lockfile
       - name: Build
@@ -71,3 +83,38 @@ jobs:
         with:
           name: syncy-${{ matrix.target }}
           path: syncy-${{ matrix.target }}
+          if-no-files-found: error
+
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+    needs: build
+    # The one job that writes anything outside the run.
+    permissions:
+      contents: write
+    steps:
+      - name: Collect the binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: syncy-*
+          merge-multiple: true
+      # Checksums are generated where all four binaries are, which is why the
+      # matrix uploads artifacts and this job publishes: a per-target runner
+      # can only ever checksum its own build.
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum syncy-* | tee checksums.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: dist
+        # `--generate-notes` writes the changelog from the commits since the
+        # previous tag; the assets are the four binaries and their checksums.
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            syncy-* checksums.txt
