@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, realpathSync, statfsSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statfsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   fstypeFor,
@@ -97,6 +97,8 @@ export interface LinuxVolumeIo {
   readonly list: (dir: string) => readonly string[];
   /** A path with its symlinks resolved, or null when it does not resolve. */
   readonly realpath: (path: string) => string | null;
+  /** The device number of whatever is mounted at a path, or null. */
+  readonly deviceNumber: (path: string) => number | null;
 }
 
 export const realVolumeIo: LinuxVolumeIo = {
@@ -122,7 +124,43 @@ export const realVolumeIo: LinuxVolumeIo = {
       return null;
     }
   },
+  deviceNumber: (path) => {
+    try {
+      return statSync(path).dev;
+    } catch {
+      return null;
+    }
+  },
 };
+
+/**
+ * The kernel's own name for whatever backs a mount, as an absolute node.
+ *
+ * `/proc/mounts` does not always print one that exists. A root filesystem
+ * brought up by an initramfs is listed as `/dev/root` on most cloud images —
+ * a name with no node behind it, and the CI runners this is tested on are
+ * exactly that — while being the single most likely mount for someone to
+ * point syncy at. The mount's *device number* is real regardless, and
+ * `/sys/dev/block/<major>:<minor>` is a symlink into the device tree whose
+ * last segment is the name the kernel uses for it: `sda1`.
+ *
+ * The major/minor split is glibc's, which covers every block device. A wrong
+ * answer only means the sysfs path does not exist, and the caller falls
+ * through exactly as it would for any device it cannot resolve.
+ */
+function canonicalNode(entry: MountEntry, io: LinuxVolumeIo): string | null {
+  const direct = io.realpath(entry.device);
+  if (direct?.startsWith("/dev/")) return direct;
+
+  const dev = io.deviceNumber(entry.mountPoint);
+  if (dev === null) return null;
+  const major = (dev >> 8) & 0xfff;
+  const minor = (dev & 0xff) | ((dev >> 12) & 0xfff00);
+  const resolved = io.realpath(join("/sys/dev/block", `${major}:${minor}`));
+  if (resolved === null) return null;
+  const name = resolved.slice(resolved.lastIndexOf("/") + 1);
+  return name === "" ? null : join("/dev", name);
+}
 
 /**
  * udev's by-uuid directories, in the order they answer.
@@ -166,7 +204,8 @@ export function volumeUuidLinux(
   io: LinuxVolumeIo = realVolumeIo,
 ): string | null {
   if (!entry.device.startsWith("/dev/")) return null;
-  const node = io.realpath(entry.device) ?? entry.device;
+  const node = canonicalNode(entry, io);
+  if (node === null) return null;
 
   for (const dir of BY_ID_DIRS) {
     for (const name of io.list(dir)) {
