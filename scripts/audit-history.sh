@@ -34,13 +34,20 @@ fi
 # /mnt. The path is the identifier; a bare leaf name could be a common word.
 # Each sed extracts from the original table; the second must not filter the
 # first's output, or the first finds nothing in the second's stream.
+#
+# The Linux extraction is an ERE (`sed -E`) because alternation is what it
+# needs and `\|` is a GNU extension: under BSD sed it is a literal pipe, so
+# the BRE form silently matched nothing and every /media and /mnt volume went
+# underived on the machine this script is usually run from. The delimiter is
+# `#` for the same reason — `|` cannot delimit a substitution that contains
+# alternation.
 VOLUMES=$(
   {
     printf '%s\n' "$MOUNT_TABLE" | sed -n 's|.* on /Volumes/\([^(]*\) (.*|/Volumes/\1|p'
-    printf '%s\n' "$MOUNT_TABLE" | sed -n 's|.* on \(/\(media\|mnt\)/[^ (]*\) .*|\1|p'
+    printf '%s\n' "$MOUNT_TABLE" | sed -n -E 's#.* on (/(media|mnt)/[^ (]*) .*#\1#p'
   } \
   | sed 's/ *$//' \
-  | grep -v '/\.$' \
+  | grep -v '/\.' \
   | sed 's/[.[\*^$]/\\&/g' \
   | sort -u
 )

@@ -10,9 +10,11 @@ import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
  * (BSD and Linux shapes both, on any runner), so what is exercised is the
  * derivation and the scans, not this machine's mounts.
  *
- * The script is spawned through its #!/bin/sh shebang: on Linux that is dash,
- * where the old IFS=$'\n' was the literal characters $, \, n — the tests
- * would have caught that regression on the platform it breaks.
+ * The script is spawned under `sh` explicitly, which is what its own shebang
+ * asks for: on Linux that is dash, where the old IFS=$'\n' was the literal
+ * characters $, \, n — the tests would have caught that regression on the
+ * platform it breaks. On macOS it is bash in sh-compat mode, which is what
+ * catches the reverse: a GNU-only construct that never runs here.
  */
 
 const SCRIPT = join(import.meta.dir, "..", "scripts", "audit-history.sh");
@@ -99,6 +101,37 @@ describe("audit-history.sh", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("OK");
     expect(leaks(r.out)).toHaveLength(0);
+  });
+
+  test("a Linux volume under /media is derived, not just macOS /Volumes", async () => {
+    // The extraction that was written as a BRE with `\|`, which is a GNU
+    // extension: under BSD sed it matched nothing and this leak walked
+    // straight past the guard on the author's own machine. Planting the path
+    // is the only way the alternation gets exercised on either sed.
+    const repo = plantRepo({ "notes.txt": "the archive lives at /media/user/Archive\n" }, "notes");
+    const r = await runAudit(repo, LINUX_TABLE);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("FAIL");
+    expect(leaks(r.out).length).toBeGreaterThan(0);
+  });
+
+  test("a hidden mount point contributes no pattern", async () => {
+    // Time Machine mounts at /Volumes/.timemachine/<host>/<uuid>/Data, which
+    // is noise, not a volume anyone syncs to. The leading-dot exclusion used
+    // to run against the bare leaf name; once the paths became whole it was
+    // written `/\.$`, which only ever matches a line *ending* in "/." — so
+    // it excluded nothing. The mount point is the bait: if it is still a
+    // pattern, this clean repo fails.
+    const repo = plantRepo(
+      { "notes.txt": "snapshots live under /Volumes/.timemachine/box/1-A/Data\n" },
+      "notes",
+    );
+    const r = await runAudit(
+      repo,
+      `${BSD_TABLE}//tm@timecapsule/backups on /Volumes/.timemachine/box/1-A/Data (smb, nobrowse)\n`,
+    );
+    expect(r.out).toContain("OK");
+    expect(r.code).toBe(0);
   });
 
   test("a planted network server is caught, and only that", async () => {
