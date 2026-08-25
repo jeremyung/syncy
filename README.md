@@ -152,10 +152,11 @@ sudo apt install rsync    # or the distro equivalent
 no `mount` subprocess. A volume's UUID comes from `/dev/disk/by-uuid` — the
 same names `blkid` and your `fstab` use — falling back to `by-partuuid`, and
 to sysfs for the devices that publish one of their own. Where nothing stable
-is published the device path is recorded instead, and syncy then treats it as
-the weaker proof it is: `/dev/sdb1` is a slot in this boot's enumeration
-order, not a name for a disk, so a target identified that way gets a sentinel
-file and both are checked before anything is written to it. The capability
+is published the device path is recorded instead, and syncy treats it as the
+weaker thing it is: `/dev/sdb1` is a slot in this boot's enumeration order,
+not a name for a disk. Such a target still works, and says so when you add
+it; where it also has a sentinel, the sentinel is what decides. `syncy
+sentinel <path>` writes one. Adding a target never writes to the target. The capability
 probe uses the `attr` and `acl` packages (`setfattr`/`getfattr`,
 `setfacl`/`getfacl`) when they are installed; a missing tool reports the
 capability as unmeasured and drops the flag rather than guessing. Copying the
