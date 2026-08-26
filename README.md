@@ -327,7 +327,7 @@ own palette.
 ## Development
 
 ```
-bun test               # 816 tests
+bun test               # 834 tests
 bunx tsc --noEmit
 bunx @biomejs/biome@2.5.10 check .   # lint and format; --write to fix
 bun run build
