@@ -1,13 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Config, parseConfig } from "../src/config.ts";
+import { type Config, parseConfig, type Target } from "../src/config.ts";
 import { fingerprint } from "../src/fingerprint.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
-import { allReachability, checkUnit, listUnits, targetReachability } from "../src/scan.ts";
+import {
+  allReachability,
+  checkUnit,
+  identityIsProof,
+  listUnits,
+  targetReachability,
+} from "../src/scan.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import { EMPTY_STATE, type State, upsertScan } from "../src/state.ts";
 import { evaluateUnit } from "../src/status.ts";
+import { identify } from "../src/volume.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
@@ -112,6 +119,87 @@ describeRsync("units and reachability", () => {
   test("a different volume mounted at the same path is detected", async () => {
     writeFileSync(join(target("ext").path, SENTINEL_NAME), "some-other-uuid\n");
     expect(await targetReachability(target("ext"))).toBe("mismatch");
+  });
+});
+
+/**
+ * What a recorded identity is worth depends on what it is a name for.
+ *
+ * The decision itself is a pure predicate, so it is tested as one — every
+ * shape that reaches the field, on either platform, without needing the disk
+ * that produced it. The wiring below then checks that the fixture's own
+ * identity, whatever this machine answers, still resolves.
+ */
+describe("which identities are proof on their own", () => {
+  const withIdentity = (identity: string): Target => ({ ...target("ext"), identity }) as Target;
+
+  test("a volume uuid and a network share name are both names for the volume", () => {
+    // macOS uuid, Linux uuid, an SMB share, an NFS export, a user@host share.
+    for (const id of [
+      "1A2B3C4D-5E6F-7A8B-9C0D-1E2F3A4B5C6D",
+      "8f3b-ARCHIVE",
+      "//nas.local/media",
+      "//backup@nas.local/media",
+      "archive.example:/exports/videos",
+    ]) {
+      expect(identityIsProof(withIdentity(id)), id).toBe(true);
+    }
+  });
+
+  test("a device path is not: a different disk answers to it tomorrow", () => {
+    // The whole point. /dev/sdb1 is a slot in this boot's enumeration order,
+    // and `identify` falls back to one whenever no uuid is published.
+    for (const id of ["/dev/sdb1", "/dev/disk4s1", "/dev/nvme0n1p2", "/dev/mapper/vg-lv"]) {
+      expect(identityIsProof(withIdentity(id)), id).toBe(false);
+    }
+  });
+
+  test("no identity at all is not proof", () => {
+    expect(identityIsProof(withIdentity(""))).toBe(false);
+    expect(identityIsProof({ ...target("ext") } as Target)).toBe(false);
+  });
+});
+
+describeRsync("a recorded identity, against the real mount table", () => {
+  /**
+   * The fixture lives on this machine's boot volume, so `identify` answers
+   * for it with whatever that volume publishes — which differs by machine and
+   * is the point: a uuid on macOS, a uuid on a Linux box running udev, and
+   * `/dev/root` on a cloud image whose initramfs named it that. None of these
+   * assertions may depend on which one it is.
+   */
+  const recorded = async (sentinel: string | undefined): Promise<Target> => {
+    const found = await identify(join(root, "ext"));
+    return {
+      ...target("ext"),
+      identity: found!.id,
+      identityKind: found!.kind,
+      ...(sentinel !== undefined ? { sentinel } : {}),
+    } as Target;
+  };
+
+  test("a matching identity with no sentinel resolves, whatever kind it is", async () => {
+    // Including a device path. Refusing here would make syncy unusable on a
+    // machine that publishes no uuid, which is not the same thing as safer.
+    expect(await targetReachability(await recorded(undefined))).toBe("ok");
+  });
+
+  test("a sentinel, where there is one, is what decides", async () => {
+    const t = await recorded("not-the-one");
+    if (identityIsProof(t)) {
+      // A uuid or a share name is a name for the volume; the sentinel adds
+      // nothing it does not already have.
+      expect(await targetReachability(t)).toBe("ok");
+    } else {
+      // A device path is not, so the sentinel outranks it — and this is the
+      // branch that used to report "ok" for a disk that had been swapped.
+      expect(await targetReachability(t)).toBe("mismatch");
+    }
+  });
+
+  test("and either way the directory still has to be there", async () => {
+    const t = { ...(await recorded(undefined)), path: join(root, "ext", "no-such-dir") } as Target;
+    expect(await targetReachability(t)).toBe("unreachable");
   });
 });
 

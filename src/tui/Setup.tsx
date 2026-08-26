@@ -9,7 +9,7 @@ import { bytes } from "../format.ts";
 import { type MountEntry, modifyWindowFor } from "../fstype.ts";
 import { configFile } from "../paths.ts";
 import { probeTarget } from "../probe.ts";
-import { listUnits, targetReachability } from "../scan.ts";
+import { identityIsProof, listUnits, targetReachability } from "../scan.ts";
 import { describeVolume, identify, type MountedVolume, mountedVolumes } from "../volume.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
@@ -130,6 +130,7 @@ export async function resolveTarget(
   const fstype = found.fstype;
   onProgress?.(`probing ${name} for acl and xattr support…`);
   const probe = await probeTarget(abs);
+
   const target: Target = {
     name,
     path: abs,
@@ -140,11 +141,15 @@ export async function resolveTarget(
     modifyWindow: modifyWindowFor(fstype),
     flagsDrop: probe.flagsDrop,
   };
-  return {
-    ok: true,
-    target,
-    detail: `${name}: ${fstype} · ${found.kind} ${found.id} · ${probe.detail}`,
-  };
+  // A device path is recorded like any other identity, and said out loud as
+  // the weaker thing it is: `targetReachability` will not accept it as proof
+  // on its own, so the person adding the target should hear that here rather
+  // than discover it as an "unverified" row later.
+  const detail = identityIsProof(target)
+    ? `${name}: ${fstype} · ${found.kind} ${found.id} · ${probe.detail}`
+    : `${name}: ${fstype} · device path ${found.id}, not a volume name — ` +
+      `run \`syncy sentinel ${abs}\` to prove it by a file instead · ${probe.detail}`;
+  return { ok: true, target, detail };
 }
 
 export function Setup({

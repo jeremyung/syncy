@@ -36,18 +36,63 @@ export type Reachability = SentinelStatus | "unreachable";
  * mounted at the path and compares that with what was recorded — nothing is
  * written to the destination. `sentinel` reads a file syncy placed at the
  * target root, which additionally catches the directory being deleted and
- * recreated. Identity wins when both are present.
+ * recreated.
+ *
+ * Not every recorded identity is proof, and `identityIsProof` is where that
+ * is decided. A volume uuid names the filesystem and nothing else can answer
+ * to it. A network mount source — `//nas/media`, `archive:/exports` — names a
+ * host and an export, which is equally a name for the thing itself. A local
+ * device path is neither: `identify` falls back to one when no uuid is
+ * published, and `/dev/sdb1` is a slot in this boot's enumeration order.
+ * Unplug the backup disk, plug a different one into the same port, and it
+ * answers to the same path.
+ *
+ * So a device-path identity is checked — it still catches the volume being
+ * unmounted — and then handed to the sentinel, whose answer is returned: the
+ * sentinel is the thing that survives the disk being swapped, and where one
+ * exists it should be what decides.
+ *
+ * With no sentinel to hand it to, the device path is accepted. That is the
+ * weakest branch here and it is deliberate: refusing instead makes syncy
+ * unusable on a machine that publishes no uuid — a container, a system
+ * without udev, or a root filesystem the initramfs named `/dev/root` — and a
+ * tool that will not run is not safer than one that runs with a proof it has
+ * labelled as weak. `resolveTarget` says so when the target is added, and
+ * `syncy sentinel` is how someone upgrades it. What this must never do is
+ * silently treat it as equal to a uuid, which is what it used to do.
  */
 export async function targetReachability(target: Target): Promise<Reachability> {
   if (target.identity !== undefined && target.identity !== "") {
     const v = await checkVolume(target.path, target.identity);
     if (v !== "ok") return v === "unreachable" ? "unreachable" : "mismatch";
     // The volume is right; the directory still has to exist on it.
-    return existsSync(target.path) ? "ok" : "unreachable";
+    if (!existsSync(target.path)) return "unreachable";
+    if (identityIsProof(target) || target.sentinel === undefined) return "ok";
+    return checkSentinel(target.path, target.sentinel);
   }
   if (!existsSync(target.path)) return "unreachable";
   if (target.sentinel === undefined) return "missing";
   return checkSentinel(target.path, target.sentinel);
+}
+
+/**
+ * Whether a target's recorded identity names the volume, or merely where it
+ * was plugged in this time.
+ *
+ * A device path is the one identity `identify` can return that a different
+ * disk will answer to tomorrow — /dev/diskN on macOS, /dev/sdb1 on Linux —
+ * and it is what the mount source falls back to when the kernel publishes no
+ * uuid. Everything else in that field is a name for the volume: a uuid, or a
+ * network share's host and export.
+ *
+ * The shape is the test rather than a fourth `identityKind`, because it needs
+ * no migration and cannot disagree with the value it is describing: a config
+ * written before this existed gets the same answer as one written after.
+ */
+export function identityIsProof(target: Target): boolean {
+  const id = target.identity ?? "";
+  if (id === "") return false;
+  return !id.startsWith("/dev/");
 }
 
 export async function allReachability(config: Config): Promise<Map<string, Reachability>> {
