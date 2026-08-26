@@ -1,0 +1,120 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+# A second push to the same branch supersedes the first. Tags are exempt: a
+# release build that is cancelled halfway leaves a release with some of its
+# assets, which is worse than a wasted runner.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+# Pinned for the same reason the linter is: CI must fail because the code
+# changed, not because a toolchain moved underneath it.
+env:
+  BUN_VERSION: "1.3.14"
+
+jobs:
+  check:
+    name: check · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Both platforms run the full suite: the tests spawn real rsync, so the
+      # macOS branch exercises /sbin/mount and diskutil, the Linux branch
+      # /proc/mounts and sysfs. A platform regression must fail on its own
+      # runner, not slip through because the other one passed.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Install rsync 3.x
+        # The suite spawns a real rsync. macOS ships openrsync at /usr/bin,
+        # which syncy refuses, so the Homebrew build is the one under test;
+        # ubuntu-latest already ships a 3.x rsync.
+        if: runner.os == 'macOS'
+        run: brew install rsync
+      - name: Typecheck
+        run: bunx tsc --noEmit
+      - name: Lint
+        run: bunx @biomejs/biome@2.5.10 check .
+      - name: Test
+        run: bun test
+
+  build:
+    name: build · ${{ matrix.target }}
+    runs-on: ${{ matrix.runs-on }}
+    if: github.ref_type == 'tag'
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both macOS targets build on one arm64 runner: bun cross-compiles
+        # against the target's runtime rather than the host's.
+        include:
+          - target: bun-darwin-arm64
+            runs-on: macos-14
+          - target: bun-darwin-x64
+            runs-on: macos-14
+          - target: bun-linux-x64
+            runs-on: ubuntu-latest
+          - target: bun-linux-arm64
+            runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build -- --target=${{ matrix.target }}
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: syncy-${{ matrix.target }}
+          path: syncy-${{ matrix.target }}
+          if-no-files-found: error
+
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+    needs: build
+    # The one job that writes anything outside the run.
+    permissions:
+      contents: write
+    steps:
+      - name: Collect the binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: syncy-*
+          merge-multiple: true
+      # Checksums are generated where all four binaries are, which is why the
+      # matrix uploads artifacts and this job publishes: a per-target runner
+      # can only ever checksum its own build.
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum syncy-* | tee checksums.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: dist
+        # `--generate-notes` writes the changelog from the commits since the
+        # previous tag; the assets are the four binaries and their checksums.
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            syncy-* checksums.txt

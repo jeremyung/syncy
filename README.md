@@ -137,13 +137,30 @@ extended attributes.
 
 **rsync 3.x.** macOS ships openrsync at `/usr/bin/rsync`, which reports itself
 as "rsync version 2.6.9 compatible" and then rejects `-A`. syncy does not
-resolve rsync from `PATH`. It checks `/opt/homebrew/bin`, `/usr/local/bin` and
-`/opt/local/bin` in that order, and refuses to run against openrsync rather than
-failing later per folder. `SYNCY_RSYNC` overrides the path.
+resolve rsync from `PATH`. On macOS it checks `/opt/homebrew/bin`,
+`/usr/local/bin` and `/opt/local/bin` in that order, and refuses to run against
+openrsync rather than failing later per folder. On Linux the distribution
+rsync at `/usr/bin` is used as-is — it is the real thing there — and the build
+check still refuses anything older than 3.x. `SYNCY_RSYNC` overrides the path.
 
 ```
-brew install rsync
+brew install rsync        # macOS
+sudo apt install rsync    # or the distro equivalent
 ```
+
+**Linux.** The mount table is read from `/proc/mounts`, so no `diskutil` and
+no `mount` subprocess. A volume's UUID comes from `/dev/disk/by-uuid` — the
+same names `blkid` and your `fstab` use — falling back to `by-partuuid`, and
+to sysfs for the devices that publish one of their own. Where nothing stable
+is published the device path is recorded instead, and syncy treats it as the
+weaker thing it is: `/dev/sdb1` is a slot in this boot's enumeration order,
+not a name for a disk. Such a target still works, and says so when you add
+it; where it also has a sentinel, the sentinel is what decides. `syncy
+sentinel <path>` writes one. Adding a target never writes to the target. The capability
+probe uses the `attr` and `acl` packages (`setfattr`/`getfattr`,
+`setfacl`/`getfacl`) when they are installed; a missing tool reports the
+capability as unmeasured and drops the flag rather than guessing. Copying the
+plan needs `wl-clipboard` or `xclip`; without one the button says so.
 
 **Bun**, to build.
 
@@ -155,8 +172,20 @@ brew install bun
 
 ```
 bun install
-bun run build          # produces a self-contained ./syncy
+bun run build          # self-contained ./syncy for this platform
+bun run build:all      # every supported target, named syncy-<target>
 cp syncy ~/.local/bin/
+```
+
+Supported targets: macOS (Apple Silicon and Intel) and Linux (x64 and
+arm64). Pushing a `v*` tag builds all four, attaches them to the GitHub
+release with a `checksums.txt`, and generates the notes from the commits
+since the previous tag. A downloaded binary arrives without its executable
+bit, as anything fetched over HTTP does:
+
+```
+shasum -a 256 -c checksums.txt --ignore-missing
+chmod +x syncy-bun-darwin-arm64 && mv syncy-bun-darwin-arm64 ~/.local/bin/syncy
 ```
 
 ## Use
@@ -298,8 +327,9 @@ own palette.
 ## Development
 
 ```
-bun test               # 730 tests
+bun test               # 816 tests
 bunx tsc --noEmit
+bunx @biomejs/biome@2.5.10 check .   # lint and format; --write to fix
 bun run build
 bun run audit          # no machine-specific data in the tree or the history
 ```
@@ -311,6 +341,19 @@ redirects the XDG directories into the project before any test file loads. One
 test asserts that a full run leaves the real config and state byte-identical;
 another rejects any test file naming a path that exists on the machine running
 it.
+
+The linter is Biome with the recommended rules, minus four style rules the
+codebase deliberately does not follow: non-null assertions (the nullability is
+argued in comments, the type-checker holds the line), `"str" + x` versus
+templates and `obj["key"]` versus `obj.key` (both are this codebase's
+established style, most in the runtime validators for untrusted input), and
+array-index keys (the TUI renders log and line streams in fixed order, where
+the index is the honest key). Where a rule is suppressed in code it is
+suppressed with a `biome-ignore` comment stating the reason.
+
+Biome runs through `bunx` with a pinned version rather than as a
+dependency: it is a dev-time tool that ships in no binary, so the lockfile
+stays limited to what the type-checker and the tests actually need.
 
 `DESIGN.md` records the decisions and the reasoning behind them.
 
