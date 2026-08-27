@@ -85,12 +85,53 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /** Shows a refusal for a few seconds, replacing any refusal already up. */
-  const showNotice = useCallback((text: string) => {
-    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
-    setNotice(text);
-    noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS);
+  /**
+   * Every pending message timer, so quitting can drop them.
+   *
+   * `busy` and `notice` clear themselves on a timer — eight seconds for the
+   * message naming a destination a run had to skip, which is the one the user
+   * has to read. Nothing calls `process.exit` after the interface unmounts, so
+   * a timer of that length kept the process alive for eight seconds after the
+   * screen had been handed back: the terminal looked restored, and the shell
+   * prompt did not return. The work was finished; only the timer was left.
+   */
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+
+  /** `setTimeout` that forgets itself when it fires, and can be dropped on quit. */
+  const later = useCallback((fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
+    const id = setTimeout(() => {
+      timers.current.delete(id);
+      fn();
+    }, ms);
+    timers.current.add(id);
+    return id;
   }, []);
+
+  /** Shows a refusal for a few seconds, replacing any refusal already up. */
+  const showNotice = useCallback(
+    (text: string) => {
+      if (noticeTimer.current !== null) {
+        clearTimeout(noticeTimer.current);
+        timers.current.delete(noticeTimer.current);
+      }
+      setNotice(text);
+      noticeTimer.current = later(() => setNotice(null), NOTICE_MS);
+    },
+    [later],
+  );
+
+  /**
+   * Aborted when the interface unmounts, cancelling whatever it started.
+   *
+   * `runCheck` is a plain async loop with no connection to React's lifecycle,
+   * so quitting mid-run unmounted the interface and left the loop running: it
+   * finished the checksum pass in flight and then spawned rsync for every
+   * remaining folder, writing state, history and diffs for as long as that
+   * took, with nothing on screen and the shell prompt not yet back. The signal
+   * reaches Bun.spawn, so the child dies with the interface, and the loop
+   * reads it between jobs so the queue stops rather than draining.
+   */
+  const [quitting] = useState(() => new AbortController());
   const [showPlan, setShowPlan] = useState(false);
   // Open straight into setup when there is nothing to show yet.
   const [showSetup, setShowSetup] = useState(() => initialConfig.targets.length === 0);
@@ -115,6 +156,17 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   }, [runningSync]);
   const [now, setNow] = useState(() => Date.now());
   const [frame, setFrame] = useState(0);
+
+  // Quitting must leave nothing running and nothing pending: the process ends
+  // when the event loop drains, and both of these hold it open.
+  useEffect(
+    () => () => {
+      quitting.abort();
+      for (const id of timers.current) clearTimeout(id);
+      timers.current.clear();
+    },
+    [quitting],
+  );
 
 
   const screen = useScreen(stdout);
@@ -270,6 +322,9 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
       const skipped: { readonly target: string; readonly why: Reachability }[] = [];
 
       for (const job of jobs) {
+        // Nothing to report and nobody to report it to: the interface has
+        // unmounted, so the rest of the queue is work no one asked to keep.
+        if (quitting.signal.aborted) return;
         const status = reach.get(job.target.name);
         if (status !== "ok") {
           if (!skipped.some((s) => s.target === job.target.name)) {
@@ -310,12 +365,18 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
         });
         try {
           const { scan, argv, items, targetFingerprint, exitCode } = await checkUnit(config, job.unit, job.target, mode, {
+            signal: quitting.signal,
             // Throttled: one render per 25 files keeps a large folder from
             // driving the render loop instead of the check.
             onFile: (seen) => {
               if (seen % 25 === 0) setRunning({ ...base, filesSeen: seen });
             },
           });
+          // An aborted check proved nothing. rsync was killed, so it exits
+          // non-zero and reads as `error` — a verdict about the quit, not
+          // about the folder. Recording it would leave the ledger claiming a
+          // check had failed on a folder that was never checked.
+          if (quitting.signal.aborted) return;
           const jobMs = Date.now() - jobStarted;
           debug("check.done", {
             mode,
@@ -358,6 +419,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
           setState(working);
           setNow(Date.now());
         } catch (e) {
+          if (quitting.signal.aborted) return;
           // Explicit catch at the subprocess boundary; a swallowed rejection
           // would leave the ledger showing stale state as if it were fresh.
           debug("check.failed", {
@@ -396,9 +458,9 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
       setNow(Date.now());
       // A skip needs longer on screen than a success: it is the message the
       // user has to read and act on.
-      setTimeout(() => setBusy(null), skipped.length > 0 ? 8000 : 2500);
+      later(() => setBusy(null), skipped.length > 0 ? 8000 : 2500);
     },
-    [rows, clampedSelection, running, config, state, scan, refresh, showNotice],
+    [rows, clampedSelection, running, config, state, scan, refresh, showNotice, later, quitting],
   );
 
   useInput((input, key) => {
@@ -545,10 +607,10 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
               // run — inconsistent with pinning rsync for exactly that reason.
               Bun.spawn(["/usr/bin/pbcopy"], { stdin: new TextEncoder().encode(text) });
               setBusy("plan copied to the clipboard");
-              setTimeout(() => setBusy(null), 1500);
+              later(() => setBusy(null), 1500);
             } catch {
               setBusy("could not reach pbcopy");
-              setTimeout(() => setBusy(null), 1500);
+              later(() => setBusy(null), 1500);
             }
           }}
         />

@@ -91,6 +91,15 @@ export interface CheckOptions {
   readonly onFile?: (seen: number, name: string) => void;
   readonly now?: number;
   readonly fingerprint?: Fingerprint;
+  /**
+   * Aborts the rsync this check spawns.
+   *
+   * A check is read-only, so there is nothing to unwind — but it is also the
+   * longest-running thing syncy does, and a deep verify reads both sides of
+   * every file. Without this, quitting left the child running: the interface
+   * was gone and the disks were not.
+   */
+  readonly signal?: AbortSignal;
 }
 
 export const methodOf = (mode: Mode): Method => (mode === "deep" ? "deep" : "quick");
@@ -134,6 +143,7 @@ export async function checkUnit(
   let nFiles = 0;
   const result = await runRsync(argv, {
     ...(opts.bin !== undefined ? { bin: opts.bin } : {}),
+    ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     onLine: (line) => {
       opts.onLine?.(line);
       const item = parseItemizeLine(line);
