@@ -41,7 +41,10 @@ function targetNames(): string[] {
   const inline = flag?.slice("--targets=".length);
   const spaced = process.argv[process.argv.indexOf("--targets") + 1];
   const raw = inline ?? (process.argv.includes("--targets") ? spaced : undefined);
-  const names = (raw ?? "external,nas").split(",").map((s) => s.trim()).filter((s) => s !== "");
+  const names = (raw ?? "external,nas")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
   if (names.length === 0) throw new Error("--targets needs at least one name");
   if (new Set(names).size !== names.length) throw new Error("--targets names must be unique");
   return names;

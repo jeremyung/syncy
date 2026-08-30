@@ -1,7 +1,7 @@
 import type { Config, Target } from "./config.ts";
-import { sameFingerprint, type Fingerprint } from "./fingerprint.ts";
+import { type Fingerprint, sameFingerprint } from "./fingerprint.ts";
 import type { SentinelStatus } from "./sentinel.ts";
-import { latestScan, findScan, type Scan, type State } from "./state.ts";
+import { findScan, latestScan, type Scan, type State } from "./state.ts";
 
 /**
  * The status ladder (DESIGN.md sections 4 and 5).
@@ -176,10 +176,10 @@ export function cellState(input: CellInput): Cell {
         ? "not connected"
         : input.sentinel === "missing"
           ? "no sentinel here — not mounted, or the wrong volume"
-          // Two causes, and the message has to cover both: a different volume
-          // mounted at the same path, or the directory recreated since it was
-          // added. Either way this is not the directory that was registered.
-          : "not the directory that was registered — re-add it in setup";
+          : // Two causes, and the message has to cover both: a different volume
+            // mounted at the same path, or the directory recreated since it was
+            // added. Either way this is not the directory that was registered.
+            "not the directory that was registered — re-add it in setup";
     return { ...base, state: "unchecked", reason };
   }
 
@@ -188,7 +188,11 @@ export function cellState(input: CellInput): Cell {
   // same name inherited the old volume's clean history — the one way this
   // tool could report `verified` for a destination it had never checked.
   if (input.staleRecords === true) {
-    return { ...base, state: "unchecked", reason: "the records here were made against a different volume" };
+    return {
+      ...base,
+      state: "unchecked",
+      reason: "the records here were made against a different volume",
+    };
   }
 
   const latest = input.latest;
@@ -243,7 +247,11 @@ export function cellState(input: CellInput): Cell {
     return { ...extra, state: "unverified", reason: "source changed since last check" };
   }
   if (ageDays(latest.ts, input.now) > input.maxQuickAgeDays) {
-    return { ...extra, state: "unverified", reason: `last checked ${agePhrase(latest.ts, input.now)}` };
+    return {
+      ...extra,
+      state: "unverified",
+      reason: `last checked ${agePhrase(latest.ts, input.now)}`,
+    };
   }
 
   const deep = input.deep;
@@ -278,7 +286,11 @@ export function cellState(input: CellInput): Cell {
  */
 const PRECEDENCE: readonly CellState[] = ["error", "missing", "behind", "unverified", "unchecked"];
 
-export function rollUp(unit: string, cells: readonly Cell[], required: ReadonlySet<string>): UnitStatus {
+export function rollUp(
+  unit: string,
+  cells: readonly Cell[],
+  required: ReadonlySet<string>,
+): UnitStatus {
   const relevant = cells.filter((c) => required.has(c.target));
   for (const state of PRECEDENCE) {
     const hit = relevant.find((c) => c.state === state);
@@ -314,7 +326,8 @@ export function evaluateUnit(
     // the current one — distinguishes "made against a different volume" from
     // "never checked at all", which need different reasons.
     const staleRecords =
-      latest === undefined && state.scans.some((s) => s.unit === ev.unit && s.target === target.name);
+      latest === undefined &&
+      state.scans.some((s) => s.unit === ev.unit && s.target === target.name);
     const extras = knownExtras(state, ev.unit, target.name, identity);
     const input: CellInput = {
       target,

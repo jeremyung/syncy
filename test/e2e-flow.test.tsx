@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
-import { render } from "ink-testing-library";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { render } from "ink-testing-library";
 import { loadConfig } from "../src/config.ts";
 import { EMPTY_CONFIG } from "../src/configio.ts";
 import { configFile, stateFile } from "../src/paths.ts";
-import { loadState, type Method } from "../src/state.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { SENTINEL_NAME } from "../src/sentinel.ts";
+import { loadState, type Method } from "../src/state.ts";
 import { App } from "../src/tui/App.tsx";
+import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
 
 /**
  * The whole application as one flow, driven by keystrokes only.
@@ -238,10 +238,10 @@ describeRsync("first run through to a verified unit", () => {
       // [enter] until it does — so waiting on the title alone pressed enter
       // into a page that discarded it, and the run never started. "running…"
       // is the page's own not-ready marker.
-      await waitFor(
-        () => d.frame().includes("confirm sync") && !d.frame().includes("running…"),
-        { what: "the confirm page preflight", timeout: 45_000 },
-      );
+      await waitFor(() => d.frame().includes("confirm sync") && !d.frame().includes("running…"), {
+        what: "the confirm page preflight",
+        timeout: 45_000,
+      });
       await d.press(ENTER); // runs it
       await waitFor(() => !d.frame().includes("confirm sync"), {
         what: `the sync on pass ${i + 1} to start`,

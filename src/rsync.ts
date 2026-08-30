@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Config, Target } from "./config.ts";
+import { IS_MACOS } from "./platform.ts";
 
 /**
  * rsync invocation (DESIGN.md section 3).
@@ -13,15 +14,19 @@ import type { Config, Target } from "./config.ts";
 /**
  * Candidate locations for a real rsync, in preference order.
  *
- * Never resolved from PATH: on macOS `rsync` finds /usr/bin/rsync, which is
- * openrsync and rejects -A outright. Homebrew installs to /opt/homebrew on
- * Apple Silicon and /usr/local on Intel; MacPorts uses /opt/local.
+ * Never resolved from PATH. On macOS this never includes /usr/bin: there
+ * `rsync` is openrsync, which rejects -A outright. Homebrew installs to
+ * /opt/homebrew on Apple Silicon and /usr/local on Intel; MacPorts uses
+ * /opt/local.
+ *
+ * On Linux the distribution rsync at /usr/bin is the real thing, and that is
+ * where the package manager puts it, so it is the first candidate. checkBuild
+ * still refuses anything older than 3.x, and the openrsync test inside it is
+ * the backstop if someone installed the BSD variant on a Linux box.
  */
-export const RSYNC_CANDIDATES: readonly string[] = [
-  "/opt/homebrew/bin/rsync",
-  "/usr/local/bin/rsync",
-  "/opt/local/bin/rsync",
-];
+export const RSYNC_CANDIDATES: readonly string[] = IS_MACOS
+  ? ["/opt/homebrew/bin/rsync", "/usr/local/bin/rsync", "/opt/local/bin/rsync"]
+  : ["/usr/bin/rsync", "/usr/local/bin/rsync"];
 
 /** `SYNCY_RSYNC` overrides everything, for an rsync installed elsewhere. */
 export function resolveRsync(env: NodeJS.ProcessEnv = process.env): string {
@@ -36,7 +41,13 @@ export function resolveRsync(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 export const DEFAULT_RSYNC: string = resolveRsync();
-export const OUT_FORMAT = "%i|%l|%n";
+/**
+ * %M — the source file's mtime — rides along with the fields already asked
+ * for. It is what lets the differences screen separate a file written since
+ * the last sync from one that predates it and never copied; without it the
+ * listing has no time dimension at all and every difference looks alike.
+ */
+export const OUT_FORMAT = "%i|%l|%M|%n";
 export const PARTIAL_DIR = ".syncy-partial";
 
 export type Mode = "quick" | "deep" | "sync";
@@ -154,7 +165,9 @@ export function argvFor(
 export function assertDeleteIsDryRun(argv: readonly string[]): void {
   const deletes = argv.some((a) => a === "--delete" || a.startsWith("--delete-"));
   if (!deletes) return;
-  const dryRun = argv.some((a) => a === "-n" || a === "--dry-run" || (/^-[a-zA-Z]+$/.test(a) && a.includes("n")));
+  const dryRun = argv.some(
+    (a) => a === "-n" || a === "--dry-run" || (/^-[a-zA-Z]+$/.test(a) && a.includes("n")),
+  );
   if (!dryRun) {
     throw new RsyncError(
       `refusing to run: argv contains --delete without --dry-run\n  ${argv.join(" ")}`,
@@ -226,7 +239,11 @@ export async function checkBuild(bin: string = DEFAULT_RSYNC): Promise<RsyncBuil
     await proc.exited;
     const first = out.split("\n")[0] ?? "";
     if (/openrsync/i.test(out)) {
-      return { ok: false, version: first.trim(), detail: `${bin} is openrsync; it rejects -A and -X` };
+      return {
+        ok: false,
+        version: first.trim(),
+        detail: `${bin} is openrsync; it rejects -A and -X`,
+      };
     }
     const m = /rsync\s+version\s+(\d+)\.(\d+)/i.exec(out);
     if (!m || Number(m[1]) < 3) {

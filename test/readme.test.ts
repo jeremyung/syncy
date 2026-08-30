@@ -41,8 +41,15 @@ function documented(mode: Mode): string[] {
   const start = lines.findIndex((l) => new RegExp(`^${mode}\\s+-`).test(l));
   expect(start, `no ${mode} line in the README command block`).toBeGreaterThanOrEqual(0);
   const folded = [lines[start]!];
-  for (let i = start + 1; i < lines.length && /^\s{4,}-/.test(lines[i]!); i++) folded.push(lines[i]!);
-  return flags(folded.join(" ").replace(new RegExp(`^${mode}`), "").trim().split(/\s+/));
+  for (let i = start + 1; i < lines.length && /^\s{4,}-/.test(lines[i]!); i++)
+    folded.push(lines[i]!);
+  return flags(
+    folded
+      .join(" ")
+      .replace(new RegExp(`^${mode}`), "")
+      .trim()
+      .split(/\s+/),
+  );
 }
 
 describe("the README documents the commands that actually run", () => {
@@ -66,7 +73,11 @@ describe("the README's test count is not wildly stale", () => {
    */
   const declared = readdirSync(join(PROJECT_ROOT, "test"))
     .filter((f) => f.endsWith(".test.ts") || f.endsWith(".test.tsx"))
-    .reduce((n, f) => n + (readFileSync(join(PROJECT_ROOT, "test", f), "utf8").match(/\btest\(/g)?.length ?? 0), 0);
+    .reduce(
+      (n, f) =>
+        n + (readFileSync(join(PROJECT_ROOT, "test", f), "utf8").match(/\btest\(/g)?.length ?? 0),
+      0,
+    );
 
   test("there are tests to count", () => {
     expect(declared).toBeGreaterThan(100);

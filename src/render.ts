@@ -1,7 +1,7 @@
 import type { Config } from "./config.ts";
 import { ageAgo, bytes, stamp } from "./format.ts";
 import type { Scan, State } from "./state.ts";
-import { latestScan, findScan } from "./state.ts";
+import { findScan, latestScan } from "./state.ts";
 import { evidencePhrase, GLYPH, knownExtras, targetIdentity, type UnitStatus } from "./status.ts";
 import { shelfSummary } from "./tui/Shelf.tsx";
 import { displayWidth, fit, padEnd, padStart, truncate } from "./width.ts";
@@ -67,27 +67,35 @@ export function renderLedger(view: LedgerView): string {
   const blocks = states.map((s) => BLOCK[s]).join("");
   const dateLine = `archive ledger · ${stamp(view.now).split(" · ")[0]} ${new Date(view.now).getFullYear()}`;
   const wordmark = "  syncy  " + blocks;
-  out.push(wordmark + " ".repeat(Math.max(1, W + 2 - displayWidth(wordmark) - displayWidth(dateLine))) + dateLine);
+  out.push(
+    wordmark +
+      " ".repeat(Math.max(1, W + 2 - displayWidth(wordmark) - displayWidth(dateLine))) +
+      dateLine,
+  );
   out.push("         " + shelfSummary(states));
   out.push("");
 
   // Header
   let head = "  " + padEnd("folder", FOLDER) + " " + padStart("size", SIZE) + "   ";
-  names.forEach((n, i) => (head += padEnd(n, cellW[i]!)));
+  names.forEach((n, i) => {
+    head += padEnd(n, cellW[i]!);
+  });
   head += "status";
   out.push(head);
   out.push(rule(W));
 
   view.rows.forEach((row, idx) => {
     const mark = idx === view.selected ? "»" : " ";
-    let line = mark + " " + leaders(row.status.unit, FOLDER) + " " + padStart(bytes(row.size), SIZE) + "   ";
+    let line =
+      mark + " " + leaders(row.status.unit, FOLDER) + " " + padStart(bytes(row.size), SIZE) + "   ";
     names.forEach((n, i) => {
       const cell = row.status.cells.find((c) => c.target === n);
       const glyph = cell === undefined ? "?" : GLYPH[cell.state];
       const suffix = cell !== undefined && cell.state === "behind" ? String(cell.nChanges) : "";
       line += padEnd(glyph + suffix, cellW[i]!);
     });
-    const reason = row.status.state === "verified" ? "verified" : `${row.status.state} · ${row.status.reason}`;
+    const reason =
+      row.status.state === "verified" ? "verified" : `${row.status.state} · ${row.status.reason}`;
     line += truncate(reason, statusW);
     out.push(line);
   });
@@ -149,12 +157,21 @@ const describe = (
 
 function footer(view: LedgerView, W: number): string {
   const total = view.rows.reduce((a, r) => a + r.size, 0);
-  const verified = view.rows.filter((r) => r.status.state === "verified").reduce((a, r) => a + r.size, 0);
-  const awaiting = view.rows.filter((r) => r.status.state === "unchecked").reduce((a, r) => a + r.size, 0);
+  const verified = view.rows
+    .filter((r) => r.status.state === "verified")
+    .reduce((a, r) => a + r.size, 0);
+  const awaiting = view.rows
+    .filter((r) => r.status.state === "unchecked")
+    .reduce((a, r) => a + r.size, 0);
 
   const left = `${view.rows.length} units · ${bytes(total)}`;
   const mid = `${bytes(verified)} verified`;
-  const right = awaiting > 0 ? `${bytes(awaiting)} awaiting` : view.freeBytes !== undefined ? `boot ${bytes(view.freeBytes)} free` : "";
+  const right =
+    awaiting > 0
+      ? `${bytes(awaiting)} awaiting`
+      : view.freeBytes !== undefined
+        ? `boot ${bytes(view.freeBytes)} free`
+        : "";
   const gap = Math.max(2, Math.floor((W - displayWidth(left + mid + right)) / 2));
   return fit(left, displayWidth(left) + gap) + fit(mid, displayWidth(mid) + gap) + right;
 }

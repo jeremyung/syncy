@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
-import { parseConfig, type Config } from "../src/config.ts";
+import { type Config, parseConfig } from "../src/config.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import { EMPTY_STATE, type Scan, type State } from "../src/state.ts";
 import { evaluateUnit } from "../src/status.ts";

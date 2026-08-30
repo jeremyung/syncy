@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
-import { render } from "ink-testing-library";
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config, type Target } from "../src/config.ts";
+import { render } from "ink-testing-library";
+import { type Config, parseConfig, type Target } from "../src/config.ts";
 import { freeBytes } from "../src/guards.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
@@ -11,6 +10,7 @@ import { App } from "../src/tui/App.tsx";
 import { Confirm } from "../src/tui/Confirm.tsx";
 import { Job } from "../src/tui/Job.tsx";
 import { THEMES } from "../src/tui/theme.ts";
+import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
 
 const build = await checkBuild(DEFAULT_RSYNC);
 const describeRsync = build.ok ? describe : describe.skip;
@@ -327,7 +327,9 @@ describe("esc while a transfer is running", () => {
     expect(s.frame()).toContain("cancelling");
     expect(s.frame()).toContain("[ctrl-c] again to quit");
     // Let the stubborn fake process actually die rather than leak it.
-    await waitFor(() => s.frame().includes("[esc] back"), { what: "the delayed cancellation to finish" });
+    await waitFor(() => s.frame().includes("[esc] back"), {
+      what: "the delayed cancellation to finish",
+    });
   }, 10_000);
 
   test("a cancellation says where the partial file is, not that nothing was left", async () => {
@@ -426,7 +428,9 @@ describe("ctrl-c during a transfer, from the app", () => {
     expect(d.frame()).toContain("cancelling");
     // Let the stubborn fake process actually exit before the test moves on,
     // rather than leaking a child and a pending state write.
-    await waitFor(() => d.frame().includes("[esc] back"), { what: "the cancelled transfer to finish" });
+    await waitFor(() => d.frame().includes("[esc] back"), {
+      what: "the cancelled transfer to finish",
+    });
   }, 10_000);
 
   test("a second ctrl-c exits", async () => {
@@ -449,7 +453,9 @@ describe("ctrl-c during a transfer, from the app", () => {
     const d = await startTransfer(bin);
     await trapReady(d);
     d.stdin.write("\x03"); // first press of transfer #1: cancels
-    await waitFor(() => d.frame().includes("[esc] back"), { what: "transfer #1 to finish cancelling" });
+    await waitFor(() => d.frame().includes("[esc] back"), {
+      what: "transfer #1 to finish cancelling",
+    });
     d.stdin.write(ESC); // back to the ledger; runningSync clears, resetting the count
     await waitFor(() => d.frame().includes("folder"), { what: "the ledger to come back" });
 
@@ -460,6 +466,8 @@ describe("ctrl-c during a transfer, from the app", () => {
     expect(mounted(d)).toBe(true);
     expect(d.frame()).toContain("cancelling");
     // Let transfer #2's cancellation finish rather than leaking the process.
-    await waitFor(() => d.frame().includes("[esc] back"), { what: "transfer #2 to finish cancelling" });
+    await waitFor(() => d.frame().includes("[esc] back"), {
+      what: "transfer #2 to finish cancelling",
+    });
   }, 20_000);
 });

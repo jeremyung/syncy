@@ -1,19 +1,28 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { render } from "ink-testing-library";
-import { parseConfig, type Config } from "../src/config.ts";
+import { type Config, parseConfig } from "../src/config.ts";
 import {
   buildDiff,
   classify,
+  type Diff as DiffRecord,
   diffCounts,
   diffFile,
   loadDiff,
-  saveDiff,
   MAX_ENTRIES,
-  type Diff as DiffRecord,
+  saveDiff,
 } from "../src/diff.ts";
-import { parseItemizeLine, type Item } from "../src/itemize.ts";
-import { Diff, diffRows, diffText, legendLine, magnitudeLine, pendingBytes, summaryLine, windowFor } from "../src/tui/Diff.tsx";
+import { type Item, parseItemizeLine } from "../src/itemize.ts";
+import {
+  Diff,
+  diffRows,
+  diffText,
+  legendLine,
+  magnitudeLine,
+  pendingBytes,
+  summaryLine,
+  windowFor,
+} from "../src/tui/Diff.tsx";
 import { hintLine } from "../src/tui/Ledger.tsx";
 import { THEMES } from "../src/tui/theme.ts";
 import { displayWidth } from "../src/width.ts";
@@ -143,7 +152,11 @@ describe("the stored diff", () => {
 
   test("corrupt json reads as absent rather than throwing", () => {
     saveDiff(buildDiff("u", "t", "quick", [NEW_FILE]), dir);
-    Bun.spawnSync(["/bin/sh", "-c", `printf 'not json' > ${JSON.stringify(diffFile("u", "t", dir))}`]);
+    Bun.spawnSync([
+      "/bin/sh",
+      "-c",
+      `printf 'not json' > ${JSON.stringify(diffFile("u", "t", dir))}`,
+    ]);
     expect(loadDiff("u", "t", dir)).toBeNull();
   });
 
@@ -204,6 +217,7 @@ describe("the differences screen", () => {
     diffs: ReadonlyMap<string, DiffRecord | null>,
     width = 92,
     height?: number,
+    by?: "folder" | "type" | "age" | "flat",
   ): string => {
     const { lastFrame } = render(
       <Diff
@@ -213,6 +227,7 @@ describe("the differences screen", () => {
         theme={THEMES.ansi}
         width={width}
         {...(height === undefined ? {} : { height })}
+        {...(by === undefined ? {} : { by })}
         now={NOW}
         onClose={() => {}}
       />,
@@ -241,8 +256,27 @@ describe("the differences screen", () => {
     expect(out).toContain("edited.jpg");
   });
 
-  test("it shows rsync's itemize string next to each file", () => {
+  test("it shows rsync's itemize string, which is the evidence for the claim", () => {
     expect(frame(both)).toContain(">f+++++++++");
+  });
+
+  test("a group states the itemize string its rows gave up", () => {
+    // The column moved onto the header when every row shares one string. Moving
+    // it is a change of place; dropping it would be a change of claim.
+    const many = Array.from({ length: 40 }, (_, i) =>
+      item(`>f+++++++++|100|shoot/file-${String(i).padStart(3, "0")}.jpg`),
+    );
+    const d = buildDiff("holiday-2024", "external", "quick", many, { ts: NOW });
+    const out = frame(
+      new Map([
+        ["external", d],
+        ["NAS", null],
+      ]),
+      120,
+      24,
+    );
+    expect(out).toContain(">f+++++++++");
+    expect(out).toContain("all created new");
   });
 
   test("it offers nothing that deletes, and says so", () => {
@@ -255,7 +289,12 @@ describe("the differences screen", () => {
     const d = buildDiff("holiday-2024", "external", "quick", [NEW_FILE, CHANGED, META, EXTRA], {
       ts: NOW,
     });
-    const out = frame(new Map([["external", d], ["NAS", null]]));
+    const out = frame(
+      new Map([
+        ["external", d],
+        ["NAS", null],
+      ]),
+    );
     for (const glyph of ["+", "≠", "·", "−"]) expect(out).toContain(glyph);
   });
 
@@ -268,7 +307,13 @@ describe("the differences screen", () => {
       { ts: NOW },
     );
     for (const width of [76, 92, 120]) {
-      for (const line of frame(new Map([["external", d], ["NAS", null]]), width).split("\n")) {
+      for (const line of frame(
+        new Map([
+          ["external", d],
+          ["NAS", null],
+        ]),
+        width,
+      ).split("\n")) {
         expect(displayWidth(line), `width ${width}: ${line}`).toBeLessThanOrEqual(width + 2);
       }
     }
@@ -281,29 +326,98 @@ describe("the differences screen", () => {
       item(`>f+++++++++|100|file-${String(i).padStart(3, "0")}.jpg`),
     );
     const d = buildDiff("holiday-2024", "external", "quick", many, { ts: NOW });
-    const out = frame(new Map([["external", d], ["NAS", null]]), 92, 24);
+    const out = frame(
+      new Map([
+        ["external", d],
+        ["NAS", null],
+      ]),
+      92,
+      24,
+      "flat",
+    );
     expect(out).toMatch(/\d+–\d+ of \d+/);
     expect(out).toContain("scroll");
+  });
+
+  test("hundreds of files collapse to one line that describes the set", () => {
+    // The screen this replaces drew 200 rows carrying a name and a size each.
+    // Everything a reader wanted — how many, how big, of what — was a property
+    // of the set and appeared nowhere.
+    const many = Array.from({ length: 200 }, (_, i) =>
+      item(`>f+++++++++|100000|shoot/file-${String(i).padStart(3, "0")}.jpg`),
+    );
+    const d = buildDiff("holiday-2024", "external", "quick", many, { ts: NOW });
+    const out = frame(
+      new Map([
+        ["external", d],
+        ["NAS", null],
+      ]),
+      120,
+      24,
+    );
+    expect(out).toContain("200 files");
+    expect(out).toContain(".jpg 200");
+    expect(out).not.toContain("file-000.jpg");
+  });
+
+  test("the count is of differences found, not of rows currently drawn", () => {
+    // A collapsed group reported "0 differences" — the opposite of the point.
+    const many = Array.from({ length: 200 }, (_, i) =>
+      item(`>f+++++++++|100|shoot/file-${String(i).padStart(3, "0")}.jpg`),
+    );
+    const d = buildDiff("holiday-2024", "external", "quick", many, { ts: NOW });
+    expect(
+      frame(
+        new Map([
+          ["external", d],
+          ["NAS", null],
+        ]),
+        120,
+        24,
+      ),
+    ).toContain("200 differences");
+  });
+
+  test("a group of one is drawn as the file, not as a heading over it", () => {
+    const out = frame(both);
+    expect(out).toContain("new.jpg");
+    expect(out).not.toContain("1 file ·");
   });
 
   test("the summary never wraps, which would cost a line of the listing", () => {
     const d = buildDiff("holiday-2024", "external", "quick", [NEW_FILE, CHANGED, META, EXTRA], {
       ts: NOW,
     });
-    const out = frame(new Map([["external", d], ["NAS", null]]), 76);
+    const out = frame(
+      new Map([
+        ["external", d],
+        ["NAS", null],
+      ]),
+      76,
+    );
     // A wrapped summary shows as a continuation line with no glyph column.
     const orphan = out.split("\n").find((l) => /^\s{12,}[a-z]/.test(l) && !l.includes("["));
     expect(orphan, `wrapped: ${orphan}`).toBeUndefined();
   });
 
-  test("differences are ordered worst first", () => {
+  test("differences are ordered by what is surprising, not by what is common", () => {
+    // Not the legend's order. Ranking by kind put routine creations above
+    // everything else, so a folder with a 504-file backlog and one file whose
+    // attributes differed showed the interesting row at position 505 of a
+    // windowed list — which is to say nowhere. A backlog is the least
+    // surprising thing on the screen and now sorts below the rest.
     const d = buildDiff("holiday-2024", "external", "quick", [EXTRA, META, CHANGED, NEW_FILE], {
       ts: NOW,
     });
-    const out = frame(new Map([["external", d], ["NAS", null]]));
-    expect(out.indexOf("new.jpg")).toBeLessThan(out.indexOf("edited.jpg"));
+    const out = frame(
+      new Map([
+        ["external", d],
+        ["NAS", null],
+      ]),
+    );
     expect(out.indexOf("edited.jpg")).toBeLessThan(out.indexOf("touched.jpg"));
-    expect(out.indexOf("touched.jpg")).toBeLessThan(out.indexOf("gone.jpg"));
+    expect(out.indexOf("touched.jpg")).toBeLessThan(out.indexOf("new.jpg"));
+    expect(out.indexOf("new.jpg")).toBeLessThan(out.indexOf("gone.jpg"));
   });
 
   test("the clipboard text carries the same facts as the screen", () => {
@@ -366,7 +480,16 @@ describe("the differences list scrolls", () => {
     item(`>f+++++++++|1000000|file-${String(i).padStart(3, "0")}.jpg`),
   );
   const big = buildDiff("holiday-2024", "external", "deep", many, { ts: NOW });
-  const rows = diffRows(["external", "NAS"], new Map([["external", big], ["NAS", null]]));
+  const rows = diffRows(
+    ["external", "NAS"],
+    new Map([
+      ["external", big],
+      ["NAS", null],
+    ]),
+    {
+      by: "flat",
+    },
+  );
 
   test("every entry is reachable, not just the first screenful", () => {
     // The regression this replaces: a fixed dozen shown and the other 490
@@ -375,10 +498,9 @@ describe("the differences list scrolls", () => {
   });
 
   test("each destination gets a header in the one flat list", () => {
-    expect(rows.filter((r) => r.kind === "header").map((r) => (r as { target: string }).target)).toEqual([
-      "external",
-      "NAS",
-    ]);
+    expect(
+      rows.filter((r) => r.kind === "header").map((r) => (r as { target: string }).target),
+    ).toEqual(["external", "NAS"]);
   });
 
   test("the window keeps the cursor on screen", () => {
@@ -404,8 +526,22 @@ describe("the differences list scrolls", () => {
 
   test("arrow keys move through the list", async () => {
     const { stdin, lastFrame } = render(
-      <Diff config={config} unit="holiday-2024" diffs={new Map([["external", big], ["NAS", null]])}
-        theme={THEMES.ansi} width={92} height={20} now={NOW} onClose={() => {}} />,
+      <Diff
+        config={config}
+        unit="holiday-2024"
+        diffs={
+          new Map([
+            ["external", big],
+            ["NAS", null],
+          ])
+        }
+        by="flat"
+        theme={THEMES.ansi}
+        width={92}
+        height={20}
+        now={NOW}
+        onClose={() => {}}
+      />,
     );
     const wait = (): Promise<void> => new Promise((r) => setTimeout(r, 40));
     const before = plain(lastFrame());
@@ -502,8 +638,21 @@ describe("the magnitude line gives the listing a denominator", () => {
     const d = mk(fp(9_999_999, 999e12), fp(1, 1));
     for (const w of [76, 92, 120]) {
       const { lastFrame } = render(
-        <Diff config={config} unit="u" diffs={new Map([["external", d], ["NAS", null]])}
-          theme={THEMES.ansi} width={w} height={24} now={NOW} onClose={() => {}} />,
+        <Diff
+          config={config}
+          unit="u"
+          diffs={
+            new Map([
+              ["external", d],
+              ["NAS", null],
+            ])
+          }
+          theme={THEMES.ansi}
+          width={w}
+          height={24}
+          now={NOW}
+          onClose={() => {}}
+        />,
       );
       for (const line of plain(lastFrame()).split("\n")) {
         expect(displayWidth(line), `width ${w}: ${line}`).toBeLessThanOrEqual(w + 2);

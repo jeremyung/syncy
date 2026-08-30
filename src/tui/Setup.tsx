@@ -1,16 +1,16 @@
-import { Box, Text, useInput } from "ink";
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { isWithin, type Config, type Target } from "../config.ts";
+import { Box, Text, useInput } from "ink";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { type Config, isWithin, type Target } from "../config.ts";
 import { saveConfig, withoutTarget, withTarget } from "../configio.ts";
-import { modifyWindowFor, type MountEntry } from "../fstype.ts";
+import { bytes } from "../format.ts";
+import { type MountEntry, modifyWindowFor } from "../fstype.ts";
 import { configFile } from "../paths.ts";
 import { probeTarget } from "../probe.ts";
-import { listUnits, targetReachability } from "../scan.ts";
-import { bytes } from "../format.ts";
-import { describeVolume, identify, mountedVolumes, type MountedVolume } from "../volume.ts";
+import { identityIsProof, listUnits, targetReachability } from "../scan.ts";
+import { describeVolume, identify, type MountedVolume, mountedVolumes } from "../volume.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
 import type { Theme } from "./theme.ts";
@@ -130,6 +130,7 @@ export async function resolveTarget(
   const fstype = found.fstype;
   onProgress?.(`probing ${name} for acl and xattr support…`);
   const probe = await probeTarget(abs);
+
   const target: Target = {
     name,
     path: abs,
@@ -140,10 +141,25 @@ export async function resolveTarget(
     modifyWindow: modifyWindowFor(fstype),
     flagsDrop: probe.flagsDrop,
   };
-  return { ok: true, target, detail: `${name}: ${fstype} · ${found.kind} ${found.id} · ${probe.detail}` };
+  // A device path is recorded like any other identity, and said out loud as
+  // the weaker thing it is: `targetReachability` will not accept it as proof
+  // on its own, so the person adding the target should hear that here rather
+  // than discover it as an "unverified" row later.
+  const detail = identityIsProof(target)
+    ? `${name}: ${fstype} · ${found.kind} ${found.id} · ${probe.detail}`
+    : `${name}: ${fstype} · device path ${found.id}, not a volume name — ` +
+      `run \`syncy sentinel ${abs}\` to prove it by a file instead · ${probe.detail}`;
+  return { ok: true, target, detail };
 }
 
-export function Setup({ config, theme, width, height, onChange, onExit }: SetupProps): React.ReactElement {
+export function Setup({
+  config,
+  theme,
+  width,
+  height,
+  onChange,
+  onExit,
+}: SetupProps): React.ReactElement {
   const [mode, setMode] = useState<Mode>("list");
   const [cursor, setCursor] = useState(0);
   const [draft, setDraft] = useState("");
@@ -190,6 +206,10 @@ export function Setup({ config, theme, width, height, onChange, onExit }: SetupP
   // path being typed changes to a different directory.
   const [volumes, setVolumes] = useState<readonly MountedVolume[]>([]);
   const dir = draft.endsWith("/") ? draft : draft.slice(0, draft.lastIndexOf("/") + 1);
+  // `dir` is a trigger dependency: the effect body does not read it, but the
+  // volume list must refresh as the typed path crosses into a new directory,
+  // and the mount table cache inside volume.ts keeps that re-read cheap.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: trigger dependency, see above.
   useEffect(() => {
     let live = true;
     void mountedVolumes().then((v) => {
@@ -234,7 +254,8 @@ export function Setup({ config, theme, width, height, onChange, onExit }: SetupP
     if (mode === "list") {
       if (key.escape) return onExit();
       if (key.upArrow || input === "k") setCursor((c) => Math.max(0, c - 1));
-      else if (key.downArrow || input === "j") setCursor((c) => Math.min(config.targets.length, c + 1));
+      else if (key.downArrow || input === "j")
+        setCursor((c) => Math.min(config.targets.length, c + 1));
       else if (input === "s") {
         setDraft(config.source);
         setHighlight(null);
@@ -359,18 +380,36 @@ export function Setup({ config, theme, width, height, onChange, onExit }: SetupP
   );
 
   return (
-    <Screen title="syncy · setup" width={W} theme={theme} footer={footer} {...(height === undefined ? {} : { height })}>
+    <Screen
+      title="syncy · setup"
+      width={W}
+      theme={theme}
+      footer={footer}
+      {...(height === undefined ? {} : { height })}
+    >
       <Text color={theme.dim}>{"  source"}</Text>
       <Rule width={W} theme={theme} />
       {mode === "source" ? (
-        <Entry label="path" draft={draft} suggestions={suggestions} theme={theme} width={W} highlight={highlight} volumes={volumes} />
+        <Entry
+          label="path"
+          draft={draft}
+          suggestions={suggestions}
+          theme={theme}
+          width={W}
+          highlight={highlight}
+          volumes={volumes}
+        />
       ) : (
         <Box>
           <Text color={unset ? theme.dim : theme.figure}>
             {"  " + padEnd(unset ? "not set" : truncatePath(config.source, 52), 54)}
           </Text>
           <Text color={theme.dim}>
-            {unset ? "press [s] to choose" : existsSync(config.source) ? `${units.length} subfolders` : "not found"}
+            {unset
+              ? "press [s] to choose"
+              : existsSync(config.source)
+                ? `${units.length} subfolders`
+                : "not found"}
           </Text>
         </Box>
       )}
@@ -397,19 +436,40 @@ export function Setup({ config, theme, width, height, onChange, onExit }: SetupP
             </Box>
             <Text color={theme.dim}>
               {`        ${t.fstype} · ${
-                  t.identity !== undefined
-                    ? `volume ${truncate(t.identity, 26)}`
-                    : `sentinel ${(t.sentinel ?? "").slice(0, 8)}`
-                } · ${
-                t.flagsDrop.length === 0 ? "acls and xattrs ok" : `dropping ${t.flagsDrop.join(" ")}`
+                t.identity !== undefined
+                  ? `volume ${truncate(t.identity, 26)}`
+                  : `sentinel ${(t.sentinel ?? "").slice(0, 8)}`
+              } · ${
+                t.flagsDrop.length === 0
+                  ? "acls and xattrs ok"
+                  : `dropping ${t.flagsDrop.join(" ")}`
               } · ${t.required ? "required" : "optional"}`}
             </Text>
           </Box>
         );
       })}
 
-      {mode === "path" ? <Entry label="path" draft={draft} suggestions={suggestions} theme={theme} width={W} highlight={highlight} volumes={volumes} /> : null}
-      {mode === "name" ? <Entry label="name" draft={draft} suggestions={[]} theme={theme} width={W} highlight={null} /> : null}
+      {mode === "path" ? (
+        <Entry
+          label="path"
+          draft={draft}
+          suggestions={suggestions}
+          theme={theme}
+          width={W}
+          highlight={highlight}
+          volumes={volumes}
+        />
+      ) : null}
+      {mode === "name" ? (
+        <Entry
+          label="name"
+          draft={draft}
+          suggestions={[]}
+          theme={theme}
+          width={W}
+          highlight={null}
+        />
+      ) : null}
 
       <Rule width={W} theme={theme} />
       <Text color={theme.dim}>{"  syncy tracks the immediate subfolders of this root"}</Text>
@@ -454,7 +514,15 @@ function annotate(path: string, volumes: readonly MountedVolume[]): string | nul
   return v.free === null ? describeVolume(v) : `${describeVolume(v)} · ${bytes(v.free)} free`;
 }
 
-function Entry({ label, draft, suggestions, theme, width, highlight, volumes = [] }: EntryProps): React.ReactElement {
+function Entry({
+  label,
+  draft,
+  suggestions,
+  theme,
+  width,
+  highlight,
+  volumes = [],
+}: EntryProps): React.ReactElement {
   // Keep the tail visible. An untruncated path wraps and splits mid-word, which
   // both mangles the layout and hides the part being typed.
   const room = Math.max(20, width - 14);
@@ -478,19 +546,16 @@ function Entry({ label, draft, suggestions, theme, width, highlight, volumes = [
             // the note does not take; both are truncated to fit.
             const INDENT = 12;
             const noteRoom = note === null ? 0 : Math.min(42, Math.max(14, width - INDENT - 26));
-            const nameRoom = Math.max(
-              12,
-              width - INDENT - (note === null ? 0 : noteRoom + 2),
-            );
+            const nameRoom = Math.max(12, width - INDENT - (note === null ? 0 : noteRoom + 2));
             return (
               <Box key={s}>
-                <Text color={on ? theme.figure : theme.dim}>{on ? "          » " : "            "}</Text>
+                <Text color={on ? theme.figure : theme.dim}>
+                  {on ? "          » " : "            "}
+                </Text>
                 <Text color={on ? theme.figure : theme.dim} bold={on}>
                   {padEnd(truncatePath(s, nameRoom), note === null ? 0 : nameRoom + 2)}
                 </Text>
-                {note === null ? null : (
-                  <Text color={theme.rule}>{truncate(note, noteRoom)}</Text>
-                )}
+                {note === null ? null : <Text color={theme.rule}>{truncate(note, noteRoom)}</Text>}
               </Box>
             );
           })}

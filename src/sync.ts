@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Config, Target } from "./config.ts";
-import { parseItemizeLine, type Item } from "./itemize.ts";
+import { type Item, parseItemizeLine } from "./itemize.ts";
 import { debug } from "./log.ts";
-import { ensureLogDir } from "./scan.ts";
 import { argvFor, assertDeleteIsDryRun, DEFAULT_RSYNC, RsyncError } from "./rsync.ts";
+import { ensureLogDir } from "./scan.ts";
 import { appendHistory } from "./state.ts";
 
 /**
@@ -76,9 +76,19 @@ export function startSync(
   // No mkdir: rsync creates the destination itself. syncy writes directly
   // only inside its own state directory (DESIGN.md section 2).
   const writer = Bun.file(logPath).writer();
-  writer.write(`# ${new Date(now).toISOString()}\n# ${[opts.bin ?? DEFAULT_RSYNC, ...argv].join(" ")}\n`);
+  writer.write(
+    `# ${new Date(now).toISOString()}\n# ${[opts.bin ?? DEFAULT_RSYNC, ...argv].join(" ")}\n`,
+  );
 
-  const proc = Bun.spawn([opts.bin ?? DEFAULT_RSYNC, ...argv], { stdout: "pipe", stderr: "pipe" });
+  // Its own process group (POSIX setsid): a cancellation must reach everything
+  // the transfer forked, not just this process — and a terminal ctrl-c can no
+  // longer kill rsync under the app's feet. App's two-press handler is the
+  // single place a cancellation is decided.
+  const proc = Bun.spawn([opts.bin ?? DEFAULT_RSYNC, ...argv], {
+    stdout: "pipe",
+    stderr: "pipe",
+    detached: true,
+  });
   // Marks that separate rsync's own time from syncy's. "Slow to start" and
   // "slow to finish" have completely different causes — rsync enumerating a
   // network share, versus syncy doing work around it — and without these there
@@ -144,7 +154,17 @@ export function startSync(
     done,
     cancel(): void {
       cancelled = true;
-      proc.kill();
+      // The whole group, not just the leader. rsync's local copy runs its
+      // helper as a child of the process spawned here: a lone SIGTERM orphans
+      // the helper, which keeps the log pipes open (so `done` hangs until it
+      // notices on its own) and, mid-transfer, keeps writing to the target.
+      if (proc.exitCode === null) {
+        try {
+          process.kill(-proc.pid, "SIGTERM");
+        } catch {
+          proc.kill();
+        }
+      }
     },
   };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
-import { parseConfig, type Config } from "../src/config.ts";
-import { EMPTY_STATE, upsertScan, type Scan, type State } from "../src/state.ts";
+import { type Config, parseConfig } from "../src/config.ts";
+import { EMPTY_STATE, type Scan, type State, upsertScan } from "../src/state.ts";
 import type { UnitStatus } from "../src/status.ts";
 import { Ledger, type Row } from "../src/tui/Ledger.tsx";
 import { THEMES } from "../src/tui/theme.ts";
@@ -27,7 +27,11 @@ sentinel = "s2"
 
 const NOW = Date.parse("2026-08-20T12:00:00Z");
 
-const status = (unit: string, state: UnitStatus["state"], cells: UnitStatus["cells"]): UnitStatus => ({
+const status = (
+  unit: string,
+  state: UnitStatus["state"],
+  cells: UnitStatus["cells"],
+): UnitStatus => ({
   unit,
   state,
   reason: "a reason that is long enough to need truncating in a narrow column",
@@ -53,7 +57,10 @@ const rows: Row[] = [
     size: 210 * 1024 ** 3,
   },
   {
-    status: status("projects-archive", "unchecked", [cell("ext", "unchecked"), cell("nas", "verified")]),
+    status: status("projects-archive", "unchecked", [
+      cell("ext", "unchecked"),
+      cell("nas", "verified"),
+    ]),
     size: 44 * 1024 ** 3,
   },
   {
@@ -93,7 +100,8 @@ function frame(state: State = EMPTY_STATE, selected = 0, width = 76): string[] {
 }
 
 // Strip ANSI so measurements are of glyphs, not escape sequences.
-const plain = (s: string): string => s.replace(/\[[0-9;]*m/g, "");
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the escape prefix is the point of the strip.
+const plain = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 
 describe("ledger frames", () => {
   test("every unit appears, in the order given", () => {
@@ -146,7 +154,9 @@ describe("ledger frames", () => {
     const lines = frame().map(plain);
     const ends = rows.map((r) => {
       const line = lines.find((l) => l.includes(r.status.unit))!;
-      return displayWidth(line.slice(0, line.indexOf("gb") >= 0 ? line.indexOf("gb") : line.indexOf("tb")));
+      return displayWidth(
+        line.slice(0, line.indexOf("gb") >= 0 ? line.indexOf("gb") : line.indexOf("tb")),
+      );
     });
     expect(new Set(ends).size).toBe(1);
   });
@@ -161,7 +171,9 @@ describe("ledger frames", () => {
   test("the selection marker moves with the selected index", () => {
     expect(plain(frame(EMPTY_STATE, 0).find((l) => l.includes("photos-2019"))!)).toContain("»");
     expect(plain(frame(EMPTY_STATE, 2).find((l) => l.includes("photos-2019"))!)).not.toContain("»");
-    expect(plain(frame(EMPTY_STATE, 2).find((l) => l.includes("projects-archive"))!)).toContain("»");
+    expect(plain(frame(EMPTY_STATE, 2).find((l) => l.includes("projects-archive"))!)).toContain(
+      "»",
+    );
   });
 });
 
@@ -278,16 +290,35 @@ describe("the ledger fits the window it is given", () => {
    * construction rather than trusting the terminal to be tall enough.
    */
   const running = {
-    unit: "photos-2019", target: "ext", mode: "deep" as const, done: 0, total: 1,
-    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 164_000, jobStartedAt: NOW - 164_000,
-    filesTotal: 935, unitBytes: 13e9, priorMs: 720_000,
+    unit: "photos-2019",
+    target: "ext",
+    mode: "deep" as const,
+    done: 0,
+    total: 1,
+    bytesDone: 0,
+    bytesTotal: 13e9,
+    startedAt: NOW - 164_000,
+    jobStartedAt: NOW - 164_000,
+    filesTotal: 935,
+    unitBytes: 13e9,
+    priorMs: 720_000,
   };
   const NOTICE = "[d] ignored — the deep check on photos-2019 is still running";
 
   const render1 = (height: number, extra: Record<string, unknown>): string[] => {
     const { lastFrame } = render(
-      <Ledger rows={rows} selected={0} config={config} state={EMPTY_STATE} theme={THEMES.ansi}
-        width={92} height={height} now={NOW} busy={null} {...extra} />,
+      <Ledger
+        rows={rows}
+        selected={0}
+        config={config}
+        state={EMPTY_STATE}
+        theme={THEMES.ansi}
+        width={92}
+        height={height}
+        now={NOW}
+        busy={null}
+        {...extra}
+      />,
     );
     return (lastFrame() ?? "").split("\n");
   };
@@ -335,14 +366,26 @@ describe("a window too short for every row names what it could not draw", () => 
    * "interface knowing something the user does not" failure class.
    */
   const eightRows: Row[] = Array.from({ length: 8 }, (_, i) => ({
-    status: status(`folder-${i}`, "unchecked", [cell("ext", "unchecked"), cell("nas", "unchecked")]),
+    status: status(`folder-${i}`, "unchecked", [
+      cell("ext", "unchecked"),
+      cell("nas", "unchecked"),
+    ]),
     size: (i + 1) * 1024 ** 3,
   }));
 
   const render8 = (width: number): string[] => {
     const { lastFrame } = render(
-      <Ledger rows={eightRows} selected={0} config={config} state={EMPTY_STATE} theme={THEMES.ansi}
-        width={width} height={12} now={NOW} busy={null} />,
+      <Ledger
+        rows={eightRows}
+        selected={0}
+        config={config}
+        state={EMPTY_STATE}
+        theme={THEMES.ansi}
+        width={width}
+        height={12}
+        now={NOW}
+        busy={null}
+      />,
     );
     return plain(lastFrame() ?? "").split("\n");
   };
@@ -373,14 +416,33 @@ describe("the folder list shows which folder a check is on", () => {
    * without reading the footer.
    */
   const running = {
-    unit: "photos-2019", target: "nas", mode: "deep" as const, done: 1, total: 2,
-    bytesDone: 0, bytesTotal: 13e9, startedAt: NOW - 292_000, jobStartedAt: NOW - 292_000,
-    filesTotal: 900, unitBytes: 78e9, priorMs: 600_000,
+    unit: "photos-2019",
+    target: "nas",
+    mode: "deep" as const,
+    done: 1,
+    total: 2,
+    bytesDone: 0,
+    bytesTotal: 13e9,
+    startedAt: NOW - 292_000,
+    jobStartedAt: NOW - 292_000,
+    filesTotal: 900,
+    unitBytes: 78e9,
+    priorMs: 600_000,
   };
   const lines = (selected: number): string[] => {
     const { lastFrame } = render(
-      <Ledger rows={rows} selected={selected} config={config} state={EMPTY_STATE}
-        theme={THEMES.ansi} width={92} height={30} now={NOW} busy={null} running={running} />,
+      <Ledger
+        rows={rows}
+        selected={selected}
+        config={config}
+        state={EMPTY_STATE}
+        theme={THEMES.ansi}
+        width={92}
+        height={30}
+        now={NOW}
+        busy={null}
+        running={running}
+      />,
     );
     return plain(lastFrame() ?? "").split("\n");
   };
@@ -414,8 +476,17 @@ describe("the folder list shows which folder a check is on", () => {
 
   test("with nothing running no row claims to be", () => {
     const { lastFrame } = render(
-      <Ledger rows={rows} selected={0} config={config} state={EMPTY_STATE}
-        theme={THEMES.ansi} width={92} height={30} now={NOW} busy={null} />,
+      <Ledger
+        rows={rows}
+        selected={0}
+        config={config}
+        state={EMPTY_STATE}
+        theme={THEMES.ansi}
+        width={92}
+        height={30}
+        now={NOW}
+        busy={null}
+      />,
     );
     const out = plain(lastFrame() ?? "");
     expect(out).not.toContain("check running");

@@ -1,15 +1,15 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ConfigError, loadConfig, type Config } from "./config.ts";
+import { type Config, ConfigError, loadConfig } from "./config.ts";
 import { EMPTY_CONFIG } from "./configio.ts";
 import { fingerprint } from "./fingerprint.ts";
 import { bytes } from "./format.ts";
 import { configDir, configFile, stateDir, stateFile } from "./paths.ts";
-import { renderLedger, type LedgerRow } from "./render.ts";
+import { type LedgerRow, renderLedger } from "./render.ts";
 import { checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
 import { allReachability, checkUnit, listUnits } from "./scan.ts";
 import { writeSentinel } from "./sentinel.ts";
-import { appendHistory, loadState, saveState, upsertScan, type State } from "./state.ts";
+import { appendHistory, loadState, type State, saveState, upsertScan } from "./state.ts";
 import { evaluateUnit } from "./status.ts";
 import { startTui } from "./tui/index.tsx";
 
@@ -64,12 +64,17 @@ async function cmdStatus(config: Config): Promise<void> {
   process.stdout.write(renderLedger({ rows, selected: 0, config, state, now }) + "\n");
 }
 
-async function cmdCheck(config: Config, mode: "quick" | "deep", only: string | undefined): Promise<void> {
+async function cmdCheck(
+  config: Config,
+  mode: "quick" | "deep",
+  only: string | undefined,
+): Promise<void> {
   const build = await checkBuild(DEFAULT_RSYNC);
   if (!build.ok) fail(`rsync: ${build.detail}`);
 
   const units = listUnits(config.source).filter((u) => only === undefined || u === only);
-  if (units.length === 0) fail(only ? `no such unit: ${only}` : `no subfolders under ${config.source}`);
+  if (units.length === 0)
+    fail(only ? `no such unit: ${only}` : `no subfolders under ${config.source}`);
 
   const reach = await allReachability(config);
   let state = loadState();
@@ -83,7 +88,9 @@ async function cmdCheck(config: Config, mode: "quick" | "deep", only: string | u
         continue;
       }
       process.stdout.write(`  ${unit} → ${target.name}: ${mode}…`);
-      const { scan, argv, exitCode } = await checkUnit(config, unit, target, mode, { fingerprint: fp });
+      const { scan, argv, exitCode } = await checkUnit(config, unit, target, mode, {
+        fingerprint: fp,
+      });
       state = upsertScan(state, scan);
       saveState(state);
       appendHistory({
@@ -108,14 +115,20 @@ async function cmdCheck(config: Config, mode: "quick" | "deep", only: string | u
 
 async function cmdDoctor(config: Config): Promise<void> {
   const build = await checkBuild(DEFAULT_RSYNC);
-  process.stdout.write(`  rsync        ${build.ok ? "ok" : "FAIL"}   ${build.ok ? build.version + " at " + build.detail : build.detail}\n`);
-  process.stdout.write(`  source       ${existsSync(config.source) ? "ok" : "FAIL"}   ${config.source}\n`);
+  process.stdout.write(
+    `  rsync        ${build.ok ? "ok" : "FAIL"}   ${build.ok ? build.version + " at " + build.detail : build.detail}\n`,
+  );
+  process.stdout.write(
+    `  source       ${existsSync(config.source) ? "ok" : "FAIL"}   ${config.source}\n`,
+  );
   const reach = await allReachability(config);
   let mismatched = false;
   for (const t of config.targets) {
     const s = reach.get(t.name) ?? "unreachable";
     if (s === "mismatch") mismatched = true;
-    process.stdout.write(`  ${t.name.padEnd(12)} ${s === "ok" ? "ok" : "FAIL"}   ${t.path} (${s})\n`);
+    process.stdout.write(
+      `  ${t.name.padEnd(12)} ${s === "ok" ? "ok" : "FAIL"}   ${t.path} (${s})\n`,
+    );
   }
   if (mismatched) {
     process.stdout.write(

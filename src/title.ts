@@ -19,10 +19,7 @@ const ST = `${ESC}\\`;
  * Inside tmux an escape sequence must be wrapped in a passthrough or tmux
  * consumes it; screen uses its own form. Outside either, it goes as-is.
  */
-export function wrap(
-  sequence: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function wrap(sequence: string, env: NodeJS.ProcessEnv = process.env): string {
   const tmux = env["TMUX"];
   if (tmux !== undefined && tmux !== "") {
     // tmux passthrough: DCS tmux ; <sequence, with ESC doubled> ST
@@ -82,7 +79,11 @@ export function clearTitle(out: TitleTarget = process.stdout): void {
  * why the percentage leads while a check is running.
  */
 export function titleFor(state: {
-  readonly running?: { readonly mode: string; readonly unit: string; readonly percent?: number | null } | null;
+  readonly running?: {
+    readonly mode: string;
+    readonly unit: string;
+    readonly percent?: number | null;
+  } | null;
   readonly folders?: number;
   readonly verified?: number;
 }): string {

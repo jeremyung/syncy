@@ -44,7 +44,10 @@ export interface WriteSentinelOptions {
  * Returns the existing id untouched if the target already carries one, so
  * re-adding a target does not orphan the scans recorded against it.
  */
-export async function writeSentinel(root: string, opts: WriteSentinelOptions = {}): Promise<string> {
+export async function writeSentinel(
+  root: string,
+  opts: WriteSentinelOptions = {},
+): Promise<string> {
   const existing = readSentinel(root);
   if (existing !== null) return existing;
 
@@ -61,7 +64,9 @@ export async function writeSentinel(root: string, opts: WriteSentinelOptions = {
     const stderr = await new Response(proc.stderr).text();
     const code = await proc.exited;
     if (code !== 0) {
-      throw new Error(`could not write the sentinel to ${root}: ${stderr.trim() || `exit ${code}`}`);
+      throw new Error(
+        `could not write the sentinel to ${root}: ${stderr.trim() || `exit ${code}`}`,
+      );
     }
   } finally {
     removeStaging(staging);

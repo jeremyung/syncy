@@ -7,7 +7,7 @@ import { displayWidth, padEnd, padStart, truncate } from "../width.ts";
 import { Forklift, forkliftRows } from "./Forklift.tsx";
 import { Progress, progressLines, type RunProgress } from "./Progress.tsx";
 import { Shelf, verifiedPhrase } from "./Shelf.tsx";
-import { cellToken, unitToken, type Theme } from "./theme.ts";
+import { cellToken, type Theme, unitToken } from "./theme.ts";
 
 /**
  * Columns are padded with displayWidth, never with .length or Ink's flexbox.
@@ -117,10 +117,7 @@ export function Ledger(props: LedgerProps): React.ReactElement {
   // it, and then either the two progress lines plus any refusal notice, or the
   // single hint/busy line.
   const core =
-    2 +
-    (props.running != null
-      ? progressLines(props.running, props.now, props.notice != null)
-      : 1);
+    2 + (props.running != null ? progressLines(props.running, props.now, props.notice != null) : 1);
 
   // Shed in increasing order of importance. The legend is a reference; the
   // detail block restates one row; the mark is decoration; the column header
@@ -170,18 +167,19 @@ export function Ledger(props: LedgerProps): React.ReactElement {
       {/* The forklift sits left of the title and moves only while a check or a
           sync is running, so motion on this screen means work is happening. */}
       {!showMark ? null : (
-      <Box>
-        <Forklift theme={theme} frame={props.frame ?? 0} moving={props.running != null} />
-        <Box flexDirection="column">
-          <Box>
-            <Text color={theme.ink}>
-              {"    " + padEnd("syncy", width - 32 - displayWidth(forkliftRows(0, false)[0] ?? ""))}
-            </Text>
-            <Text color={theme.dim}>{`archive ledger · ${stamp(now).split(" · ")[0]}`}</Text>
+        <Box>
+          <Forklift theme={theme} frame={props.frame ?? 0} moving={props.running != null} />
+          <Box flexDirection="column">
+            <Box>
+              <Text color={theme.ink}>
+                {"    " +
+                  padEnd("syncy", width - 32 - displayWidth(forkliftRows(0, false)[0] ?? ""))}
+              </Text>
+              <Text color={theme.dim}>{`archive ledger · ${stamp(now).split(" · ")[0]}`}</Text>
+            </Box>
+            <Text> </Text>
           </Box>
-          <Text> </Text>
         </Box>
-      </Box>
       )}
       {/* Air between the mark and the table, so the header does not crowd it. */}
       {!showMark ? null : <Text> </Text>}
@@ -241,7 +239,8 @@ export function Ledger(props: LedgerProps): React.ReactElement {
                 );
               }
               const glyph = cell === undefined ? "?" : GLYPH[cell.state];
-              const suffix = cell !== undefined && cell.state === "behind" ? String(cell.nChanges) : "";
+              const suffix =
+                cell !== undefined && cell.state === "behind" ? String(cell.nChanges) : "";
               const token = cell === undefined ? "unchecked" : cellToken(cell.state);
               return (
                 <Text key={n} color={theme[token]}>
@@ -273,7 +272,8 @@ export function Ledger(props: LedgerProps): React.ReactElement {
           const deep = findScan(state, selectedRow.status.unit, t.name, "deep", identity);
           const last = latestScan(state, selectedRow.status.unit, t.name, identity);
           const extras = knownExtras(state, selectedRow.status.unit, t.name, identity)?.count;
-          const prefix = i === 0 ? padEnd(truncate(selectedRow.status.unit, 17), 18) : padEnd("", 18);
+          const prefix =
+            i === 0 ? padEnd(truncate(selectedRow.status.unit, 17), 18) : padEnd("", 18);
           return (
             <Box key={t.name}>
               <Text color={theme.ink}>{"  " + prefix}</Text>

@@ -6,6 +6,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  statSync,
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -97,7 +98,8 @@ function validateScan(raw: unknown): Scan | string {
   if (typeof bytesPending !== "number") return "bytesPending is not a number";
   if (typeof sentinel !== "string") return "sentinel is not a string";
 
-  if (typeof fingerprint !== "object" || fingerprint === null) return "fingerprint is not an object";
+  if (typeof fingerprint !== "object" || fingerprint === null)
+    return "fingerprint is not an object";
   const fp = fingerprint as Record<string, unknown>;
   const nfiles = fp["nfiles"];
   const bytes = fp["bytes"];
@@ -107,7 +109,8 @@ function validateScan(raw: unknown): Scan | string {
   if (typeof maxMtimeNs !== "string") return "fingerprint.maxMtimeNs is not a string";
 
   if (nNew !== undefined && typeof nNew !== "number") return "nNew is not a number";
-  if (durationMs !== undefined && typeof durationMs !== "number") return "durationMs is not a number";
+  if (durationMs !== undefined && typeof durationMs !== "number")
+    return "durationMs is not a number";
   if (log !== undefined && typeof log !== "string") return "log is not a string";
 
   return {
@@ -240,12 +243,18 @@ export function findScan(
   identity: string,
 ): Scan | undefined {
   return state.scans.find(
-    (s) => s.unit === unit && s.target === target && s.method === method && matchesIdentity(s, identity),
+    (s) =>
+      s.unit === unit && s.target === target && s.method === method && matchesIdentity(s, identity),
   );
 }
 
 /** The most recent check of either method, which drives the cheap clock. */
-export function latestScan(state: State, unit: string, target: string, identity: string): Scan | undefined {
+export function latestScan(
+  state: State,
+  unit: string,
+  target: string,
+  identity: string,
+): Scan | undefined {
   let best: Scan | undefined;
   for (const s of state.scans) {
     if (s.unit !== unit || s.target !== target) continue;
@@ -267,7 +276,44 @@ export interface HistoryEntry {
 /** Append-only, and separate from state so history writes can never endanger it. */
 export function appendHistory(entry: HistoryEntry, file: string = historyFile()): void {
   mkdirSync(dirname(file), { recursive: true });
+  rotateHistory(file);
   appendFileSync(file, JSON.stringify(entry) + "\n", "utf8");
+}
+
+/**
+ * Rotate at this size, keeping one previous file.
+ *
+ * The same discipline as the debug log: the plain-file format is the point —
+ * a record you can cat, grep and back up — and a single unbounded file
+ * eventually stops being that. Five megabytes is years of daily checks across
+ * a dozen folders and a couple of destinations, and still reads in one pass.
+ * The rotated file is `history.jsonl.1`; deleting it costs nothing, since it
+ * is a record of what ran, not of what is verified.
+ */
+export const MAX_HISTORY_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Rolls the history over when it gets large, keeping exactly one previous file.
+ *
+ * Checked before the append, against the size the file already has, so the
+ * cap is a floor rather than a ceiling: the entry that crosses 5 MB is
+ * written to the file that crossed it, and the *next* append is the one that
+ * rotates. Measuring the entry first to keep the file strictly under the cap
+ * would buy a stricter bound on a file whose whole point is that it is
+ * readable in one pass, at the cost of a size the caller has to compute
+ * twice.
+ */
+function rotateHistory(file: string): void {
+  try {
+    if (statSync(file).size < MAX_HISTORY_BYTES) return;
+  } catch {
+    return; // No file yet, nothing to rotate.
+  }
+  try {
+    renameSync(file, `${file}.1`);
+  } catch {
+    // A failed rotation must not stop the record being written.
+  }
 }
 
 /**
@@ -312,4 +358,51 @@ export function estimateMs(
   }
   if (sampleBytes <= 0 || sampleMs <= 0) return undefined;
   return Math.round((bytes * sampleMs) / sampleBytes);
+}
+
+/**
+ * When a sync of this unit last reached this destination.
+ *
+ * The differences screen needs it to say which side of the last sync a missing
+ * file falls on, which is the difference between an ordinary backlog and a file
+ * that should already be there.
+ *
+ * Read from the history rather than from `state.json`, because a scan records
+ * only checks: the scan records say when syncy last *looked*, and this has to
+ * answer when it last *copied*. Exit 24 counts alongside 0 for the same reason
+ * `checkUnit` treats it as success — files vanishing mid-run is routine on a
+ * live archive and does not mean nothing was transferred.
+ *
+ * Returns null when nothing has ever synced, which the view reports as such
+ * rather than dating everything from the epoch.
+ */
+export function lastSyncAt(
+  unit: string,
+  target: string,
+  file: string = historyFile(),
+): number | null {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return null; // Nothing has ever synced; the file is written on first run.
+  }
+  let best: number | null = null;
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue; // One torn line at the tail must not hide every sync before it.
+    }
+    if (typeof raw !== "object" || raw === null) continue;
+    const o = raw as Record<string, unknown>;
+    if (o["unit"] !== unit || o["target"] !== target) continue;
+    if (o["exitCode"] !== 0 && o["exitCode"] !== 24) continue;
+    const ts = o["ts"];
+    if (typeof ts !== "number" || !Number.isFinite(ts)) continue;
+    if (best === null || ts > best) best = ts;
+  }
+  return best;
 }

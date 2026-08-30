@@ -1,7 +1,7 @@
 import { existsSync, statfsSync } from "node:fs";
 import type { Config, Target } from "./config.ts";
-import { checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
 import { timed, timedAsync } from "./log.ts";
+import { checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
 import { targetReachability } from "./scan.ts";
 
 /**
@@ -89,9 +89,7 @@ export async function preflight(
 
   // Reachability is decided by the sentinel, never by the path existing: an
   // unmounted /Volumes/x is still a writable directory on the boot disk.
-  const reach = await timedAsync("preflight.reachability", 200, () =>
-    targetReachability(target),
-  );
+  const reach = await timedAsync("preflight.reachability", 200, () => targetReachability(target));
   checks.push({
     name: "volume",
     ok: reach === "ok",

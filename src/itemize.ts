@@ -1,8 +1,9 @@
 /**
- * Parser for rsync's --itemize-changes under --out-format='%i|%l|%n'.
+ * Parser for rsync's --itemize-changes under --out-format='%i|%l|%M|%n'.
  *
- * %i is the 11-character itemize string, %l the byte length, %n the name.
- * Deletions arrive as a literal `*deleting` in the %i field.
+ * %i is the 11-character itemize string, %l the byte length, %M the source
+ * file's modification time, %n the name. Deletions arrive as a literal
+ * `*deleting` in the %i field.
  */
 
 export type ItemKind = "change" | "metadata" | "same" | "extra";
@@ -12,6 +13,41 @@ export interface Item {
   readonly bytes: number;
   readonly name: string;
   readonly kind: ItemKind;
+  /**
+   * The source file's mtime in epoch milliseconds, or null when rsync reported
+   * none. Null for deletions, which describe a file that is not at the source
+   * at all and for which rsync prints the epoch.
+   */
+  readonly mtime: number | null;
+}
+
+/**
+ * rsync's %M, `YYYY/MM/DD-HH:MM:SS`, in the machine's own timezone — it prints
+ * local time and no offset, so it is read as local time.
+ *
+ * Shape-checked rather than handed to `Date.parse`, because the check is also
+ * what tells a real timestamp field apart from a filename fragment: names may
+ * contain the `|` delimiter (rsync does not escape it), so a three-field line
+ * and a four-field line whose name contains a pipe are otherwise identical.
+ */
+const MTIME = /^(\d{4})\/(\d{2})\/(\d{2})-(\d{2}):(\d{2}):(\d{2})$/;
+
+export function parseMtime(field: string): number | null {
+  const m = MTIME.exec(field.trim());
+  if (m === null) return null;
+  const ms = new Date(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5]),
+    Number(m[6]),
+  ).getTime();
+  // rsync prints the epoch for an item with no source file — every `*deleting`
+  // line carries it. A real archive holds nothing from before 1970, so
+  // treating that as "no timestamp" costs nothing and avoids dating an extra
+  // to the first second of 1970 on the age histogram.
+  return Number.isFinite(ms) && ms > 0 ? ms : null;
 }
 
 export interface Summary {
@@ -49,19 +85,26 @@ export function parseItemizeLine(line: string): Item | null {
   if (raw === "") return null;
 
   const first = raw.indexOf("|");
-  const last = raw.indexOf("|", first + 1);
-  if (first < 0 || last < 0) return null;
+  const second = raw.indexOf("|", first + 1);
+  if (first < 0 || second < 0) return null;
 
   const flags = raw.slice(0, first).trim();
-  const lenField = raw.slice(first + 1, last).trim();
-  const name = raw.slice(last + 1);
+  const lenField = raw.slice(first + 1, second).trim();
+
+  // The third field is the timestamp when it is shaped like one. Records
+  // written before %M was asked for have the name there instead, and a name is
+  // never shaped like a timestamp — so the shape decides, and an older log
+  // replays as an undated entry rather than as a parse failure.
+  const third = raw.indexOf("|", second + 1);
+  const mtime = third < 0 ? null : parseMtime(raw.slice(second + 1, third));
+  const name = mtime === null ? raw.slice(second + 1) : raw.slice(third + 1);
   if (name === "") return null;
 
   // `*deleting` means the file exists at the destination but not at the source.
   // Under --dry-run this is informational only; extras never endanger source
   // data and so never prevent a `verified` status (DESIGN.md §3).
   if (flags.startsWith("*deleting")) {
-    return { flags, bytes: 0, name, kind: "extra" };
+    return { flags, bytes: 0, name, kind: "extra", mtime };
   }
   const m = ITEMIZE.exec(flags);
   if (m === null) return null;
@@ -71,6 +114,7 @@ export function parseItemizeLine(line: string): Item | null {
     flags,
     bytes: Number.isFinite(bytes) ? bytes : 0,
     name,
+    mtime,
     // Column 1 of `.` means the item is not being updated. Under -vv rsync
     // emits one such line per file it has finished with, so the blank-flag
     // case is a progress tick rather than a difference: `.f         ` is

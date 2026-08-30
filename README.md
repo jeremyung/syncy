@@ -118,9 +118,9 @@ resume from it.
 These three, and nothing else:
 
 ```
-quick   -a -A -X -n -i -vv --out-format=%i|%l|%n --delete --exclude=… SRC/ DST/
-deep    -a -A -X -c -n -i -vv --out-format=%i|%l|%n         --exclude=… SRC/ DST/
-sync    -a -A -X -i --out-format=%i|%l|%n
+quick   -a -A -X -n -i -vv --out-format=%i|%l|%M|%n --delete --exclude=… SRC/ DST/
+deep    -a -A -X -c -n -i -vv --out-format=%i|%l|%M|%n         --exclude=… SRC/ DST/
+sync    -a -A -X -i --out-format=%i|%l|%M|%n
         --partial-dir=.syncy-partial                        --exclude=… SRC/ DST/
 ```
 
@@ -298,7 +298,7 @@ own palette.
 ## Development
 
 ```
-bun test               # 746 tests
+bun test               # 845 tests
 bunx tsc --noEmit
 bun run build
 bun run audit          # no machine-specific data in the tree or the history

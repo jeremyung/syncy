@@ -568,3 +568,47 @@ what this tool exists to detect, so it should not be the thing that creates one.
 
 Phase 1 alone already answers both original questions; phases 2–5 are ergonomics
 and packaging.
+
+## 10. Platforms — macOS and Linux
+
+macOS is the platform every constraint in §0 was measured on, and remains the
+reference. Linux support maps the same decisions onto the kernel's own
+interfaces, and assumes nothing new:
+
+| Concern | macOS | Linux |
+|---|---|---|
+| Mount table | `/sbin/mount` (BSD format, cached 1 s) | `/proc/mounts` — already in memory; no spawn, and no stall enumerating a dead share |
+| Volume identity | `diskutil` volume UUID | udev's `/dev/disk/by-uuid` (then `by-partuuid`), matched by resolving both sides to the same device node; sysfs `uuid` last, for the classes that publish their own (NVMe namespace, device-mapper). A filesystem uuid is in the superblock, never in `/sys` |
+| Local vs share | the kernel's `local` flag | network fstypes first, then `/dev/...` device versus pseudo-filesystem |
+| External vs internal | `diskutil` device location | `removable`, read from the device's *disk* — `/sys/class/block` holds partitions too, and the bit is published per disk — a loop device is `unknown`, not either: it backs a mounted image, not hardware, and the vocabulary has no word for images |
+| Capability probe | `xattr`, `chmod +a`, `ls -le` | `setfattr`/`getfattr`, `setfacl`/`getfacl`; a missing tool is reported as *unmeasurable* and drops the flag — the safe outcome, honestly labelled |
+| rsync | Homebrew and MacPorts only — never `/usr/bin`, which is openrsync | the distribution `/usr/bin/rsync`; `checkBuild` still refuses anything older than 3.x |
+| Clipboard | `/usr/bin/pbcopy` | first of `wl-copy`, `xclip`, `xsel`; absence is reported, not thrown |
+
+The two invariants do not move across platforms: reachability is decided by
+the destination proving it is itself, never by the path existing, and nothing
+lands in a target except through rsync.
+
+Keeping the first of those honest turns on a distinction macOS never had to
+draw. `identify` returns one of three things, and only two of them are names
+for a volume: a filesystem uuid, a network share's host and export, or — when
+the kernel publishes no uuid — the device path. `/dev/sdb1` is a slot in this
+boot's enumeration order, and a different disk in the same port answers to
+it, so it is not proof of anything. `diskutil` answers for essentially every
+local volume and udev for essentially every Linux one, which makes that
+fallback rare on both; rare is not never, and the fallback used to be
+accepted as proof outright.
+
+So reachability asks `identityIsProof` first. A uuid or a share name resolves
+on its own, as before. A device path is still checked — it catches the volume
+being unmounted — and then handed to the sentinel, whose answer is returned:
+the sentinel is the proof that survives the disk being swapped, which is why
+§2 calls it the most important one, and where one exists it should decide.
+
+With no sentinel to hand it to, the device path is accepted. That is the
+weakest branch and it is a deliberate one: refusing makes syncy unusable on a
+machine that publishes no uuid, and a tool that will not run is not safer
+than one that runs with a proof it has labelled as weak. Adding such a target
+says so on the line it prints, and `syncy sentinel` is the upgrade. What is
+not allowed is the old behaviour — treating it as equal to a uuid and never
+reading the sentinel at all.

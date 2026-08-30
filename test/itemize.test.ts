@@ -105,6 +105,13 @@ describe("summarize", () => {
   });
 
   test("an empty result is clean", () => {
-    expect(summarize([])).toEqual({ nChanges: 0, nNew: 0, nMetadata: 0, nSame: 0, nExtra: 0, bytesPending: 0 });
+    expect(summarize([])).toEqual({
+      nChanges: 0,
+      nNew: 0,
+      nMetadata: 0,
+      nSame: 0,
+      nExtra: 0,
+      bytesPending: 0,
+    });
   });
 });

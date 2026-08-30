@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
-import { render } from "ink-testing-library";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config } from "../src/config.ts";
-import { displayWidth } from "../src/width.ts";
+import { render } from "ink-testing-library";
+import { type Config, parseConfig } from "../src/config.ts";
 import { EMPTY_CONFIG } from "../src/configio.ts";
 import { configFile } from "../src/paths.ts";
 import { SENTINEL_NAME } from "../src/sentinel.ts";
 import { Setup } from "../src/tui/Setup.tsx";
 import { THEMES } from "../src/tui/theme.ts";
+import { displayWidth } from "../src/width.ts";
+import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
 
 /**
  * Drives the setup screen through simulated keystrokes. Ink's useInput needs a
@@ -236,7 +236,9 @@ describe("adding a target", () => {
     // asking the operating system which volume is mounted there.
     expect(existsSync(join(root, "dst", SENTINEL_NAME))).toBe(false);
     expect(target.identity).toBeTruthy();
-    expect(target.identityKind === "volume-uuid" || target.identityKind === "mount-source").toBe(true);
+    expect(target.identityKind === "volume-uuid" || target.identityKind === "mount-source").toBe(
+      true,
+    );
 
     // And it round-trips through the loader.
     const onDisk = parseConfig(readFileSync(configFile(), "utf8"));
@@ -273,27 +275,45 @@ describe("browsing volumes says what each one is", () => {
   test("a network share and a local disk are labelled differently", async () => {
     const { classify, describeVolume } = await import("../src/volume.ts");
     const share = {
-      device: "//you@nas.local/media", mountPoint: "/Volumes/media",
-      fstype: "smbfs", flags: ["nodev"], local: false,
+      device: "//you@nas.local/media",
+      mountPoint: "/Volumes/media",
+      fstype: "smbfs",
+      flags: ["nodev"],
+      local: false,
     };
     const disk = {
-      device: "/dev/disk5s1", mountPoint: "/Volumes/Archive",
-      fstype: "exfat", flags: ["local", "nodev"], local: true,
+      device: "/dev/disk5s1",
+      mountPoint: "/Volumes/Archive",
+      fstype: "exfat",
+      flags: ["local", "nodev"],
+      local: true,
     };
     expect(classify(share)).toBe("network");
     expect(classify(disk)).not.toBe("network");
-    expect(
-      describeVolume({ ...share, name: "media", kind: "network", free: null }),
-    ).toContain("//you@nas.local/media");
+    expect(describeVolume({ ...share, name: "media", kind: "network", free: null })).toContain(
+      "//you@nas.local/media",
+    );
   });
 
   test("the label names the server, which is the part that identifies it", async () => {
     // "network share" alone would not distinguish two shares on one host.
     const { describeVolume } = await import("../src/volume.ts");
-    const a = describeVolume({ mountPoint: "/Volumes/pics", name: "pics", kind: "network",
-      fstype: "smbfs", device: "//you@server.local/pics", free: null });
-    const b = describeVolume({ mountPoint: "/Volumes/scratch", name: "scratch", kind: "network",
-      fstype: "smbfs", device: "//you@server.local/scratch", free: null });
+    const a = describeVolume({
+      mountPoint: "/Volumes/pics",
+      name: "pics",
+      kind: "network",
+      fstype: "smbfs",
+      device: "//you@server.local/pics",
+      free: null,
+    });
+    const b = describeVolume({
+      mountPoint: "/Volumes/scratch",
+      name: "scratch",
+      kind: "network",
+      fstype: "smbfs",
+      device: "//you@server.local/scratch",
+      free: null,
+    });
     expect(a).not.toBe(b);
   });
 
@@ -303,7 +323,7 @@ describe("browsing volumes says what each one is", () => {
     await tick();
     s.stdin.write("a");
     await tick(100);
-    s.stdin.write("/Vol");  // enough to list, without naming a real volume
+    s.stdin.write("/Vol"); // enough to list, without naming a real volume
     await tick(500);
     for (const line of s.frame().split("\n")) {
       // The harness renders at 76 columns; the two-space gutter is the

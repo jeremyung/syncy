@@ -1,11 +1,23 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config, type Target } from "../src/config.ts";
-import { EMPTY_CONFIG, saveConfig, serializeConfig, withoutTarget, withTarget } from "../src/configio.ts";
-import { fstypeFor, mountEntryFor, modifyWindowFor, parseMount, type MountEntry } from "../src/fstype.ts";
+import { type Config, parseConfig, type Target } from "../src/config.ts";
+import {
+  EMPTY_CONFIG,
+  saveConfig,
+  serializeConfig,
+  withoutTarget,
+  withTarget,
+} from "../src/configio.ts";
+import {
+  fstypeFor,
+  type MountEntry,
+  modifyWindowFor,
+  mountEntryFor,
+  parseMount,
+} from "../src/fstype.ts";
 import { completions, resolveTarget, validateTargetPath } from "../src/tui/Setup.tsx";
+import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 let root: string;
 beforeEach(() => {
@@ -224,8 +236,12 @@ describe("filesystem detection", () => {
     expect(classify(byPath("/Volumes/Archive"))).toBe("internal"); // until diskutil says external
     expect(
       describeVolume({
-        mountPoint: "/Volumes/media", name: "media", kind: "network",
-        fstype: "smbfs", device: "//you@nas.local/media", free: null,
+        mountPoint: "/Volumes/media",
+        name: "media",
+        kind: "network",
+        fstype: "smbfs",
+        device: "//you@nas.local/media",
+        free: null,
       }),
     ).toBe("network · //you@nas.local/media");
   });
@@ -288,13 +304,22 @@ describe("filesystem detection", () => {
      */
     test("a trailing slash on the mount point does not change which entry wins", () => {
       const mk = (mountPoint: string, device: string): MountEntry => ({
-        device, mountPoint, fstype: device, flags: [], local: true,
+        device,
+        mountPoint,
+        fstype: device,
+        flags: [],
+        local: true,
       });
       const withSlash = [mk("/Volumes/Archive/", "outer"), mk("/Volumes/Archive/Nested", "inner")];
-      const withoutSlash = [mk("/Volumes/Archive", "outer"), mk("/Volumes/Archive/Nested", "inner")];
+      const withoutSlash = [
+        mk("/Volumes/Archive", "outer"),
+        mk("/Volumes/Archive/Nested", "inner"),
+      ];
       const path = "/Volumes/Archive/Nested/file.jpg";
       expect(mountEntryFor(path, withSlash)?.device).toBe("inner");
-      expect(mountEntryFor(path, withSlash)?.device).toBe(mountEntryFor(path, withoutSlash)?.device);
+      expect(mountEntryFor(path, withSlash)?.device).toBe(
+        mountEntryFor(path, withoutSlash)?.device,
+      );
     });
   });
 });

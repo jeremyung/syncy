@@ -1,10 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { PROJECT_ROOT } from "./helpers.ts";
-import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Fingerprint } from "../src/fingerprint.ts";
-import { appendHistory, EMPTY_STATE, findScan, latestScan, loadState, saveState, upsertScan, type Scan, estimateMs, type State } from "../src/state.ts";
+import {
+  appendHistory,
+  EMPTY_STATE,
+  estimateMs,
+  findScan,
+  latestScan,
+  loadState,
+  MAX_HISTORY_BYTES,
+  type Scan,
+  type State,
+  saveState,
+  upsertScan,
+} from "../src/state.ts";
+import { makeFixtureDir, PROJECT_ROOT, removeFixtureDir } from "./helpers.ts";
 
 const FP: Fingerprint = { nfiles: 1, bytes: 2, maxMtimeNs: "3" };
 
@@ -218,6 +229,23 @@ describe("history", () => {
     appendHistory({ ts: 1, unit: "u", target: "nas", argv, exitCode: 0 }, file);
     expect(JSON.parse(readFileSync(file, "utf8").trim()).argv).toEqual(argv);
   });
+
+  test("it rotates once it passes the cap, keeping one previous file", () => {
+    // The record is append-only by design; the rotation is what keeps
+    // append-only from growing without bound in a directory nobody watches.
+    const file = join(dir, "history.jsonl");
+    writeFileSync(file, "x".repeat(MAX_HISTORY_BYTES + 1));
+    appendHistory({ ts: 1, unit: "u", target: "nas", argv: ["-a"], exitCode: 0 }, file);
+    expect(existsSync(`${file}.1`), "previous history kept").toBe(true);
+    expect(readFileSync(file, "utf8")).toContain('"unit":"u"');
+    expect(statSync(file).size).toBeLessThan(MAX_HISTORY_BYTES);
+  });
+
+  test("a fresh history does not rotate", () => {
+    const file = join(dir, "history.jsonl");
+    appendHistory({ ts: 1, unit: "u", target: "nas", argv: ["-a"], exitCode: 0 }, file);
+    expect(existsSync(`${file}.1`)).toBe(false);
+  });
 });
 
 describe("estimating how long a check will take", () => {
@@ -228,9 +256,18 @@ describe("estimating how long a check will take", () => {
    */
   const fp = (bytes: number) => ({ nfiles: 900, bytes, maxMtimeNs: "1" });
   const scan = (over: Partial<Scan>): Scan => ({
-    unit: "u", target: "nas", ts: 0, method: "deep", outcome: "clean",
-    nChanges: 0, nExtra: 0, bytesPending: 0, fingerprint: fp(13e9), sentinel: "s",
-    durationMs: 720_000, ...over,
+    unit: "u",
+    target: "nas",
+    ts: 0,
+    method: "deep",
+    outcome: "clean",
+    nChanges: 0,
+    nExtra: 0,
+    bytesPending: 0,
+    fingerprint: fp(13e9),
+    sentinel: "s",
+    durationMs: 720_000,
+    ...over,
   });
   const st = (scans: Scan[]): State => ({ version: 1, scans });
 
@@ -253,13 +290,15 @@ describe("estimating how long a check will take", () => {
 
   test("a folder that was absent teaches nothing about read speed", () => {
     // It was never read, so its duration is not a throughput sample.
-    expect(estimateMs(st([scan({ outcome: "missing", durationMs: 40 })]), "nas", "deep", 13e9))
-      .toBeUndefined();
+    expect(
+      estimateMs(st([scan({ outcome: "missing", durationMs: 40 })]), "nas", "deep", 13e9),
+    ).toBeUndefined();
   });
 
   test("a failed check is not a sample either", () => {
-    expect(estimateMs(st([scan({ outcome: "error", durationMs: 40 })]), "nas", "deep", 13e9))
-      .toBeUndefined();
+    expect(
+      estimateMs(st([scan({ outcome: "error", durationMs: 40 })]), "nas", "deep", 13e9),
+    ).toBeUndefined();
   });
 
   test("records written before durations were tracked are skipped", () => {
@@ -269,7 +308,10 @@ describe("estimating how long a check will take", () => {
   });
 
   test("several samples pool into one rate", () => {
-    const s = st([scan({ unit: "a" }), scan({ unit: "b", fingerprint: fp(26e9), durationMs: 1_440_000 })]);
+    const s = st([
+      scan({ unit: "a" }),
+      scan({ unit: "b", fingerprint: fp(26e9), durationMs: 1_440_000 }),
+    ]);
     // 39 gb over 36 minutes; asking for 13 gb should return the same 12 minutes.
     expect(estimateMs(s, "nas", "deep", 13e9)).toBe(720_000);
   });

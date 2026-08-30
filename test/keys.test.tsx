@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
-import { render } from "ink-testing-library";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config } from "../src/config.ts";
+import { render } from "ink-testing-library";
+import { type Config, parseConfig } from "../src/config.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import { App } from "../src/tui/App.tsx";
+import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
 
 /**
  * Every key the interface advertises must actually do something.
@@ -88,7 +88,11 @@ describe("the help screen lists each key once", () => {
       (m) => m[1]!,
     );
     const seen = new Set<string>();
-    const dupes = listed.filter((k) => (seen.has(k) ? true : (seen.add(k), false)));
+    const dupes = listed.filter((k) => {
+      if (seen.has(k)) return true;
+      seen.add(k);
+      return false;
+    });
     expect(dupes, `duplicated in help: ${dupes.join(", ")}`).toEqual([]);
     s.unmount();
   });
@@ -280,10 +284,13 @@ describe("the debug log is readable", () => {
       const s = mount();
       await tick();
       await s.press("q");
-      await waitFor(() => existsSync(log) && /check\.(done|skipped)/.test(readFileSync(log, "utf8")), {
-        what: "the check to record itself",
-        timeout: 20_000,
-      });
+      await waitFor(
+        () => existsSync(log) && /check\.(done|skipped)/.test(readFileSync(log, "utf8")),
+        {
+          what: "the check to record itself",
+          timeout: 20_000,
+        },
+      );
       const text = readFileSync(log, "utf8");
       expect(text).toMatch(/check\.(start|skipped)/);
       s.unmount();

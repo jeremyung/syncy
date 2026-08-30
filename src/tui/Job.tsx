@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Config, Target } from "../config.ts";
 import { bytes, count } from "../format.ts";
 import { PARTIAL_DIR } from "../rsync.ts";
-import { startSync, type SyncHandle, type SyncResult } from "../sync.ts";
+import { type SyncHandle, type SyncResult, startSync } from "../sync.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
 import type { Theme } from "./theme.ts";
@@ -61,13 +61,22 @@ export function Job(props: JobProps): React.ReactElement {
     setNotice(text);
     noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS);
   }, []);
-  useEffect(() => () => {
-    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
+    },
+    [],
+  );
 
   // The log pane grows with the window rather than being capped at six lines.
   const tail = Math.max(4, (height ?? 24) - 14);
 
+  // The transfer's state (start, done, the flush timer) lives in this
+  // component's closure: depending on it would re-run this effect on every
+  // parent render, tearing down and rebuilding the flush and ticker intervals
+  // of a transfer that is already in flight. The job page owns the keyboard
+  // while it is up, so nothing that changes the sync can change mid-run.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   useEffect(() => {
     let live = true;
 
@@ -170,7 +179,9 @@ export function Job(props: JobProps): React.ReactElement {
               : `  failed · exit ${String(done.exitCode)}`}
         </Text>
         {done.stderr !== "" ? (
-          <Text color={theme.missing}>{"  " + truncate(done.stderr.split("\n")[0] ?? "", W - 2)}</Text>
+          <Text color={theme.missing}>
+            {"  " + truncate(done.stderr.split("\n")[0] ?? "", W - 2)}
+          </Text>
         ) : null}
         <Text> </Text>
         <Text color={theme.dim}>
