@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Config } from "../config.ts";
 import { buildDiff, saveDiff } from "../diff.ts";
 import type { Fingerprint } from "../fingerprint.ts";
@@ -8,6 +8,7 @@ import { appendHistory, estimateMs, type State, saveState, upsertScan } from "..
 import { reachWord } from "../status.ts";
 import type { Row } from "./Ledger.tsx";
 import type { RunProgress } from "./Progress.tsx";
+import { useTimers } from "./useTimers.ts";
 
 /**
  * Running a check: the state of the work itself, separated from the screens.
@@ -51,6 +52,23 @@ export interface Job {
 
 export function useJob(facts: JobFacts): Job {
   const [busy, setBusy] = useState<string | null>(null);
+  const timers = useTimers();
+
+  /**
+   * Tripped when the interface unmounts, calling off the work it started.
+   *
+   * The run below is a plain async loop with no connection to React's
+   * lifecycle, so quitting mid-run used to stop nothing: it finished the
+   * folder in flight and then spawned rsync for every remaining one, recording
+   * scans, history and diffs with nothing on screen. The alternate screen had
+   * already been handed back, so what you saw was your own shell, no prompt,
+   * and both disks working.
+   *
+   * The signal reaches Bun.spawn, so the child dies with the interface, and
+   * the loop reads it between jobs so the queue stops rather than draining.
+   */
+  const [quitting] = useState(() => new AbortController());
+  useEffect(() => () => quitting.abort(), [quitting]);
   /**
    * What is being checked right now.
    *
@@ -107,6 +125,9 @@ export function useJob(facts: JobFacts): Job {
     const skipped: { readonly target: string; readonly why: Reachability }[] = [];
 
     for (const job of jobs) {
+      // Nothing to report and nobody to report it to: the interface has
+      // unmounted, so the rest of the queue is work no one asked to keep.
+      if (quitting.signal.aborted) return;
       const status = reach.get(job.target.name);
       if (status !== "ok") {
         if (!skipped.some((s) => s.target === job.target.name)) {
@@ -159,6 +180,7 @@ export function useJob(facts: JobFacts): Job {
           job.target,
           mode,
           {
+            signal: quitting.signal,
             // Throttled: one render per 25 files keeps a large folder from
             // driving the render loop instead of the check.
             onFile: (seen) => {
@@ -166,6 +188,11 @@ export function useJob(facts: JobFacts): Job {
             },
           },
         );
+        // An abandoned check proved nothing. rsync was killed, so it exits
+        // non-zero and reads as `error` — a verdict about the quit, not about
+        // the folder. Recorded, it would leave the ledger claiming a check had
+        // failed on a folder nobody checked.
+        if (quitting.signal.aborted) return;
         const jobMs = Date.now() - jobStarted;
         debug("check.done", {
           mode,
@@ -208,6 +235,7 @@ export function useJob(facts: JobFacts): Job {
         facts.setState(working);
         facts.setNow(Date.now());
       } catch (e) {
+        if (quitting.signal.aborted) return;
         // Explicit catch at the subprocess boundary; a swallowed rejection
         // would leave the ledger showing stale state as if it were fresh.
         debug("check.failed", {
@@ -250,7 +278,7 @@ export function useJob(facts: JobFacts): Job {
     facts.setNow(Date.now());
     // A skip needs longer on screen than a success: it is the message the
     // user has to read and act on.
-    setTimeout(() => setBusy(null), skipped.length > 0 ? 8000 : 2500);
+    timers.later(() => setBusy(null), skipped.length > 0 ? 8000 : 2500);
   };
 
   return { running, busy, runCheck };

@@ -58,8 +58,13 @@ export const isNetwork = (fstype: string): boolean =>
  * must not do is answer for a *different* volume — which is why the key is the
  * device, not the path. Swap the disk and the device string changes, so the
  * lookup misses and diskutil runs again.
+ *
+ * The promise is cached, not the value it settles to. Reachability checks
+ * every destination at once, so with the value cached two destinations on one
+ * device both missed an empty cache and both spawned diskutil; the entry only
+ * appeared after the answers it was meant to save had already been paid for.
  */
-const uuidCache = new Map<string, string | null>();
+const uuidCache = new Map<string, Promise<string | null>>();
 
 /** Drops cached volume identities. For tests. */
 export function forgetVolumeUuids(): void {
@@ -238,9 +243,27 @@ export function volumeUuidLinux(
  * that must notice; a long cache would report a volume as present after it had
  * gone. One second is enough to collapse the calls within a single operation
  * and too short to outlive one.
+ *
+ * What is cached is the read, not its result. Caching the result only helped a
+ * caller that arrived after an earlier one had finished, and nothing calls this
+ * that way: `allReachability` checks every destination with `Promise.all`, so
+ * every destination missed the empty cache at the same instant and every one
+ * spawned its own `/sbin/mount`. Measured with three destinations: three
+ * spawns of the command this cache exists to run once. Holding the promise
+ * means the second and third arrivals wait on the first read instead.
  */
 const MOUNT_TABLE_TTL_MS = 1000;
-let mountCache: { readonly at: number; readonly entries: MountEntry[] } | null = null;
+
+/**
+ * `at` is when the read landed — the clock starts then, not when it was
+ * requested, or a table that took longer than the window to read would be
+ * stale before anyone could use it. A read still in flight is never stale.
+ */
+interface MountCache {
+  at: number;
+  readonly table: Promise<MountEntry[]>;
+}
+let mountCache: MountCache | null = null;
 
 /** Drops the cached table. For tests, and for anything that must not reuse it. */
 export function forgetMountTable(): void {
@@ -248,30 +271,38 @@ export function forgetMountTable(): void {
   uuidCache.clear();
 }
 
-async function mountTable(): Promise<MountEntry[]> {
-  const now = Date.now();
-  if (mountCache !== null && now - mountCache.at < MOUNT_TABLE_TTL_MS) return mountCache.entries;
-  let entries: MountEntry[] = [];
+async function readMountTable(): Promise<MountEntry[]> {
   if (IS_LINUX) {
     // /proc/mounts is the kernel's own table, already in memory: no spawn, and
     // no stall enumerating a dead share the way `mount` can.
-    try {
-      entries = parseProcMounts(readFileSync("/proc/mounts", "utf8"));
-    } catch {
-      entries = [];
-    }
-  } else {
-    try {
-      const proc = Bun.spawn(["/sbin/mount"], { stdout: "pipe", stderr: "pipe" });
-      const out = await new Response(proc.stdout).text();
-      await proc.exited;
-      entries = parseMount(out);
-    } catch {
-      entries = [];
-    }
+    return parseProcMounts(readFileSync("/proc/mounts", "utf8"));
   }
-  mountCache = { at: Date.now(), entries };
-  return entries;
+  const proc = Bun.spawn(["/sbin/mount"], { stdout: "pipe", stderr: "pipe" });
+  const out = await new Response(proc.stdout).text();
+  await proc.exited;
+  return parseMount(out);
+}
+
+function mountTable(): Promise<MountEntry[]> {
+  const hit = mountCache;
+  if (hit !== null && Date.now() - hit.at < MOUNT_TABLE_TTL_MS) return hit.table;
+  const entry: MountCache = {
+    at: Number.POSITIVE_INFINITY,
+    table: readMountTable().then(
+      (entries) => {
+        entry.at = Date.now();
+        return entries;
+      },
+      () => {
+        // A failed read is not cached: the next caller should try again rather
+        // than inherit an empty table, which reads as every volume unreachable.
+        if (mountCache === entry) mountCache = null;
+        return [];
+      },
+    ),
+  };
+  mountCache = entry;
+  return entry.table;
 }
 
 /**
@@ -301,12 +332,12 @@ export async function identify(
     return { id: entry.device, kind: "mount-source", mountPoint: entry.mountPoint, fstype };
   }
   const cacheKey = `${entry.device}\u0000${entry.mountPoint}`;
-  const uuid = uuidCache.has(cacheKey)
-    ? uuidCache.get(cacheKey)!
-    : await volumeUuid(entry).then((u) => {
-        uuidCache.set(cacheKey, u);
-        return u;
-      });
+  let pending = uuidCache.get(cacheKey);
+  if (pending === undefined) {
+    pending = volumeUuid(entry);
+    uuidCache.set(cacheKey, pending);
+  }
+  const uuid = await pending;
   return uuid === null
     ? { id: entry.device, kind: "mount-source", mountPoint: entry.mountPoint, fstype }
     : { id: uuid, kind: "volume-uuid", mountPoint: entry.mountPoint, fstype };

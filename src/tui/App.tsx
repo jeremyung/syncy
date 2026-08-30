@@ -25,6 +25,7 @@ import { cellToken, resolveTheme } from "./theme.ts";
 import { useJob } from "./useJob.ts";
 import { useKeys } from "./useKeys.ts";
 import { useScreen } from "./useScreen.ts";
+import { useTimers } from "./useTimers.ts";
 
 /**
  * The ledger: screens, selection and the composition of what each key does.
@@ -81,13 +82,17 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
    */
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timers = useTimers();
 
   /** Shows a refusal for a few seconds, replacing any refusal already up. */
-  const showNotice = useCallback((text: string) => {
-    if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
-    setNotice(text);
-    noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS);
-  }, []);
+  const showNotice = useCallback(
+    (text: string) => {
+      if (noticeTimer.current !== null) timers.cancel(noticeTimer.current);
+      setNotice(text);
+      noticeTimer.current = timers.later(() => setNotice(null), NOTICE_MS);
+    },
+    [timers],
+  );
   const [showPlan, setShowPlan] = useState(false);
   // Open straight into setup when there is nothing to show yet.
   const [showSetup, setShowSetup] = useState(() => initialConfig.targets.length === 0);
@@ -402,7 +407,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
             // rather than taking the app down.
             void copyToClipboard(text).then((message) => {
               setPlanStatus(message);
-              setTimeout(() => setPlanStatus(null), 1500);
+              timers.later(() => setPlanStatus(null), 1500);
             });
           }}
         />
