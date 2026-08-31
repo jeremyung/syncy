@@ -271,7 +271,23 @@ export function forgetMountTable(): void {
   uuidCache.clear();
 }
 
+let mountTableReadCount = 0;
+
+/**
+ * How many times the table has actually been read from the system.
+ *
+ * For the tests, which need to assert that the cache collapses a burst of
+ * callers into one read. Counting spawns cannot express that: only the macOS
+ * branch spawns anything, so a spawn count says 1 there and 0 on Linux for
+ * the same correct behaviour, and the assertion that held the cache honest
+ * was silently vacuous on the platform that reads a file instead.
+ */
+export function mountTableReads(): number {
+  return mountTableReadCount;
+}
+
 async function readMountTable(): Promise<MountEntry[]> {
+  mountTableReadCount++;
   if (IS_LINUX) {
     // /proc/mounts is the kernel's own table, already in memory: no spawn, and
     // no stall enumerating a dead share the way `mount` can.
