@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { render } from "ink-testing-library";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseConfig, type Config } from "../src/config.ts";
+import { render } from "ink-testing-library";
+import { type Config, parseConfig } from "../src/config.ts";
 import { configFile, stateFile } from "../src/paths.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { checkUnit } from "../src/scan.ts";
@@ -55,7 +55,8 @@ beforeEach(async () => {
   for (let u = 0; u < UNITS; u++) {
     const dir = join(src, `photos-${2019 + u}`);
     mkdirSync(dir, { recursive: true });
-    for (let f = 0; f < FILES_PER_UNIT; f++) writeFileSync(join(dir, `f${f}.jpg`), `frame-${u}-${f}`);
+    for (let f = 0; f < FILES_PER_UNIT; f++)
+      writeFileSync(join(dir, `f${f}.jpg`), `frame-${u}-${f}`);
   }
   mkdirSync(dst, { recursive: true });
   // Replicated, so a check spawns rsync rather than reporting `missing` and
@@ -156,7 +157,10 @@ describeRsync("quitting stops the run it started", () => {
     // have finished several times over had anything still been driving it.
     await settle(2_000);
     const scans = loadState().scans.length;
-    expect(scans, `the queue drained after the interface was gone: ${scans} of ${UNITS}`).toBeLessThan(UNITS);
+    expect(
+      scans,
+      `the queue drained after the interface was gone: ${scans} of ${UNITS}`,
+    ).toBeLessThan(UNITS);
   }, 60_000);
 });
 
@@ -172,16 +176,19 @@ describeRsync("quitting ends the process", () => {
    */
   /** Runs the harness to the given quit point and reports how long the process outlived it. */
   async function lingerAfterQuitting(when: "mid-run" | "after-run"): Promise<number> {
-    const proc = Bun.spawn(["bun", "run", join(PROJECT_ROOT, "test", "teardown-harness.tsx"), when], {
-      cwd: PROJECT_ROOT,
-      env: {
-        ...process.env,
-        XDG_CONFIG_HOME: join(root, "cfg"),
-        XDG_STATE_HOME: join(root, "state"),
+    const proc = Bun.spawn(
+      ["bun", "run", join(PROJECT_ROOT, "test", "teardown-harness.tsx"), when],
+      {
+        cwd: PROJECT_ROOT,
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: join(root, "cfg"),
+          XDG_STATE_HOME: join(root, "state"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
       },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    );
     const [out, err] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -190,7 +197,9 @@ describeRsync("quitting ends the process", () => {
     const ended = Date.now();
 
     const unmountedAt = Number(/UNMOUNTED (\d+)/.exec(out)?.[1]);
-    expect(unmountedAt, `the harness never reached the unmount:\n${out}\n${err}`).toBeGreaterThan(0);
+    expect(unmountedAt, `the harness never reached the unmount:\n${out}\n${err}`).toBeGreaterThan(
+      0,
+    );
     return ended - unmountedAt;
   }
 

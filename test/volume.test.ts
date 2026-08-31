@@ -32,7 +32,8 @@ async function spawns(fn: () => Promise<unknown>): Promise<string[]> {
   return seen;
 }
 
-const count = (seen: readonly string[], bin: string): number => seen.filter((s) => s === bin).length;
+const count = (seen: readonly string[], bin: string): number =>
+  seen.filter((s) => s === bin).length;
 
 const MOUNT = "/sbin/mount";
 const DISKUTIL = "/usr/sbin/diskutil";
