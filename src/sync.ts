@@ -4,7 +4,7 @@ import { type Config, canonicalPath, containmentError, type Target } from "./con
 import { type Item, parseItemizeLine } from "./itemize.ts";
 import { debug } from "./log.ts";
 import { argvFor, assertDeleteIsDryRun, DEFAULT_RSYNC, RsyncError } from "./rsync.ts";
-import { ensureLogDir } from "./scan.ts";
+import { ensureLogDir, targetReachabilitySync } from "./scan.ts";
 import { appendHistory } from "./state.ts";
 
 /**
@@ -113,7 +113,18 @@ export function startSync(
   // as far as spawning if the invariant is broken.
   assertDeleteIsDryRun(argv);
 
+  // Confirmation can sit on screen while a drive is unplugged or replaced.
+  // This is deliberately uncached and immediately before the only spawn that
+  // can write to a destination; the ledger's earlier reachability result is
+  // only a display hint, never permission to write.
   assertRuntimeContainment(config, target);
+  const reach = targetReachabilitySync(target);
+  if (reach !== "ok") {
+    throw new RsyncError(
+      `refusing to sync: destination ${target.name} is ${reach} — refusing to write to ${target.path}`,
+    );
+  }
+
   const logPath = opts.logPath ?? syncLogPath(unit, target.name, now);
   assertLogPath(logPath);
   appendHistory({ ts: now, unit, target: target.name, argv, exitCode: null, log: logPath });

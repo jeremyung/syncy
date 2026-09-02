@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Config, parseConfig, type Target } from "../src/config.ts";
+import { MAX_ENTRIES } from "../src/diff.ts";
 import { checkUnit } from "../src/scan.ts";
 import { appendHistory } from "../src/state.ts";
+import { SENTINEL_NAME } from "../src/sentinel.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
@@ -51,6 +53,7 @@ function setUpUnit(config: Config): Target {
   mkdirSync(join(config.source, "photos"), { recursive: true });
   const target = config.targets[0]!;
   mkdirSync(join(target.path, "photos"), { recursive: true });
+  writeFileSync(join(target.path, SENTINEL_NAME), `${target.sentinel}\n`);
   return target;
 }
 
@@ -128,5 +131,22 @@ describe("exit 24 — files vanished mid-walk — is not an error", () => {
     });
     expect(scan.outcome).toBe("behind");
     expect(scan.nChanges).toBe(1);
+  });
+});
+
+describe("itemize output is accumulated with bounded memory", () => {
+  test("retains only the display cap while keeping exact totals", async () => {
+    const config = makeConfig();
+    const target = setUpUnit(config);
+    const total = MAX_ENTRIES + 250;
+    const lines = Array.from({ length: total }, (_, i) => `>f+++++++++|1|file-${i}.txt`);
+    const result = await checkUnit(config, "photos", target, "quick", {
+      bin: fakeRsync(0, lines),
+    });
+    expect(result.diff.entries).toHaveLength(MAX_ENTRIES);
+    expect(result.diff.truncated).toBe(250);
+    expect(result.diff.totals?.new).toBe(total);
+    expect(result.scan.nChanges).toBe(total);
+    expect(result).not.toHaveProperty("items");
   });
 });

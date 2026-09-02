@@ -412,6 +412,12 @@ launch when the sentinel is missing or mismatched, when free space is under
 row reads `no · this writes to the target` on a real sync — stated, never
 implied.
 
+The preflight shown on the confirm page is a user-facing snapshot, not write
+permission. The executor asks the OS for the destination's current identity
+again, without the status mount-table cache, immediately before spawning the
+only process that can write. A drive removed or replaced while the page is
+open therefore refuses at the write boundary too.
+
 A folder can be behind on more than one destination, and `s` names only one of
 them. The confirm page lists the others with what each is behind by, and `tab`
 moves between them — the counts, the checks and the argv all re-derive. The
