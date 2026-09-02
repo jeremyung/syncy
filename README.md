@@ -174,6 +174,9 @@ Keys: `enter` differences, `q` quick check, `d` deep verify, `s` sync,
 `p` commands, `e` evidence, `f` filter, `,` setup, `?` all keys, `ctrl-c` quit
 (during a transfer the first press cancels it; a second quits).
 Hold shift to run a check against every folder rather than the selected one.
+`s` offers the first destination the folder is behind on; `tab` on the confirm
+page moves between the others, re-deriving the counts, the checks and the
+command for each.
 
 syncy sets the terminal window and tab title, so a check running in a background
 window can be read from the tab strip: `50% deep 19-01-01 - 2019 · syncy` while
