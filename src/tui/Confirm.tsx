@@ -232,7 +232,12 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
           // Named, with their own figures, rather than a bare "2 others": the
           // point of showing them is to make the choice between them, and
           // "NAS · 143 files" is what that choice is made on.
-          <Text color={theme.dim}>{truncate(`   also behind: ${others}`, Math.max(10, W - unit.length - target.name.length - 12))}</Text>
+          <Text color={theme.dim}>
+            {truncate(
+              `   also behind: ${others}`,
+              Math.max(10, W - unit.length - target.name.length - 12),
+            )}
+          </Text>
         )}
       </Box>
       <Rule width={W} theme={theme} />

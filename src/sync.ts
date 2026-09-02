@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import { canonicalPath, containmentError, type Config, type Target } from "./config.ts";
+import { type Config, canonicalPath, containmentError, type Target } from "./config.ts";
 import { type Item, parseItemizeLine } from "./itemize.ts";
 import { debug } from "./log.ts";
 import { argvFor, assertDeleteIsDryRun, DEFAULT_RSYNC, RsyncError } from "./rsync.ts";

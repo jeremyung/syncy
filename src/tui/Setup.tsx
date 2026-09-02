@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { canonicalPath, containmentError, type Config, type Target } from "../config.ts";
+import { type Config, canonicalPath, containmentError, type Target } from "../config.ts";
 import { saveConfig, withoutTarget, withTarget } from "../configio.ts";
 import { bytes } from "../format.ts";
 import { type MountEntry, modifyWindowFor } from "../fstype.ts";

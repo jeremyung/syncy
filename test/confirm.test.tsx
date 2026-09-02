@@ -58,7 +58,11 @@ const target = (): Target => config.targets[0]!;
 
 function mountConfirm(
   bytesPending = 7,
-  over: { readonly nChanges?: number; readonly nNew?: number; readonly needsChecksum?: boolean } = {},
+  over: {
+    readonly nChanges?: number;
+    readonly nNew?: number;
+    readonly needsChecksum?: boolean;
+  } = {},
 ) {
   let ran = false;
   let cancelled = false;
