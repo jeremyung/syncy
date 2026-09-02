@@ -149,8 +149,11 @@ This is enforced, not documented: a test reads every file under `src/` and fails
 on any direct filesystem write outside a short allow list of modules that own
 syncy's own directories.
 
-**Source fingerprint** — `(nfiles, total_bytes, max_mtime_ns)` from a
-synchronous `opendirSync` walk of the unit. Metadata-only, ~2 s per 100k files.
+**Source fingerprint** — the legacy counters `(nfiles, total_bytes,
+max_mtime_ns)` plus a SHA-256 digest of a deterministic, sorted stream of each
+relative path's type, size and mtime (including symlinks), from a synchronous
+`opendirSync` walk of the unit. Metadata-only, ~2 s per 100k files. A walk that
+cannot read every entry is marked incomplete and is never accepted as evidence.
 Stored with every scan so a later run can ask *"has the source changed since I
 verified this?"* without touching the destination at all. This is what makes a
 stale verify detectable while the NAS is offline.

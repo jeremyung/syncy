@@ -1,7 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  opendirSync,
+  readlinkSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
-import { EMPTY, fingerprint, matchesAny, sameFingerprint } from "../src/fingerprint.ts";
+import {
+  EMPTY,
+  fingerprint,
+  matchesAny,
+  sameFingerprint,
+  type FingerprintIo,
+} from "../src/fingerprint.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 let dir: string;
@@ -83,6 +97,59 @@ describe("fingerprint", () => {
     const fp = fingerprint(dir);
     expect(typeof fp.maxMtimeNs).toBe("string");
     expect(BigInt(fp.maxMtimeNs) > 0n).toBe(true);
+  });
+
+  test("distinguishes different paths with the same legacy tuple", () => {
+    const first = write("first/a.txt", "x");
+    const second = write("second/b.txt", "x");
+    const fixed = new Date(Date.now() + 60_000);
+    utimesSync(first, fixed, fixed);
+    utimesSync(second, fixed, fixed);
+    utimesSync(join(dir, "first"), fixed, fixed);
+    utimesSync(join(dir, "second"), fixed, fixed);
+    const a = fingerprint(join(dir, "first"));
+    const b = fingerprint(join(dir, "second"));
+    expect([a.nfiles, a.bytes, a.maxMtimeNs]).toEqual([b.nfiles, b.bytes, b.maxMtimeNs]);
+    expect(a.digest).not.toBe(b.digest);
+    expect(sameFingerprint(a, b)).toBe(false);
+  });
+
+  test("includes symlinks in the tree evidence", () => {
+    write("with/target.txt", "x");
+    symlinkSync("target.txt", join(dir, "with/link"));
+    write("without/target.txt", "x");
+    const fixed = new Date(Date.now() + 60_000);
+    utimesSync(join(dir, "with/target.txt"), fixed, fixed);
+    utimesSync(join(dir, "without/target.txt"), fixed, fixed);
+    utimesSync(join(dir, "with"), fixed, fixed);
+    utimesSync(join(dir, "without"), fixed, fixed);
+    const withLink = fingerprint(join(dir, "with"));
+    const withoutLink = fingerprint(join(dir, "without"));
+    expect(withLink.nfiles).toBe(withoutLink.nfiles);
+    expect(withLink.bytes).toBe(withoutLink.bytes);
+    expect(sameFingerprint(withLink, withoutLink)).toBe(false);
+  });
+
+  test("an incomplete walk can never count as unchanged evidence", () => {
+    const good = fingerprint(dir);
+    expect(sameFingerprint({ ...good, complete: false }, good)).toBe(false);
+  });
+
+  test("an unreadable directory is marked incomplete through the filesystem seam", () => {
+    write("visible.txt", "x");
+    write("blocked/hidden.txt", "y");
+    const io: FingerprintIo = {
+      lstat: (path) => lstatSync(path, { bigint: true }),
+      open: (path) => {
+        if (path === join(dir, "blocked")) throw new Error("simulated read failure");
+        return opendirSync(path);
+      },
+      readlink: (path) => readlinkSync(path),
+    };
+    const incomplete = fingerprint(dir, [], io);
+    expect(incomplete.complete).toBe(false);
+    expect(incomplete.nfiles).toBe(1);
+    expect(sameFingerprint(incomplete, fingerprint(dir))).toBe(false);
   });
 });
 
