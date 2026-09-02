@@ -11,10 +11,10 @@ import {
 import { join } from "node:path";
 import {
   EMPTY,
+  type FingerprintIo,
   fingerprint,
   matchesAny,
   sameFingerprint,
-  type FingerprintIo,
 } from "../src/fingerprint.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
