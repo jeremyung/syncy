@@ -22,6 +22,8 @@ export interface ConfirmProps {
   readonly unit: string;
   readonly target: Target;
   readonly nChanges: number;
+  /** Of `nChanges`, the ones not at the destination at all. */
+  readonly nNew?: number;
   readonly nExtra: number;
   readonly bytesPending: number;
   /** Repair mode: the drift was found by checksum, so the sync needs -c. */
@@ -31,6 +33,26 @@ export interface ConfirmProps {
   readonly height?: number;
   readonly onRun: () => void;
   readonly onCancel: () => void;
+}
+
+/**
+ * New versus replaced, which "504 files" on its own cannot say.
+ *
+ * A creation adds to the destination; a replacement overwrites bytes that are
+ * already there. Only the second is worth pausing over, and the page was
+ * asking for a decision without separating them — under a repair-mode heading
+ * that says "the only way to replace them" above a transfer that replaces
+ * nothing.
+ *
+ * Returns null for checks written before `nNew` was tracked: no breakdown is
+ * better than an invented one, the same rule `behindReason` follows.
+ */
+export function replaceLine(nChanges: number, nNew: number | undefined): string | null {
+  if (nNew === undefined) return null;
+  const nOld = nChanges - nNew;
+  if (nOld <= 0) return `nothing — all ${count(nChanges)} are new at the destination`;
+  if (nNew <= 0) return `all ${count(nChanges)} — every one is already there and differs`;
+  return `${count(nOld)} of them · the other ${count(nNew)} are new at the destination`;
 }
 
 export function Confirm(props: ConfirmProps): React.ReactElement {
@@ -115,10 +137,16 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
       <Rule width={W} theme={theme} />
 
       {row("will transfer", `${count(props.nChanges)} files · ${bytes(props.bytesPending)}`)}
+      {(() => {
+        const line = replaceLine(props.nChanges, props.nNew);
+        return line === null ? null : row("will replace", line);
+      })()}
       {props.needsChecksum === true
         ? row(
             "repair mode",
-            "these differ by content, so this compares by checksum — slower, and the only way to replace them",
+            // The count only when the check recorded one; older records keep
+            // the bare wording rather than reporting every change as content.
+            `${props.nNew === undefined ? "these" : count(props.nChanges - props.nNew)} differ by content, so this compares by checksum — slower, and the only way to replace them`,
             theme.unverified,
           )
         : null}

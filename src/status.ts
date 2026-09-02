@@ -41,14 +41,30 @@ export interface Cell {
   readonly state: CellState;
   readonly reason: string;
   readonly nChanges: number;
+  /**
+   * Of `nChanges`, the ones that are not at the destination at all.
+   *
+   * Absent on records written before it was tracked, which the views report as
+   * no breakdown rather than as a guess. `nChanges - nNew` is what a sync
+   * overwrites, and the two carry very different weight: one is a backlog, the
+   * other replaces bytes that are already there.
+   */
+  readonly nNew?: number;
   readonly bytesPending: number;
   readonly nExtra: number;
   /**
-   * The drift was found by a deep verify, so a plain sync will not fix it.
+   * A deep verify found files whose content differs, so a plain sync will not
+   * fix them.
    *
    * Bit rot leaves size and mtime intact, so rsync's default quick check skips
    * exactly the file that needs replacing. Syncing such a folder without `-c`
    * reports success and changes nothing.
+   *
+   * Set from what the check *found*, not from the method alone. A deep verify
+   * whose 504 differences are all creations needs no `-c`: rsync copies a file
+   * that is not there whatever it compares by, so the flag only bought hours
+   * of re-reading the source, under a heading that said those files differ by
+   * content when none of them did.
    */
   readonly needsChecksum?: boolean;
 }
@@ -222,11 +238,16 @@ export function cellState(input: CellInput): Cell {
       state: "missing",
       reason: "never copied",
       nChanges: input.fingerprintNow.nfiles,
+      // Nothing is at the destination, so every file is a creation.
+      nNew: input.fingerprintNow.nfiles,
       bytesPending: input.fingerprintNow.bytes,
     };
   }
   if (latest.outcome === "behind") {
-    const byChecksum = latest.method === "deep";
+    // Records predating `nNew` carry no breakdown, so they keep the older,
+    // conservative reading: method alone.
+    const byChecksum =
+      latest.method === "deep" && (latest.nNew === undefined || latest.nNew < latest.nChanges);
     return {
       ...extra,
       state: "behind",
@@ -237,6 +258,7 @@ export function cellState(input: CellInput): Cell {
       // this does too.
       reason: behindReason(latest),
       nChanges: latest.nChanges,
+      ...(latest.nNew !== undefined ? { nNew: latest.nNew } : {}),
       bytesPending: latest.bytesPending,
       ...(byChecksum ? { needsChecksum: true } : {}),
     };

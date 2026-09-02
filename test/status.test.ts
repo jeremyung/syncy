@@ -105,6 +105,47 @@ describe("cell state ladder", () => {
     expect(c.reason).toBe("143 files pending");
   });
 
+  test("behind carries the new/replaced breakdown when the check recorded one", () => {
+    const s = scan({ outcome: "behind", method: "deep", nChanges: 504, nNew: 492 });
+    expect(cell({ latest: s, deep: s }).nNew).toBe(492);
+  });
+
+  test("a deep verify whose differences are all creations needs no checksum sync", () => {
+    // The screenshot case: 504 files absent from the destination, found by a
+    // deep verify. rsync copies a file that is not there whatever it compares
+    // by, so `-c` buys nothing and the confirm page must not announce that
+    // these differ by content.
+    const s = scan({ outcome: "behind", method: "deep", nChanges: 504, nNew: 504 });
+    const c = cell({ latest: s, deep: s });
+    expect(c.needsChecksum).toBeUndefined();
+    expect(c.reason).toBe("504 files not copied yet");
+  });
+
+  test("a deep verify with any content drift still needs a checksum sync", () => {
+    const s = scan({ outcome: "behind", method: "deep", nChanges: 504, nNew: 503 });
+    expect(cell({ latest: s, deep: s }).needsChecksum).toBe(true);
+  });
+
+  test("a record with no breakdown keeps the conservative reading", () => {
+    // nNew predates the field, so the method is the only evidence there is.
+    const s = scan({ outcome: "behind", method: "deep", nChanges: 504 });
+    const c = cell({ latest: s, deep: s });
+    expect(c.needsChecksum).toBe(true);
+    expect(c.nNew).toBeUndefined();
+  });
+
+  test("a quick check never asks for a checksum sync", () => {
+    const s = scan({ outcome: "behind", method: "quick", nChanges: 5, nNew: 0 });
+    expect(cell({ latest: s, quick: s }).needsChecksum).toBeUndefined();
+  });
+
+  test("missing counts every file as new, since nothing is there to replace", () => {
+    const s = scan({ outcome: "missing", method: "quick" });
+    const c = cell({ latest: s, quick: s });
+    expect(c.nNew).toBe(FP.nfiles);
+    expect(c.nChanges).toBe(FP.nfiles);
+  });
+
   test("error surfaces rather than being swallowed as unknown", () => {
     const s = scan({ outcome: "error", method: "quick" });
     expect(cell({ latest: s, quick: s }).state).toBe("error");

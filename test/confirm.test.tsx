@@ -7,7 +7,7 @@ import { freeBytes } from "../src/guards.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import { App } from "../src/tui/App.tsx";
-import { Confirm } from "../src/tui/Confirm.tsx";
+import { Confirm, replaceLine } from "../src/tui/Confirm.tsx";
 import { Job } from "../src/tui/Job.tsx";
 import { THEMES } from "../src/tui/theme.ts";
 import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
@@ -56,7 +56,10 @@ afterEach(() => {
 
 const target = (): Target => config.targets[0]!;
 
-function mountConfirm(bytesPending = 7) {
+function mountConfirm(
+  bytesPending = 7,
+  over: { readonly nChanges?: number; readonly nNew?: number; readonly needsChecksum?: boolean } = {},
+) {
   let ran = false;
   let cancelled = false;
   const r = render(
@@ -64,7 +67,9 @@ function mountConfirm(bytesPending = 7) {
       config={config}
       unit="photos-2019"
       target={target()}
-      nChanges={2}
+      nChanges={over.nChanges ?? 2}
+      {...(over.nNew === undefined ? {} : { nNew: over.nNew })}
+      {...(over.needsChecksum === undefined ? {} : { needsChecksum: over.needsChecksum })}
       nExtra={3}
       bytesPending={bytesPending}
       theme={THEMES.ansi}
@@ -161,6 +166,48 @@ describeRsync("the confirm page refuses to launch when a check fails", () => {
     const s = mountConfirm();
     s.stdin.write(ENTER);
     expect(s.ran()).toBe(false);
+  });
+});
+
+describe("new versus replaced", () => {
+  test("says nothing is replaced when every file is a creation", () => {
+    expect(replaceLine(504, 504)).toBe("nothing — all 504 are new at the destination");
+  });
+
+  test("says all of them when every file is already there", () => {
+    expect(replaceLine(12, 0)).toBe("all 12 — every one is already there and differs");
+  });
+
+  test("splits a mixed transfer both ways", () => {
+    expect(replaceLine(504, 492)).toBe("12 of them · the other 492 are new at the destination");
+  });
+
+  test("offers no breakdown for a check written before nNew was tracked", () => {
+    expect(replaceLine(504, undefined)).toBeNull();
+  });
+});
+
+describeRsync("the confirm page separates creations from replacements", () => {
+  test("shows the split beside the transfer total", async () => {
+    const s = mountConfirm(7, { nChanges: 504, nNew: 492 });
+    await settle();
+    expect(s.frame()).toContain("will replace");
+    expect(s.frame()).toContain("12 of them");
+  });
+
+  test("omits the row entirely when there is no breakdown to show", async () => {
+    const s = mountConfirm();
+    await settle();
+    expect(s.frame()).not.toContain("will replace");
+  });
+
+  test("repair mode counts the files that actually differ", async () => {
+    // Not `nChanges`: announcing 504 files as differing by content, when 492
+    // of them are simply not there yet, is the reading this page had.
+    const s = mountConfirm(7, { nChanges: 504, nNew: 492, needsChecksum: true });
+    await settle();
+    expect(s.frame()).toContain("12 differ by content");
+    expect(s.frame()).not.toContain("504 differ by content");
   });
 });
 

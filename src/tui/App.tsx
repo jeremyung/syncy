@@ -340,6 +340,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
         unit={pendingSync.unit}
         target={syncTarget}
         nChanges={syncCell?.nChanges ?? 0}
+        {...(syncCell?.nNew === undefined ? {} : { nNew: syncCell.nNew })}
         nExtra={syncCell?.nExtra ?? 0}
         bytesPending={syncCell?.bytesPending ?? 0}
         {...(syncCell?.needsChecksum === true ? { needsChecksum: true } : {})}
