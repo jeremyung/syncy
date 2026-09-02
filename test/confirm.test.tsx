@@ -211,6 +211,49 @@ describeRsync("the confirm page separates creations from replacements", () => {
   });
 });
 
+describeRsync("the argv is shown in words, not only in flags", () => {
+  test("glosses the flags under the command", async () => {
+    const s = mountConfirm();
+    await settle();
+    expect(s.frame()).toContain("-a");
+    expect(s.frame()).toContain("recurse; keep times, permissions");
+    // Truncated to the column at this width, which is the point of the column.
+    expect(s.frame()).toContain("an interrupted file parks under");
+  });
+
+  test("still shows the literal argv, which is what actually runs", async () => {
+    const s = mountConfirm();
+    await settle();
+    expect(s.frame()).toContain("--partial-dir=.syncy-partial");
+  });
+
+  test("drops the legend rather than the checks on a window with no room", async () => {
+    // 26 rows fits the page and not the legend. Ink clips instead of
+    // scrolling, and what it clips is the top — the unit being synced.
+    const r = render(
+      <Confirm
+        config={config}
+        unit="photos-2019"
+        target={target()}
+        nChanges={2}
+        nExtra={3}
+        bytesPending={7}
+        theme={THEMES.ansi}
+        width={76}
+        height={26}
+        onRun={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    await settle();
+    const frame = plain(r.lastFrame());
+    expect(frame).not.toContain("recurse; keep times");
+    // The parts the page cannot drop.
+    expect(frame).toContain("--partial-dir=.syncy-partial");
+    expect(frame).toContain("[enter] run");
+  });
+});
+
 function mountJob(opts: { readonly bin?: string } = {}) {
   let result: { exitCode: number | null; cancelled: boolean; transferred: number } | null = null;
   let closed = false;

@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import type { Config, Target } from "../config.ts";
 import { bytes, count } from "../format.ts";
 import { type Preflight, preflight } from "../guards.ts";
-import { argvFor } from "../rsync.ts";
-import { padEnd, truncatePath } from "../width.ts";
+import { argvFor, glossArgv } from "../rsync.ts";
+import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
 import type { Theme } from "./theme.ts";
 
@@ -106,12 +106,41 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
     </Box>
   );
 
+  // Showing the argv is what the page rests on; showing it in a form someone
+  // can act on is the point of showing it. `-a -A -X -i --out-format=…` is
+  // exact and unreadable, and a reader who cannot tell whether a flag deletes
+  // has not actually been told what will run.
+  const gloss = glossArgv(argv);
+  // Rows the rest of the page needs: title, the fields, the checks, the two
+  // rules, the paths and the keys — plus the blank line above the legend.
+  // Deliberately generous, because several of those rows wrap at a width and
+  // a path length this cannot see: a check detail, or the argv itself, can
+  // each take two lines. Ink clips rather than scrolls, so an overrun costs
+  // the top of the page — the unit being synced and the word `checks` — while
+  // an over-estimate costs only a legend that was never load-bearing.
+  const RESERVED_ROWS = 26;
+  const legend = height === undefined || height - RESERVED_ROWS >= gloss.length ? gloss : [];
+  const flagColumn = Math.min(28, Math.max(0, ...legend.map((g) => g.flag.length)));
+
   const footer = (
     <Box flexDirection="column">
       {/* The literal argv. Nothing runs that is not shown here first. */}
       <Text color={theme.dim}>{"  " + argv.slice(0, -2).join(" ")}</Text>
       <Text color={theme.dim}>{"      " + truncatePath(argv[argv.length - 2] ?? "", W - 8)}</Text>
       <Text color={theme.dim}>{"      " + truncatePath(argv[argv.length - 1] ?? "", W - 8)}</Text>
+      {legend.length === 0 ? null : (
+        <Box flexDirection="column">
+          <Text> </Text>
+          {legend.map((g, i) => (
+            // Keyed by position: a config listing the same exclude twice would
+            // otherwise collide.
+            <Box key={`${g.flag}-${i}`}>
+              <Text color={theme.ink}>{"  " + padEnd(g.flag, flagColumn + 2)}</Text>
+              <Text color={theme.dim}>{truncate(g.gloss, Math.max(10, W - flagColumn - 4))}</Text>
+            </Box>
+          ))}
+        </Box>
+      )}
       <Text> </Text>
       {pre !== null && !pre.ok ? (
         <Text color={theme.missing}>{"  blocked — a check failed. [esc] back"}</Text>
