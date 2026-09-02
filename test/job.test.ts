@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { cachedSourceFingerprint, jobsRan } from "../src/tui/useJob.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
+import { cachedSourceFingerprint, jobsRan } from "../src/tui/useJob.ts";
 
 const FP: Fingerprint = {
   nfiles: 2,

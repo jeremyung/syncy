@@ -407,10 +407,7 @@ export async function identify(
  * the rsync boundary would turn a stale confirmation into permission to write
  * to whatever now occupies the configured path.
  */
-export function identifySync(
-  path: string,
-  entries?: readonly MountEntry[],
-): VolumeIdentity | null {
+export function identifySync(path: string, entries?: readonly MountEntry[]): VolumeIdentity | null {
   const table = entries ?? readMountTableSync();
   const entry = mountFor(path, table);
   if (entry === undefined) return null;

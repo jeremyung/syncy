@@ -2,14 +2,14 @@ import { join } from "node:path";
 import { useEffect, useState } from "react";
 import type { Config } from "../config.ts";
 import { saveDiff } from "../diff.ts";
-import { fingerprint, type Fingerprint } from "../fingerprint.ts";
+import { type Fingerprint, fingerprint } from "../fingerprint.ts";
 import { debug } from "../log.ts";
 import {
   allReachability,
   checkUnit,
   methodOf,
-  TargetCheckError,
   type Reachability,
+  TargetCheckError,
 } from "../scan.ts";
 import { appendHistory, estimateMs, type State, saveState, upsertScan } from "../state.ts";
 import { reachWord } from "../status.ts";

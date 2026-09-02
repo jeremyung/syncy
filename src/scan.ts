@@ -1,15 +1,11 @@
 import { type Dirent, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Config, Target } from "./config.ts";
-import {
-  buildDiffFromAccumulator,
-  createDiffAccumulator,
-  type Diff,
-} from "./diff.ts";
+import { buildDiffFromAccumulator, createDiffAccumulator, type Diff } from "./diff.ts";
 import { type Fingerprint, fingerprint } from "./fingerprint.ts";
 import { isNew, parseItemizeLine } from "./itemize.ts";
 import { logDir } from "./paths.ts";
-import { argvFor, RsyncError, type Mode, runRsync } from "./rsync.ts";
+import { argvFor, type Mode, RsyncError, runRsync } from "./rsync.ts";
 import { checkSentinel, readSentinel, type SentinelStatus } from "./sentinel.ts";
 import type { Method, Scan } from "./state.ts";
 import { checkVolume, identifySync } from "./volume.ts";
@@ -102,9 +98,7 @@ export class TargetCheckError extends RsyncError {
   readonly reachability: FailedReachability;
 
   constructor(target: Target, reachability: FailedReachability) {
-    super(
-      `refusing to check: destination ${target.name} is ${reachability} at ${target.path}`,
-    );
+    super(`refusing to check: destination ${target.name} is ${reachability} at ${target.path}`);
     this.name = "TargetCheckError";
     this.targetName = target.name;
     this.reachability = reachability;

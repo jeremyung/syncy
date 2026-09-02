@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { type Config, parseConfig, type Target } from "../src/config.ts";
 import { MAX_ENTRIES } from "../src/diff.ts";
 import { checkUnit } from "../src/scan.ts";
-import { appendHistory } from "../src/state.ts";
 import { SENTINEL_NAME } from "../src/sentinel.ts";
+import { appendHistory } from "../src/state.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
