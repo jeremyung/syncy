@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { isAbsolute, resolve, sep } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 /**
  * Runtime validation is mandatory, not optional (DESIGN.md §1).
@@ -121,6 +121,60 @@ function absolutePath(value: string, where: string): string {
   return resolve(value);
 }
 
+/**
+ * Resolves a path through symlinks when it exists.
+ *
+ * Lexical path checks are not enough for the safety boundary: `/backup` can
+ * be a symlink into `/source`, and two differently spelled paths can name the
+ * same directory. A config may legitimately be loaded before a source or
+ * target exists, so a failed realpath is represented as null and the runtime
+ * executor repeats the check once both sides are reachable.
+ */
+export function canonicalPath(path: string): string | null {
+  let current = resolve(path);
+  const suffix: string[] = [];
+  try {
+    return realpathSync(current);
+  } catch {
+    // A target folder may not exist yet, but a symlink in one of its parents
+    // can still put it inside the source. Resolve the nearest existing parent
+    // and append the missing suffix lexically.
+    while (true) {
+      const parent = dirname(current);
+      if (parent === current) return null;
+      suffix.unshift(basename(current));
+      current = parent;
+      try {
+        return suffix.reduce((base, part) => join(base, part), realpathSync(current));
+      } catch {
+        // Keep walking toward the root until an existing ancestor is found.
+      }
+    }
+  }
+}
+
+/**
+ * Returns the containment error for a source/target pair, if any.
+ *
+ * The lexical check covers paths that do not exist yet. When both paths are
+ * present, the canonical check closes the symlink-alias hole as well.
+ */
+export function containmentError(source: string, target: string): string | null {
+  if (isWithin(target, source)) return `target is inside the source root (${source})`;
+  if (isWithin(source, target)) return `source root is inside this target (${target})`;
+
+  const canonicalSource = canonicalPath(source);
+  const canonicalTarget = canonicalPath(target);
+  if (canonicalSource === null || canonicalTarget === null) return null;
+  if (isWithin(canonicalTarget, canonicalSource)) {
+    return `target is inside the source root (${source})`;
+  }
+  if (isWithin(canonicalSource, canonicalTarget)) {
+    return `source root is inside this target (${target})`;
+  }
+  return null;
+}
+
 /** True when `inner` is the same as, or nested beneath, `outer`. */
 export function isWithin(inner: string, outer: string): boolean {
   const a = resolve(inner);
@@ -171,6 +225,7 @@ export function parseConfig(text: string): Config {
 
   const seenNames = new Set<string>();
   const seenPaths = new Set<string>();
+  const seenCanonicalPaths = new Set<string>();
   const targets: Target[] = targetsRaw.map((entry, i) => {
     const where = `target[${i}]`;
     if (!isRecord(entry)) throw new ConfigError(where, "expected a table");
@@ -185,13 +240,17 @@ export function parseConfig(text: string): Config {
       throw new ConfigError(`${where}.path`, `duplicate target path "${path}"`);
     seenPaths.add(path);
 
+    const canonicalTarget = canonicalPath(path);
+    if (canonicalTarget !== null) {
+      if (seenCanonicalPaths.has(canonicalTarget)) {
+        throw new ConfigError(`${where}.path`, `duplicate target path "${path}"`);
+      }
+      seenCanonicalPaths.add(canonicalTarget);
+    }
+
     // Nested source and target is data loss waiting to happen (DESIGN.md §7).
-    if (isWithin(path, source)) {
-      throw new ConfigError(`${where}.path`, `target is inside the source root (${source})`);
-    }
-    if (isWithin(source, path)) {
-      throw new ConfigError(`${where}.path`, `source root is inside this target (${path})`);
-    }
+    const nested = containmentError(source, path);
+    if (nested !== null) throw new ConfigError(`${where}.path`, nested);
 
     const identity =
       typeof entry["identity"] === "string" ? (entry["identity"] as string) : undefined;
