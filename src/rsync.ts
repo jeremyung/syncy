@@ -129,6 +129,90 @@ export function buildArgv(
   return argv;
 }
 
+export interface FlagGloss {
+  readonly flag: string;
+  /** What this flag does, in the terms the screen's reader needs. */
+  readonly gloss: string;
+}
+
+/**
+ * The argv in words, for the screens that show it (DESIGN.md section 6).
+ *
+ * The confirm page's promise is that nothing runs that is not shown first —
+ * which only holds if the thing shown can be read. `-a -A -X -i
+ * --out-format=%i|%l|%M|%n` is exact and inert: it satisfies the letter of
+ * "shown" while telling someone deciding whether to write to a drive nothing
+ * they can decide on.
+ *
+ * Glossed here rather than in the components, beside the `buildArgv` that
+ * emits them, so a flag and its explanation are added in one place. The test
+ * suite walks every mode and option `argvFor` can produce and fails on any
+ * flag this does not cover — the only thing that actually keeps the two from
+ * drifting.
+ *
+ * The two path arguments are dropped: the screens already show them, on their
+ * own lines, where a long path can be truncated from the middle.
+ */
+export function glossArgv(argv: readonly string[]): FlagGloss[] {
+  const flags = argv.slice(0, -2);
+  // `--delete` means something different depending on company it keeps, and
+  // this is read by someone deciding whether to let it run. Never describe it
+  // as listing-only without checking that -n is actually there.
+  const dryRun = flags.some(
+    (a) => a === "-n" || a === "--dry-run" || (/^-[a-zA-Z]+$/.test(a) && a.includes("n")),
+  );
+  const out: FlagGloss[] = [];
+  for (const flag of flags) {
+    const gloss = glossFlag(flag, dryRun);
+    if (gloss !== null) out.push({ flag, gloss });
+  }
+  return out;
+}
+
+/** Returns null for a flag with no gloss, which the screens show bare. */
+export function glossFlag(flag: string, dryRun: boolean): string | null {
+  switch (flag) {
+    case "-a":
+      return "recurse; keep times, permissions, symlinks, owner and group";
+    case "-A":
+      return "keep ACLs too";
+    case "-X":
+      return "keep extended attributes — Finder tags, quarantine";
+    case "--no-perms":
+      return "do not keep permissions — this destination cannot store them";
+    case "-c":
+      return "compare contents, not size and date — slow, catches bit rot";
+    case "-n":
+      return "dry run — reports what it would do, writes nothing";
+    case "-i":
+      return "one line per file it acts on";
+    case "-vv":
+      return "a line for files it leaves alone too — the only progress there is";
+    case "--delete":
+      return dryRun
+        ? "also list destination-only files — under -n, deletes nothing"
+        : "DELETES files at the destination that are not at the source";
+  }
+  if (flag.startsWith("--out-format=")) {
+    return "each line: change flags, size, source mtime, name";
+  }
+  if (flag.startsWith("--partial-dir=")) {
+    const dir = flag.slice("--partial-dir=".length);
+    return `an interrupted file parks under ${dir}, not at its final name`;
+  }
+  if (flag.startsWith("--modify-window=")) {
+    const n = flag.slice("--modify-window=".length);
+    return `timestamps within ${n}s count as equal — this filesystem's granularity`;
+  }
+  if (flag.startsWith("--exclude=")) {
+    const pat = flag.slice("--exclude=".length);
+    return pat.startsWith(".syncy-")
+      ? "skip syncy's own scratch files, a parked partial among them"
+      : `skip anything matching ${pat}`;
+  }
+  return null;
+}
+
 /**
  * Builds the argv for one unit at one destination — the single place every
  * caller turns a (config, unit, target) triple into a real rsync invocation.

@@ -2,7 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { parseConfig, type Target } from "../src/config.ts";
 import { explainFlags } from "../src/itemize.ts";
-import { argvFor, assertDeleteIsDryRun, buildArgv, RsyncError } from "../src/rsync.ts";
+import {
+  argvFor,
+  assertDeleteIsDryRun,
+  buildArgv,
+  glossArgv,
+  type Mode,
+  RsyncError,
+} from "../src/rsync.ts";
 
 const target = (over: Partial<Target> = {}): Target => ({
   name: "nas",
@@ -227,5 +234,73 @@ describe("explaining an itemize string", () => {
   test("xattr and acl columns are read from the right positions", () => {
     expect(explainFlags(".f........x")).toBe("xattr");
     expect(explainFlags(".f.......a.")).toBe("acl");
+  });
+});
+
+describe("the argv in words", () => {
+  /**
+   * Every flag `buildArgv` can emit, across every mode and every destination
+   * shape that changes the command. This is the guarantee: a flag added to
+   * buildArgv without a gloss fails here, rather than reaching the confirm
+   * page as a bare `--whatever` under a heading promising the reader has been
+   * shown what will run.
+   */
+  const everyArgv = (): string[][] => {
+    const modes: Mode[] = ["quick", "deep", "sync"];
+    const targets = [
+      target(),
+      target({ flagsDrop: ["-p", "-A", "-X"] }),
+      target({ fstype: "exfat", modifyWindow: 2 }),
+    ];
+    const out: string[][] = [];
+    for (const m of modes) {
+      for (const t of targets) {
+        out.push(buildArgv(m, "/src/x", t, [".DS_Store", "._*"]));
+        out.push(buildArgv(m, "/src/x", t, [".DS_Store"], { checksum: true }));
+      }
+    }
+    return out;
+  };
+
+  test("every flag buildArgv can produce has an explanation", () => {
+    for (const argv of everyArgv()) {
+      const flags = argv.slice(0, -2);
+      const glossed = new Set(glossArgv(argv).map((g) => g.flag));
+      for (const f of flags) {
+        expect(glossed.has(f)).toBe(true);
+      }
+    }
+  });
+
+  test("the two path arguments are left out — the screens show them separately", () => {
+    const argv = buildArgv("sync", "/src/x", target(), []);
+    const flags = glossArgv(argv).map((g) => g.flag);
+    expect(flags).not.toContain("/src/x/");
+    expect(flags).not.toContain("/Volumes/media/archive/photos/2019/");
+  });
+
+  test("--delete is described as listing only when -n is actually present", () => {
+    const quick = glossArgv(buildArgv("quick", "/src/x", target(), []));
+    const del = quick.find((g) => g.flag === "--delete");
+    expect(del?.gloss).toContain("deletes nothing");
+  });
+
+  test("--delete without -n is described as deleting", () => {
+    // buildArgv never produces this pair, and assertDeleteIsDryRun refuses it
+    // at spawn. The gloss must not be the one place that calls it harmless.
+    const g = glossArgv(["-a", "--delete", "/src/", "/dst/"]);
+    expect(g.find((x) => x.flag === "--delete")?.gloss).toContain("DELETES");
+  });
+
+  test("the patterned flags read back the value they carry", () => {
+    const argv = buildArgv("quick", "/src/x", target({ modifyWindow: 2 }), ["._*"]);
+    const by = new Map(glossArgv(argv).map((g) => [g.flag, g.gloss]));
+    expect(by.get("--modify-window=2")).toContain("within 2s");
+    expect(by.get("--exclude=._*")).toContain("._*");
+    expect(by.get("--exclude=.syncy-*")).toContain("syncy's own");
+  });
+
+  test("a flag with no gloss is dropped rather than shown blank", () => {
+    expect(glossArgv(["-a", "--zz-unknown", "/src/", "/dst/"]).map((g) => g.flag)).toEqual(["-a"]);
   });
 });

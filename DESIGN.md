@@ -402,12 +402,31 @@ the render loop never blocks on rsync, and log lines commit in batches at
 ~20 fps rather than per line.
 
 **Sync guard rails.** `s` opens a full-page confirm — not a floating modal —
-showing the literal argv, the pending change count, and five checks as a
-readable list: `rsync`, `source`, `sentinel`, `space`, `dry run`. It refuses to
+showing the literal argv, the pending change count split into what the transfer
+creates and what it overwrites, and five checks as a readable list: `rsync`, `source`, `sentinel`, `space`, `dry run`. It refuses to
 launch when the sentinel is missing or mismatched, when free space is under
 `bytes_pending * 1.05`, or when `--delete` appears without `-n`. The `dry run`
 row reads `no · this writes to the target` on a real sync — stated, never
 implied.
+
+A folder can be behind on more than one destination, and `s` names only one of
+them. The confirm page lists the others with what each is behind by, and `tab`
+moves between them — the counts, the checks and the argv all re-derive. The
+choice lives here rather than in the ledger, which selects folders: a folder is
+the unit of work for every other key, and `s` is the only one that needs a
+single destination. Before this the second destination could not be synced at
+all until the first was clean. A preflight is stamped with the destination it
+ran against, because `ok` gates the launch and a result carried across a switch
+would clear a sync that nothing had checked.
+
+Creations and replacements are separated because they carry different weight: a
+file that is not at the destination is a backlog, while one that is already
+there and differs has bytes about to be overwritten. That split also decides
+repair mode — the `-c` sync — which is set from what a deep verify *found*, not
+from the method alone. A deep verify whose every difference is a creation needs
+no `-c`: rsync copies a file that is not there whatever it compares by, so the
+flag only bought hours of re-reading the source under a heading claiming those
+files differ by content.
 
 The argv is appended to `history.jsonl` with `exitCode: null` **before** the
 process spawns, and again with the real exit code when it finishes, so a sync

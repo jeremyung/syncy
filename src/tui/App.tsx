@@ -304,8 +304,12 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
           if (rows[clampedSelection] !== undefined) setShowPlan(true);
         },
         startSync: () => {
-          // Offer the target that is furthest behind; there is nothing to sync
-          // to a target that is already clean.
+          // Offer the first destination that is behind — there is nothing to
+          // sync to one that is already clean — and let the confirm page's
+          // [tab] reach the others. The comment here used to claim "furthest
+          // behind", which `find` has never done; with the switcher the order
+          // is a starting point rather than a verdict, so first-in-ledger-order
+          // is both what happens and what it should be.
           // A sync writes; starting one while a check is reading the same tree
           // would have the two disagree about what is there.
           if (running !== null) {
@@ -333,13 +337,31 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     syncing === null ? undefined : config.targets.find((t) => t.name === syncing.target);
   const syncCell = syncRow?.status.cells.find((c) => c.target === syncing?.target);
 
+  // Every destination this folder is behind on, in ledger order. `s` offers
+  // the first and `[tab]` on the confirm page reaches the rest; before this,
+  // a second behind destination could not be synced at all until the first
+  // was clean.
+  const syncCandidates =
+    syncRow === undefined
+      ? []
+      : syncRow.status.cells
+          .filter((c) => c.state === "behind" || c.state === "missing")
+          .map((c) => ({
+            name: c.target,
+            nChanges: c.nChanges,
+            bytesPending: c.bytesPending,
+          }));
+
   if (pendingSync !== null && syncRow !== undefined && syncTarget !== undefined) {
     return (
       <Confirm
         config={config}
+        candidates={syncCandidates}
+        onSwitch={(name) => setPendingSync({ unit: pendingSync.unit, target: name })}
         unit={pendingSync.unit}
         target={syncTarget}
         nChanges={syncCell?.nChanges ?? 0}
+        {...(syncCell?.nNew === undefined ? {} : { nNew: syncCell.nNew })}
         nExtra={syncCell?.nExtra ?? 0}
         bytesPending={syncCell?.bytesPending ?? 0}
         {...(syncCell?.needsChecksum === true ? { needsChecksum: true } : {})}
@@ -552,6 +574,7 @@ export function Help({
       {line("q / Q", "quick check — this folder / all · size and date · writes nothing")}
       {line("d / D", "deep verify — this folder / all · checksums · writes nothing")}
       {line("s", "sync — copies what is missing · the only key that writes")}
+      {line("  tab", "on the confirm page: switch which destination to sync to")}
       {line("p", "show the exact rsync command each of those runs")}
       {line("enter", "which files differ, per destination")}
       {line("e", "evidence for the selected folder")}

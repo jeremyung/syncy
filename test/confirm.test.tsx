@@ -7,7 +7,7 @@ import { freeBytes } from "../src/guards.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import { App } from "../src/tui/App.tsx";
-import { Confirm } from "../src/tui/Confirm.tsx";
+import { Confirm, nextCandidate, replaceLine } from "../src/tui/Confirm.tsx";
 import { Job } from "../src/tui/Job.tsx";
 import { THEMES } from "../src/tui/theme.ts";
 import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
@@ -56,7 +56,14 @@ afterEach(() => {
 
 const target = (): Target => config.targets[0]!;
 
-function mountConfirm(bytesPending = 7) {
+function mountConfirm(
+  bytesPending = 7,
+  over: {
+    readonly nChanges?: number;
+    readonly nNew?: number;
+    readonly needsChecksum?: boolean;
+  } = {},
+) {
   let ran = false;
   let cancelled = false;
   const r = render(
@@ -64,7 +71,9 @@ function mountConfirm(bytesPending = 7) {
       config={config}
       unit="photos-2019"
       target={target()}
-      nChanges={2}
+      nChanges={over.nChanges ?? 2}
+      {...(over.nNew === undefined ? {} : { nNew: over.nNew })}
+      {...(over.needsChecksum === undefined ? {} : { needsChecksum: over.needsChecksum })}
       nExtra={3}
       bytesPending={bytesPending}
       theme={THEMES.ansi}
@@ -161,6 +170,213 @@ describeRsync("the confirm page refuses to launch when a check fails", () => {
     const s = mountConfirm();
     s.stdin.write(ENTER);
     expect(s.ran()).toBe(false);
+  });
+});
+
+describe("new versus replaced", () => {
+  test("says nothing is replaced when every file is a creation", () => {
+    expect(replaceLine(504, 504)).toBe("nothing — all 504 are new at the destination");
+  });
+
+  test("says all of them when every file is already there", () => {
+    expect(replaceLine(12, 0)).toBe("all 12 — every one is already there and differs");
+  });
+
+  test("splits a mixed transfer both ways", () => {
+    expect(replaceLine(504, 492)).toBe("12 of them · the other 492 are new at the destination");
+  });
+
+  test("offers no breakdown for a check written before nNew was tracked", () => {
+    expect(replaceLine(504, undefined)).toBeNull();
+  });
+});
+
+describeRsync("the confirm page separates creations from replacements", () => {
+  test("shows the split beside the transfer total", async () => {
+    const s = mountConfirm(7, { nChanges: 504, nNew: 492 });
+    await settle();
+    expect(s.frame()).toContain("will replace");
+    expect(s.frame()).toContain("12 of them");
+  });
+
+  test("omits the row entirely when there is no breakdown to show", async () => {
+    const s = mountConfirm();
+    await settle();
+    expect(s.frame()).not.toContain("will replace");
+  });
+
+  test("repair mode counts the files that actually differ", async () => {
+    // Not `nChanges`: announcing 504 files as differing by content, when 492
+    // of them are simply not there yet, is the reading this page had.
+    const s = mountConfirm(7, { nChanges: 504, nNew: 492, needsChecksum: true });
+    await settle();
+    expect(s.frame()).toContain("12 differ by content");
+    expect(s.frame()).not.toContain("504 differ by content");
+  });
+});
+
+describeRsync("the argv is shown in words, not only in flags", () => {
+  test("glosses the flags under the command", async () => {
+    const s = mountConfirm();
+    await settle();
+    expect(s.frame()).toContain("-a");
+    expect(s.frame()).toContain("recurse; keep times, permissions");
+    // Truncated to the column at this width, which is the point of the column.
+    expect(s.frame()).toContain("an interrupted file parks under");
+  });
+
+  test("still shows the literal argv, which is what actually runs", async () => {
+    const s = mountConfirm();
+    await settle();
+    expect(s.frame()).toContain("--partial-dir=.syncy-partial");
+  });
+
+  test("drops the legend rather than the checks on a window with no room", async () => {
+    // 26 rows fits the page and not the legend. Ink clips instead of
+    // scrolling, and what it clips is the top — the unit being synced.
+    const r = render(
+      <Confirm
+        config={config}
+        unit="photos-2019"
+        target={target()}
+        nChanges={2}
+        nExtra={3}
+        bytesPending={7}
+        theme={THEMES.ansi}
+        width={76}
+        height={26}
+        onRun={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    await settle();
+    const frame = plain(r.lastFrame());
+    expect(frame).not.toContain("recurse; keep times");
+    // The parts the page cannot drop.
+    expect(frame).toContain("--partial-dir=.syncy-partial");
+    expect(frame).toContain("[enter] run");
+  });
+});
+
+describe("cycling between destinations", () => {
+  const cs = [
+    { name: "ext", nChanges: 504, bytesPending: 100 },
+    { name: "nas", nChanges: 143, bytesPending: 200 },
+    { name: "offsite", nChanges: 7, bytesPending: 300 },
+  ];
+
+  test("moves to the next and wraps at the end", () => {
+    expect(nextCandidate(cs, "ext")).toBe("nas");
+    expect(nextCandidate(cs, "nas")).toBe("offsite");
+    expect(nextCandidate(cs, "offsite")).toBe("ext");
+  });
+
+  test("one destination is nowhere to go", () => {
+    expect(nextCandidate(cs.slice(0, 1), "ext")).toBeNull();
+    expect(nextCandidate(undefined, "ext")).toBeNull();
+    expect(nextCandidate([], "ext")).toBeNull();
+  });
+
+  test("a current destination not on the list is a disagreement, not a guess", () => {
+    expect(nextCandidate(cs, "somewhere-else")).toBeNull();
+  });
+});
+
+describeRsync("choosing which destination to sync", () => {
+  const candidates = [
+    { name: "dst", nChanges: 2, bytesPending: 7 },
+    { name: "second", nChanges: 143, bytesPending: 8_400_000_000 },
+  ];
+
+  function mountWithCandidates() {
+    let switched: string | null = null;
+    const r = render(
+      <Confirm
+        config={config}
+        unit="photos-2019"
+        target={target()}
+        candidates={candidates}
+        onSwitch={(name) => {
+          switched = name;
+        }}
+        nChanges={2}
+        nExtra={0}
+        bytesPending={7}
+        theme={THEMES.ansi}
+        width={100}
+        onRun={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    return { ...r, frame: () => plain(r.lastFrame()), switched: () => switched };
+  }
+
+  test("names the other destinations and what each is behind by", async () => {
+    const s = mountWithCandidates();
+    await settle();
+    expect(s.frame()).toContain("also behind: second 143 files");
+  });
+
+  test("offers the switch in the keys", async () => {
+    const s = mountWithCandidates();
+    await settle();
+    expect(s.frame()).toContain("[tab] switch to second");
+  });
+
+  test("tab asks for the next destination rather than running anything", async () => {
+    const s = mountWithCandidates();
+    await settle();
+    s.stdin.write("\t");
+    await settle(50);
+    expect(s.switched()).toBe("second");
+  });
+
+  test("a switch does not carry the previous destination's checks with it", async () => {
+    // The one that would actually be dangerous: `ok` gates the launch, so a
+    // preflight left over from the destination you just switched away from
+    // would let enter run a sync that nothing had checked.
+    mkdirSync(join(root, "dst2"), { recursive: true });
+    const id2 = await writeSentinel(join(root, "dst2"));
+    const second: Target = { ...target(), name: "second", path: join(root, "dst2"), sentinel: id2 };
+    let ran = false;
+    const props = {
+      config,
+      unit: "photos-2019",
+      candidates,
+      nChanges: 2,
+      nExtra: 0,
+      bytesPending: 7,
+      theme: THEMES.ansi,
+      width: 100,
+      onRun: () => {
+        ran = true;
+      },
+      onCancel: () => {},
+    };
+    const r = render(<Confirm {...props} target={target()} onSwitch={() => {}} />);
+    await settle();
+    // The first destination's checks have resolved and enter would run.
+    expect(plain(r.lastFrame())).toContain("dry run");
+
+    r.rerender(<Confirm {...props} target={second} onSwitch={() => {}} />);
+    r.stdin.write(ENTER);
+    expect(ran).toBe(false);
+    expect(plain(r.lastFrame())).toContain("running…");
+
+    // And once the new destination's own preflight lands, it is that one's.
+    await settle(400);
+    expect(plain(r.lastFrame())).toContain("dst2");
+  });
+
+  test("a single destination offers no switch, and tab does nothing", async () => {
+    const s = mountConfirm();
+    await settle();
+    expect(s.frame()).not.toContain("[tab]");
+    expect(s.frame()).not.toContain("also behind");
+    s.stdin.write("\t");
+    await settle(50);
+    expect(s.ran()).toBe(false);
+    expect(s.cancelled()).toBe(false);
   });
 });
 
