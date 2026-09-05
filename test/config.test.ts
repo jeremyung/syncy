@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { ConfigError, isWithin, parseConfig } from "../src/config.ts";
+import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 const VALID = `
 source = "/Users/you/Pictures/Archive"
@@ -182,6 +185,40 @@ sentinel = "s"
 
   test("malformed TOML", () => {
     expectError(`source = "unterminated\n`, "not valid TOML");
+  });
+
+  test("a symlinked target that resolves inside the source is rejected", () => {
+    const root = makeFixtureDir("syncy-config-symlink");
+    try {
+      const source = join(root, "source");
+      const target = join(root, "target-alias");
+      mkdirSync(source, { recursive: true });
+      symlinkSync(source, target, "dir");
+      expectError(
+        `source = "${source}"\n[[target]]\nname = "alias"\npath = "${target}"\nsentinel = "s"\n`,
+        "inside the source root",
+      );
+    } finally {
+      removeFixtureDir(root);
+    }
+  });
+
+  test("two target paths that are symlink aliases are rejected as duplicates", () => {
+    const root = makeFixtureDir("syncy-config-aliases");
+    try {
+      const source = join(root, "source");
+      const first = join(root, "first");
+      const second = join(root, "second");
+      mkdirSync(source, { recursive: true });
+      mkdirSync(first, { recursive: true });
+      symlinkSync(first, second, "dir");
+      expectError(
+        `source = "${source}"\n[[target]]\nname = "one"\npath = "${first}"\nsentinel = "a"\n[[target]]\nname = "two"\npath = "${second}"\nsentinel = "b"\n`,
+        "duplicate target path",
+      );
+    } finally {
+      removeFixtureDir(root);
+    }
   });
 });
 

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { type Config, isWithin, type Target } from "../config.ts";
+import { type Config, canonicalPath, containmentError, type Target } from "../config.ts";
 import { saveConfig, withoutTarget, withTarget } from "../configio.ts";
 import { bytes } from "../format.ts";
 import { type MountEntry, modifyWindowFor } from "../fstype.ts";
@@ -85,13 +85,22 @@ export function validateTargetPath(path: string, config: Config): string | null 
   } catch {
     return "cannot read that path";
   }
-  // Nested source and target is data loss waiting to happen. Skipped when no
-  // source is set yet, since resolve("") would silently mean the cwd.
+  // Nested source and target is data loss waiting to happen. The shared check
+  // compares both lexical and canonical paths, so a symlink alias cannot make
+  // an apparently separate destination point back into the source.
   if (config.source !== "") {
-    if (isWithin(abs, config.source)) return "inside the source root";
-    if (isWithin(config.source, abs)) return "contains the source root";
+    const nested = containmentError(config.source, abs);
+    if (nested?.startsWith("target is inside")) return "inside the source root";
+    if (nested?.startsWith("source root is inside")) return "contains the source root";
   }
-  if (config.targets.some((t) => t.path === abs)) return "already a destination";
+  const canonical = canonicalPath(abs);
+  if (
+    config.targets.some(
+      (t) => t.path === abs || (canonical !== null && canonicalPath(t.path) === canonical),
+    )
+  ) {
+    return "already a destination";
+  }
   return null;
 }
 

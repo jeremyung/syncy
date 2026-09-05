@@ -18,7 +18,7 @@ import { checkUnit } from "../src/scan.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import type { Scan } from "../src/state.ts";
 import { cellState } from "../src/status.ts";
-import { startSync } from "../src/sync.ts";
+import { startSync, syncLogPath } from "../src/sync.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 const build = await checkBuild(DEFAULT_RSYNC);
@@ -208,6 +208,19 @@ describeRsync("a first copy states what it will actually move", () => {
 });
 
 describeRsync("startSync", () => {
+  test("encodes unit and target names before building a log path", () => {
+    const path = syncLogPath("../unit/with spaces", "../../target", Date.now());
+    expect(path).toContain("/state/syncy/logs/");
+    expect(path).not.toContain("../");
+    expect(path.endsWith(".log")).toBe(true);
+  });
+
+  test("rejects a caller-provided log path outside syncy's state", () => {
+    expect(() =>
+      startSync(config, "photos-2019", target(), { logPath: join(root, "outside.log") }),
+    ).toThrow(/outside/);
+  });
+
   test("copies the unit to the target", async () => {
     const h = startSync(config, "photos-2019", target());
     const r = await h.done;

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Config, parseConfig, type Target } from "../src/config.ts";
 import {
@@ -169,6 +169,25 @@ describe("target path validation", () => {
   test("accepts a good path", () => {
     mkdirSync(join(root, "dst"), { recursive: true });
     expect(validateTargetPath(join(root, "dst"), EMPTY_CONFIG("/src"))).toBeNull();
+  });
+
+  test("rejects a symlink alias that resolves inside the source", () => {
+    const source = join(root, "src");
+    const alias = join(root, "dst-alias");
+    mkdirSync(source, { recursive: true });
+    symlinkSync(source, alias, "dir");
+    expect(validateTargetPath(alias, EMPTY_CONFIG(source))).toBe("inside the source root");
+  });
+
+  test("rejects a symlink alias of an existing destination", () => {
+    const source = join(root, "src");
+    const destination = join(root, "dst");
+    const alias = join(root, "dst-alias");
+    mkdirSync(source, { recursive: true });
+    mkdirSync(destination, { recursive: true });
+    symlinkSync(destination, alias, "dir");
+    const config = withTarget(EMPTY_CONFIG(source), target({ path: destination }));
+    expect(validateTargetPath(alias, config)).toBe("already a destination");
   });
 });
 

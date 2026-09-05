@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
-import type { Config, Target } from "./config.ts";
+import { join, relative, resolve, sep } from "node:path";
+import { type Config, canonicalPath, containmentError, type Target } from "./config.ts";
 import { type Item, parseItemizeLine } from "./itemize.ts";
 import { debug } from "./log.ts";
 import { argvFor, assertDeleteIsDryRun, DEFAULT_RSYNC, RsyncError } from "./rsync.ts";
@@ -39,9 +39,52 @@ export interface SyncOptions {
   readonly now?: number;
 }
 
+/** A log filename component that cannot introduce a path separator or `..`. */
+function safeLogPart(value: string): string {
+  return value
+    .replace(/[^A-Za-z0-9._-]/g, (c) => `%${c.codePointAt(0)!.toString(16).padStart(2, "0")}`)
+    .replace(/\.\./g, "%2e%2e");
+}
+
 export function syncLogPath(unit: string, target: string, now: number): string {
   const stamp = new Date(now).toISOString().replace(/[:.]/g, "-");
-  return join(ensureLogDir(), `${stamp}-${unit.replace(/\//g, "_")}-${target}.log`);
+  return join(ensureLogDir(), `${stamp}-${safeLogPart(unit)}-${safeLogPart(target)}.log`);
+}
+
+/**
+ * A caller-provided log path is still a syncy-owned write and must stay under
+ * the state log directory. The default is encoded by `syncLogPath`; this check
+ * keeps the optional test/integration seam from becoming an escape hatch.
+ */
+function assertLogPath(logPath: string): void {
+  const dir = resolve(ensureLogDir());
+  const candidate = resolve(logPath);
+  // Resolve existing symlinks in the state tree as well. A lexical child of
+  // `logs/` can otherwise be a link to a file elsewhere, which would turn the
+  // optional logPath seam into a write outside syncy's own state.
+  const canonicalDir = canonicalPath(dir) ?? dir;
+  const canonicalCandidate = canonicalPath(candidate) ?? candidate;
+  const rel = relative(canonicalDir, canonicalCandidate);
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || rel.startsWith(sep)) {
+    throw new RsyncError(`refusing to write sync log outside ${dir}: ${logPath}`);
+  }
+}
+
+/**
+ * Rechecks path containment at execution time, after symlinks and mounts have
+ * settled. Config parsing catches the common case, but a target can be
+ * replaced with a symlink while the application is open.
+ */
+function assertRuntimeContainment(config: Config, target: Target): void {
+  const lexical = containmentError(config.source, target.path);
+  if (lexical !== null) throw new RsyncError(`refusing to sync: ${lexical}`);
+  const source = canonicalPath(config.source);
+  const destination = canonicalPath(target.path);
+  if (source === null || destination === null) {
+    throw new RsyncError("refusing to sync: source or destination cannot be resolved");
+  }
+  const canonical = containmentError(source, destination);
+  if (canonical !== null) throw new RsyncError(`refusing to sync: ${canonical}`);
 }
 
 /**
@@ -70,7 +113,9 @@ export function startSync(
   // as far as spawning if the invariant is broken.
   assertDeleteIsDryRun(argv);
 
+  assertRuntimeContainment(config, target);
   const logPath = opts.logPath ?? syncLogPath(unit, target.name, now);
+  assertLogPath(logPath);
   appendHistory({ ts: now, unit, target: target.name, argv, exitCode: null, log: logPath });
 
   // No mkdir: rsync creates the destination itself. syncy writes directly
