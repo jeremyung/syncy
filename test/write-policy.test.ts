@@ -179,6 +179,10 @@ describeRsync("everything that lands in a target arrives via rsync", () => {
     const config: Config = parseConfig(
       `source = "${join(root, "src")}"\n[[target]]\nname="dst"\npath="${join(root, "dst")}"\nsentinel="s"\n`,
     );
+    // The executor now performs the same final destination proof as the real
+    // app. Seed the fixture through the normal rsync-owned sentinel path before
+    // asserting that it does not pre-create the unit directory.
+    await writeSentinel(join(root, "dst"), { id: "s" });
     const dest = join(root, "dst", "unit-a");
     expect(existsSync(dest)).toBe(false);
     const h = startSync(config, "unit-a", target());

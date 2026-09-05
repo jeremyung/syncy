@@ -89,6 +89,30 @@ async function volumeUuid(entry: MountEntry): Promise<string | null> {
 }
 
 /**
+ * Synchronous counterpart used at the write boundary.
+ *
+ * The normal status path deliberately caches mount discovery and awaits
+ * diskutil. A transfer cannot use that cache: a drive may have been removed
+ * while the confirmation screen was open. `startSync` calls this immediately
+ * before spawning rsync, so it reads the OS's current mount table and volume
+ * identity in the same synchronous turn as the spawn.
+ */
+function volumeUuidSync(entry: MountEntry): string | null {
+  if (IS_LINUX) return volumeUuidLinux(entry);
+  try {
+    const result = Bun.spawnSync(["/usr/sbin/diskutil", "info", entry.mountPoint]);
+    const out =
+      typeof result.stdout === "string"
+        ? result.stdout
+        : new TextDecoder().decode(result.stdout as Uint8Array);
+    const m = /Volume UUID:\s*([0-9A-Fa-f-]{8,})/.exec(out);
+    return m?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The three filesystem questions the Linux volume code asks the kernel.
  *
  * Injectable as one object so the decisions built on top can be tested
@@ -299,6 +323,22 @@ async function readMountTable(): Promise<MountEntry[]> {
   return parseMount(out);
 }
 
+/** Reads the mount table without the short-lived cache. */
+function readMountTableSync(): MountEntry[] {
+  mountTableReadCount++;
+  if (IS_LINUX) return parseProcMounts(readFileSync("/proc/mounts", "utf8"));
+  try {
+    const result = Bun.spawnSync(["/sbin/mount"]);
+    const out =
+      typeof result.stdout === "string"
+        ? result.stdout
+        : new TextDecoder().decode(result.stdout as Uint8Array);
+    return parseMount(out);
+  } catch {
+    return [];
+  }
+}
+
 function mountTable(): Promise<MountEntry[]> {
   const hit = mountCache;
   if (hit !== null && Date.now() - hit.at < MOUNT_TABLE_TTL_MS) return hit.table;
@@ -359,6 +399,28 @@ export async function identify(
     : { id: uuid, kind: "volume-uuid", mountPoint: entry.mountPoint, fstype };
 }
 
+/**
+ * Identifies a destination for a write without using the mount-table cache.
+ *
+ * This intentionally mirrors `identify` rather than warming or invalidating
+ * its cache: the cached path is useful for a status refresh, but reusing it at
+ * the rsync boundary would turn a stale confirmation into permission to write
+ * to whatever now occupies the configured path.
+ */
+export function identifySync(path: string, entries?: readonly MountEntry[]): VolumeIdentity | null {
+  const table = entries ?? readMountTableSync();
+  const entry = mountFor(path, table);
+  if (entry === undefined) return null;
+  const fstype = entry.fstype;
+  if (isNetwork(fstype)) {
+    return { id: entry.device, kind: "mount-source", mountPoint: entry.mountPoint, fstype };
+  }
+  const uuid = volumeUuidSync(entry);
+  return uuid === null
+    ? { id: entry.device, kind: "mount-source", mountPoint: entry.mountPoint, fstype }
+    : { id: uuid, kind: "volume-uuid", mountPoint: entry.mountPoint, fstype };
+}
+
 export type VolumeStatus = "ok" | "mismatch" | "unreachable";
 
 /**
@@ -370,6 +432,13 @@ export type VolumeStatus = "ok" | "mismatch" | "unreachable";
  */
 export async function checkVolume(path: string, expected: string): Promise<VolumeStatus> {
   const found = await identify(path);
+  if (found === null) return "unreachable";
+  return found.id === expected ? "ok" : "mismatch";
+}
+
+/** Fresh, uncached identity comparison for the final pre-spawn guard. */
+export function checkVolumeSync(path: string, expected: string): VolumeStatus {
+  const found = identifySync(path);
   if (found === null) return "unreachable";
   return found.id === expected ? "ok" : "mismatch";
 }
