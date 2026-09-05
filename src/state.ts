@@ -104,9 +104,15 @@ function validateScan(raw: unknown): Scan | string {
   const nfiles = fp["nfiles"];
   const bytes = fp["bytes"];
   const maxMtimeNs = fp["maxMtimeNs"];
+  const digest = fp["digest"];
+  const complete = fp["complete"];
   if (typeof nfiles !== "number") return "fingerprint.nfiles is not a number";
   if (typeof bytes !== "number") return "fingerprint.bytes is not a number";
   if (typeof maxMtimeNs !== "string") return "fingerprint.maxMtimeNs is not a string";
+  if (digest !== undefined && typeof digest !== "string")
+    return "fingerprint.digest is not a string";
+  if (complete !== undefined && typeof complete !== "boolean")
+    return "fingerprint.complete is not a boolean";
 
   if (nNew !== undefined && typeof nNew !== "number") return "nNew is not a number";
   if (durationMs !== undefined && typeof durationMs !== "number")
@@ -122,7 +128,13 @@ function validateScan(raw: unknown): Scan | string {
     nChanges,
     nExtra,
     bytesPending,
-    fingerprint: { nfiles, bytes, maxMtimeNs },
+    fingerprint: {
+      nfiles,
+      bytes,
+      maxMtimeNs,
+      ...(digest !== undefined ? { digest } : {}),
+      ...(complete !== undefined ? { complete } : {}),
+    },
     sentinel,
     ...(nNew !== undefined ? { nNew } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
