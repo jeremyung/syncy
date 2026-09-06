@@ -149,8 +149,11 @@ This is enforced, not documented: a test reads every file under `src/` and fails
 on any direct filesystem write outside a short allow list of modules that own
 syncy's own directories.
 
-**Source fingerprint** — `(nfiles, total_bytes, max_mtime_ns)` from a
-synchronous `opendirSync` walk of the unit. Metadata-only, ~2 s per 100k files.
+**Source fingerprint** — the legacy counters `(nfiles, total_bytes,
+max_mtime_ns)` plus a SHA-256 digest of a deterministic, sorted stream of each
+relative path's type, size and mtime (including symlinks), from a synchronous
+`opendirSync` walk of the unit. Metadata-only, ~2 s per 100k files. A walk that
+cannot read every entry is marked incomplete and is never accepted as evidence.
 Stored with every scan so a later run can ask *"has the source changed since I
 verified this?"* without touching the destination at all. This is what makes a
 stale verify detectable while the NAS is offline.
@@ -408,6 +411,12 @@ launch when the sentinel is missing or mismatched, when free space is under
 `bytes_pending * 1.05`, or when `--delete` appears without `-n`. The `dry run`
 row reads `no · this writes to the target` on a real sync — stated, never
 implied.
+
+The preflight shown on the confirm page is a user-facing snapshot, not write
+permission. The executor asks the OS for the destination's current identity
+again, without the status mount-table cache, immediately before spawning the
+only process that can write. A drive removed or replaced while the page is
+open therefore refuses at the write boundary too.
 
 A folder can be behind on more than one destination, and `s` names only one of
 them. The confirm page lists the others with what each is behind by, and `tab`

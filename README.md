@@ -81,6 +81,11 @@ is a writable directory on the boot disk, so a path check would let rsync fill
 the startup volume with the data you were moving off it. An unmounted path
 resolves to the boot volume, whose identity does not match.
 
+The confirmation page's reachability result is only a snapshot. The sync
+executor performs a fresh, uncached OS identity check immediately before it
+spawns rsync, so unplugging or replacing a destination while the page is open
+blocks the write as well.
+
 A sentinel file (`.syncy-dest-id` at the destination root) is available as an
 alternative. It is the stronger check — it also catches the destination
 directory being deleted and recreated, which volume identity cannot see — but it
@@ -301,7 +306,7 @@ own palette.
 ## Development
 
 ```
-bun test               # 845 tests
+bun test               # 900 tests
 bunx tsc --noEmit
 bun run build
 bun run audit          # no machine-specific data in the tree or the history

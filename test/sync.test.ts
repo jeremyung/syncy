@@ -221,6 +221,12 @@ describeRsync("startSync", () => {
     ).toThrow(/outside/);
   });
 
+  test("rechecks the destination proof immediately before spawning", () => {
+    writeFileSync(join(target().path, SENTINEL_NAME), "different-volume\n");
+    expect(() => startSync(config, "photos-2019", target())).toThrow(/refusing to sync/);
+    expect(existsSync(join(target().path, "photos-2019"))).toBe(false);
+  });
+
   test("copies the unit to the target", async () => {
     const h = startSync(config, "photos-2019", target());
     const r = await h.done;

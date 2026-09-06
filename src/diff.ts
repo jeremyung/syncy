@@ -95,6 +95,55 @@ export interface Diff {
  */
 export const MAX_ENTRIES = 1000;
 
+/**
+ * Bounded streaming state for an itemize pass.
+ *
+ * A check can visit hundreds of thousands of files. Keeping every parsed
+ * `Item` and then mapping it to a second `DiffEntry[]` made peak memory grow
+ * with the archive even though the differences screen stores only the first
+ * MAX_ENTRIES. This accumulator keeps exact totals while retaining only the
+ * entries the screen can display.
+ */
+export interface DiffAccumulator {
+  readonly entries: readonly DiffEntry[];
+  readonly totals: Readonly<Record<DiffKind, number>>;
+  readonly truncated: number;
+  readonly add: (item: Item) => void;
+}
+
+function entryFromItem(item: Item, kind: DiffKind): DiffEntry {
+  return {
+    kind,
+    name: item.name,
+    bytes: item.bytes,
+    flags: item.flags,
+    dir: kind !== "extra" && item.flags[1] === "d",
+    sized: kind !== "extra",
+    ...(item.mtime !== null ? { mtime: item.mtime } : {}),
+  };
+}
+
+/** Creates a collector that never stores more than MAX_ENTRIES differences. */
+export function createDiffAccumulator(): DiffAccumulator {
+  const entries: DiffEntry[] = [];
+  const totals: Record<DiffKind, number> = { new: 0, changed: 0, metadata: 0, extra: 0 };
+  let total = 0;
+  return {
+    entries,
+    totals,
+    get truncated() {
+      return Math.max(0, total - MAX_ENTRIES);
+    },
+    add(item) {
+      const kind = classify(item);
+      if (kind === null) return;
+      totals[kind] += 1;
+      total += 1;
+      if (entries.length < MAX_ENTRIES) entries.push(entryFromItem(item, kind));
+    },
+  };
+}
+
 export function classify(item: Item): DiffKind | null {
   if (item.kind === "same") return null;
   if (item.kind === "extra") return "extra";
@@ -102,6 +151,33 @@ export function classify(item: Item): DiffKind | null {
   // Shared with `summarize`, so the ledger's count and this listing can never
   // describe the same rsync run differently.
   return isNew(item) ? "new" : "changed";
+}
+
+export function buildDiffFromAccumulator(
+  unit: string,
+  target: string,
+  method: string,
+  accumulator: DiffAccumulator,
+  opts: {
+    readonly ts?: number;
+    readonly wholeFolderMissing?: boolean;
+    readonly source?: Fingerprint;
+    readonly target?: Fingerprint | null;
+  } = {},
+): Diff {
+  return {
+    version: 1,
+    totals: { ...accumulator.totals },
+    unit,
+    target,
+    ts: opts.ts ?? Date.now(),
+    method,
+    entries: accumulator.entries.slice(),
+    truncated: accumulator.truncated,
+    wholeFolderMissing: opts.wholeFolderMissing ?? false,
+    ...(opts.source !== undefined ? { sourceHolds: opts.source } : {}),
+    ...(opts.target != null ? { targetHolds: opts.target } : {}),
+  };
 }
 
 export function buildDiff(
@@ -116,35 +192,9 @@ export function buildDiff(
     readonly target?: Fingerprint | null;
   } = {},
 ): Diff {
-  const all: DiffEntry[] = [];
-  for (const it of items) {
-    const kind = classify(it);
-    if (kind === null) continue;
-    all.push({
-      kind,
-      name: it.name,
-      bytes: it.bytes,
-      flags: it.flags,
-      dir: kind !== "extra" && it.flags[1] === "d",
-      sized: kind !== "extra",
-      ...(it.mtime !== null ? { mtime: it.mtime } : {}),
-    });
-  }
-  const totals: Record<DiffKind, number> = { new: 0, changed: 0, metadata: 0, extra: 0 };
-  for (const e of all) totals[e.kind] += 1;
-  return {
-    version: 1,
-    totals,
-    unit,
-    target,
-    ts: opts.ts ?? Date.now(),
-    method,
-    entries: all.slice(0, MAX_ENTRIES),
-    truncated: Math.max(0, all.length - MAX_ENTRIES),
-    wholeFolderMissing: opts.wholeFolderMissing ?? false,
-    ...(opts.source !== undefined ? { sourceHolds: opts.source } : {}),
-    ...(opts.target != null ? { targetHolds: opts.target } : {}),
-  };
+  const accumulator = createDiffAccumulator();
+  for (const item of items) accumulator.add(item);
+  return buildDiffFromAccumulator(unit, target, method, accumulator, opts);
 }
 
 /**

@@ -1,9 +1,16 @@
+import { join } from "node:path";
 import { useEffect, useState } from "react";
 import type { Config } from "../config.ts";
-import { buildDiff, saveDiff } from "../diff.ts";
-import type { Fingerprint } from "../fingerprint.ts";
+import { saveDiff } from "../diff.ts";
+import { type Fingerprint, fingerprint } from "../fingerprint.ts";
 import { debug } from "../log.ts";
-import { allReachability, checkUnit, methodOf, type Reachability } from "../scan.ts";
+import {
+  allReachability,
+  checkUnit,
+  methodOf,
+  type Reachability,
+  TargetCheckError,
+} from "../scan.ts";
 import { appendHistory, estimateMs, type State, saveState, upsertScan } from "../state.ts";
 import { reachWord } from "../status.ts";
 import type { Row } from "./Ledger.tsx";
@@ -48,6 +55,33 @@ export interface Job {
   /** The transient status line under the ledger, or null when idle. */
   readonly busy: string | null;
   readonly runCheck: (mode: "quick" | "deep", scope: "selected" | "all") => Promise<void>;
+}
+
+/**
+ * Returns one source fingerprint for a unit during a queued run.
+ *
+ * The opening refresh usually provides the cache. The fallback matters when a
+ * key arrives before that refresh resolves: without it, a run over two
+ * destinations would walk the same source twice before either check starts.
+ * Keeping this small seam separate also makes the one-walk invariant directly
+ * testable without rendering a terminal or spawning rsync.
+ */
+export function cachedSourceFingerprint(
+  config: Pick<Config, "source" | "exclude">,
+  unit: string,
+  cache: Map<string, Fingerprint>,
+  read: typeof fingerprint = fingerprint,
+): Fingerprint {
+  const existing = cache.get(unit);
+  if (existing !== undefined) return existing;
+  const current = read(join(config.source, unit), config.exclude);
+  cache.set(unit, current);
+  return current;
+}
+
+/** Counts jobs that were not skipped; displayed skip reasons are deduplicated. */
+export function jobsRan(totalJobs: number, skippedJobs: number): number {
+  return Math.max(0, totalJobs - skippedJobs);
 }
 
 export function useJob(facts: JobFacts): Job {
@@ -118,11 +152,20 @@ export function useJob(facts: JobFacts): Job {
     let done = 0;
     let bytesDone = 0;
 
+    // A refresh normally supplies this map. If the user starts a check while
+    // the first reachability refresh is still in flight, however, `scan` is
+    // null and checkUnit would otherwise walk the same source once per target.
+    // Keep the per-run fallback here so a multi-target check has exactly one
+    // source fingerprint per unit in either case.
+    const sourceFingerprints = new Map(facts.scan?.fingerprints ?? []);
+
     // Destinations that could not be reached, so the run can say what it did
     // not do. Skipping in silence and then reporting "deep check finished"
     // was a claim that nothing had been checked — indistinguishable from a
     // check that never started.
     const skipped: { readonly target: string; readonly why: Reachability }[] = [];
+    let skippedJobs = 0;
+    const failed: { readonly unit: string; readonly target: string }[] = [];
 
     for (const job of jobs) {
       // Nothing to report and nobody to report it to: the interface has
@@ -143,6 +186,7 @@ export function useJob(facts: JobFacts): Job {
         });
         done += 1;
         bytesDone += job.size;
+        skippedJobs += 1;
         continue;
       }
       // Estimated from measured throughput at this destination, so the bar
@@ -173,14 +217,19 @@ export function useJob(facts: JobFacts): Job {
         files: job.files,
         estimateMs: prior ?? null,
       });
+      const cachedFingerprint = cachedSourceFingerprint(facts.config, job.unit, sourceFingerprints);
       try {
-        const { scan, argv, items, targetFingerprint, exitCode } = await checkUnit(
+        const { scan, diff, argv, exitCode } = await checkUnit(
           facts.config,
           job.unit,
           job.target,
           mode,
           {
             signal: quitting.signal,
+            // The refresh snapshot already paid for this metadata walk. Pass
+            // it through so each target does not fingerprint the same source
+            // unit again while a queue is running.
+            ...(cachedFingerprint === undefined ? {} : { fingerprint: cachedFingerprint }),
             // Throttled: one render per 25 files keeps a large folder from
             // driving the render loop instead of the check.
             onFile: (seen) => {
@@ -212,17 +261,10 @@ export function useJob(facts: JobFacts): Job {
         });
         working = upsertScan(working, scan);
         saveState(working);
-        // The itemized list is what the differences screen shows. rsync
-        // produced it during the check; discarding it would mean re-running
-        // the whole check to answer "which files?".
-        saveDiff(
-          buildDiff(job.unit, job.target.name, scan.method, items, {
-            ts: scan.ts,
-            wholeFolderMissing: scan.outcome === "missing",
-            source: scan.fingerprint,
-            target: targetFingerprint,
-          }),
-        );
+        // The itemized list is accumulated during the rsync stream and capped
+        // before it reaches this queue. Saving it here does not retain the
+        // full output or map it into a second unbounded array.
+        saveDiff(diff);
         appendHistory({
           ts: scan.ts,
           unit: job.unit,
@@ -236,15 +278,32 @@ export function useJob(facts: JobFacts): Job {
         facts.setNow(Date.now());
       } catch (e) {
         if (quitting.signal.aborted) return;
-        // Explicit catch at the subprocess boundary; a swallowed rejection
-        // would leave the ledger showing stale state as if it were fresh.
-        debug("check.failed", {
-          unit: job.unit,
-          target: job.target.name,
-          ms: Date.now() - jobStarted,
-          error: (e as Error).message,
-        });
-        setBusy(`${job.unit} → ${job.target.name}: failed — ${(e as Error).message}`);
+        if (e instanceof TargetCheckError) {
+          // A destination can change while an earlier queued check is
+          // running. Treat that job as a named skip, not a transient failure:
+          // the final line must not be overwritten by "check finished".
+          if (!skipped.some((s) => s.target === e.targetName)) {
+            skipped.push({ target: e.targetName, why: e.reachability });
+          }
+          debug("check.skipped", {
+            unit: job.unit,
+            target: e.targetName,
+            reach: e.reachability,
+            fresh: true,
+          });
+          skippedJobs += 1;
+        } else {
+          failed.push({ unit: job.unit, target: job.target.name });
+          // Explicit catch at the subprocess boundary; a swallowed rejection
+          // would leave the ledger showing stale state as if it were fresh.
+          debug("check.failed", {
+            unit: job.unit,
+            target: job.target.name,
+            ms: Date.now() - jobStarted,
+            error: (e as Error).message,
+          });
+          setBusy(`${job.unit} → ${job.target.name}: failed — ${(e as Error).message}`);
+        }
       }
       done += 1;
       bytesDone += job.size;
@@ -256,9 +315,10 @@ export function useJob(facts: JobFacts): Job {
     facts.refresh();
     // A run in which every destination was skipped checked nothing, and must
     // not report otherwise.
-    const ran =
-      jobs.length -
-      skipped.reduce((n, s) => n + jobs.filter((j) => j.target.name === s.target).length, 0);
+    // `skipped` is deduplicated for the human-facing message, so it cannot
+    // also count work: a target may complete one queued unit before becoming
+    // unavailable for the next. Count the actual skipped jobs at the boundary.
+    const ran = jobsRan(jobs.length, skippedJobs);
     if (ran === 0 && skipped.length > 0) {
       setBusy(
         `nothing checked — ${skipped.map((s) => `${s.target} ${reachWord(s.why)}`).join(", ")}`,
@@ -267,6 +327,11 @@ export function useJob(facts: JobFacts): Job {
       setBusy(
         `${mode} check finished · ${ran} of ${jobs.length} · skipped ` +
           skipped.map((s) => `${s.target} (${reachWord(s.why)})`).join(", "),
+      );
+    } else if (failed.length > 0) {
+      setBusy(
+        `${mode} check finished · ${jobs.length - failed.length} of ${jobs.length} · ` +
+          `failed ${failed.map((f) => `${f.target}/${f.unit}`).join(", ")}`,
       );
     } else {
       setBusy(
