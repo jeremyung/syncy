@@ -194,6 +194,9 @@ struct DifferencesView: View {
     for state in needsWork {
       if let match = unit.cells.first(where: { $0.state == state }) { return match.target }
     }
+    if let recorded = unit.cells.first(where: { $0.evidence?.lastCheck != nil }) {
+      return recorded.target
+    }
     return unit.cells.first?.target
   }
 
@@ -506,7 +509,12 @@ struct SyncConfirmationView: View {
 
   private var unit: UnitSnapshot? { model.selectedUnit }
   private var eligibleTargets: [String] {
-    unit?.cells.filter { $0.state == .behind || $0.state == .missing }.map(\.target) ?? []
+    guard let unit else { return [] }
+    let required = Set(
+      (model.snapshot?.targets ?? []).filter(\.required).map(\.name))
+    let eligible = unit.cells.filter { $0.state == .behind || $0.state == .missing }
+    return eligible.filter { required.contains($0.target) }.map(\.target)
+      + eligible.filter { !required.contains($0.target) }.map(\.target)
   }
   private var prepared: SyncPreflight? {
     guard model.syncPreflight?.unit == unit?.unit, model.syncPreflight?.target == targetName else {
