@@ -159,6 +159,24 @@ bun run build          # produces a self-contained ./syncy
 cp syncy ~/.local/bin/
 ```
 
+### Personal Mac app
+
+```sh
+./scripts/build-mac-app.sh
+open build/Syncy.app
+```
+
+This produces a locally signed menu-bar app with the engine embedded. It shows
+the same ledger and evidence as the terminal app, supports setup, differences,
+quick checks, deep verifies, guarded syncs, diagnostics and history, and can run
+daily or weekly work while it remains open. Scheduled sync is opt-in for one
+exact folder and destination and repeats every guard check immediately before it
+copies. Configuration changes suspend that scheduled sync until it is reviewed
+again. Setup can add the stronger sentinel identity through the engine, and
+Settings can register the app to open at login and enable local outcome
+notifications. See [`macos/README.md`](macos/README.md) for development and
+Developer ID signing details.
+
 ## Use
 
 ```
@@ -301,7 +319,7 @@ own palette.
 ## Development
 
 ```
-bun test               # 845 tests
+bun test               # 949 tests
 bunx tsc --noEmit
 bun run build
 bun run audit          # no machine-specific data in the tree or the history

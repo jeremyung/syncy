@@ -116,7 +116,16 @@ export function startSync(
   assertRuntimeContainment(config, target);
   const logPath = opts.logPath ?? syncLogPath(unit, target.name, now);
   assertLogPath(logPath);
-  appendHistory({ ts: now, unit, target: target.name, argv, exitCode: null, log: logPath });
+  appendHistory({
+    ts: now,
+    unit,
+    target: target.name,
+    argv,
+    exitCode: null,
+    log: logPath,
+    operation: "sync",
+    outcome: "started",
+  });
 
   // No mkdir: rsync creates the destination itself. syncy writes directly
   // only inside its own state directory (DESIGN.md section 2).
@@ -162,7 +171,9 @@ export function startSync(
         opts.onLine?.(line);
         const item = parseItemizeLine(line);
         if (item !== null) {
-          if (item.kind === "change") transferred += 1;
+          // Directory creation is itemized too, but the UI promises a file
+          // count. Count only file transfers so that word remains true.
+          if (item.kind === "change" && item.flags[1] === "f") transferred += 1;
           opts.onItem?.(item);
         }
       }
@@ -188,7 +199,17 @@ export function startSync(
     });
     if (stderr !== "") writer.write(stderr);
     await writer.end();
-    appendHistory({ ts: Date.now(), unit, target: target.name, argv, exitCode, log: logPath });
+    appendHistory({
+      ts: Date.now(),
+      unit,
+      target: target.name,
+      argv,
+      exitCode,
+      log: logPath,
+      operation: "sync",
+      outcome: cancelled ? "cancelled" : exitCode === 0 || exitCode === 24 ? "completed" : "failed",
+      ...(stderr === "" ? {} : { detail: stderr.split("\n")[0] }),
+    });
     debug("sync.teardown", { ms: Date.now() - exitedAt });
     return { exitCode, cancelled, transferred, stderr };
   })();

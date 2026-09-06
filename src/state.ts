@@ -271,6 +271,9 @@ export interface HistoryEntry {
   readonly argv: readonly string[];
   readonly exitCode: number | null;
   readonly log?: string;
+  readonly operation?: "quick" | "deep" | "sync";
+  readonly outcome?: "started" | "completed" | "skipped" | "failed" | "cancelled" | "missed";
+  readonly detail?: string;
 }
 
 /** Append-only, and separate from state so history writes can never endanger it. */

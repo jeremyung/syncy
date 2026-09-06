@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+repo_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+build_dir="$repo_dir/build/macos"
+app_dir="$repo_dir/build/Syncy.app"
+contents_dir="$app_dir/Contents"
+binary_dir="$contents_dir/MacOS"
+resources_dir="$contents_dir/Resources"
+sdk_path=$(xcrun --sdk macosx --show-sdk-path)
+
+mkdir -p "$build_dir/cache" "$binary_dir" "$resources_dir"
+
+cd "$repo_dir"
+bun run scripts/build.ts
+cp "$repo_dir/syncy" "$binary_dir/syncy-engine"
+cp "$repo_dir/macos/Info.plist" "$contents_dir/Info.plist"
+
+swiftc -swift-version 6 -sdk "$sdk_path" \
+  -module-cache-path "$build_dir/cache" \
+  -parse-as-library -emit-library -static -emit-module \
+  -emit-module-path "$build_dir/SyncyMacCore.swiftmodule" \
+  -module-name SyncyMacCore \
+  "$repo_dir"/macos/Sources/SyncyMacCore/*.swift \
+  -o "$build_dir/libSyncyMacCore.a"
+
+swiftc -swift-version 6 -sdk "$sdk_path" \
+  -module-cache-path "$build_dir/cache" \
+  -I "$build_dir" -L "$build_dir" -lSyncyMacCore \
+  -module-name SyncyMacApp \
+  "$repo_dir"/macos/Sources/SyncyMacApp/*.swift \
+  -o "$binary_dir/Syncy"
+
+identity=${SYNCY_SIGN_IDENTITY:--}
+codesign --force --options runtime --timestamp=none --sign "$identity" "$binary_dir/syncy-engine"
+codesign --force --options runtime --timestamp=none --sign "$identity" "$app_dir"
+codesign --verify --deep --strict "$app_dir"
+
+echo "$app_dir"

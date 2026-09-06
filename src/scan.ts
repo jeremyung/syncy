@@ -134,6 +134,8 @@ export interface CheckOptions {
   readonly onLine?: (line: string) => void;
   /** Called as rsync finishes with each file — the only source of progress. */
   readonly onFile?: (seen: number, name: string) => void;
+  /** Observable work boundaries for clients that cannot inspect this process. */
+  readonly onPhase?: (phase: CheckPhase) => void;
   readonly now?: number;
   readonly fingerprint?: Fingerprint;
   /**
@@ -147,6 +149,12 @@ export interface CheckOptions {
   readonly signal?: AbortSignal;
 }
 
+export type CheckPhase =
+  | "inspecting-source"
+  | "starting-rsync"
+  | "comparing"
+  | "fingerprinting-destination";
+
 export const methodOf = (mode: Mode): Method => (mode === "deep" ? "deep" : "quick");
 
 export async function checkUnit(
@@ -158,6 +166,7 @@ export async function checkUnit(
 ): Promise<CheckResult> {
   const now = opts.now ?? Date.now();
   const startedAt = Date.now();
+  opts.onPhase?.("inspecting-source");
   const fp = opts.fingerprint ?? fingerprint(join(config.source, unit), config.exclude);
   const base = {
     unit,
@@ -186,6 +195,8 @@ export async function checkUnit(
   // filter was O(n) per line, so a 40,000-file folder spent 800 million
   // comparisons re-deriving a number it could have incremented.
   let nFiles = 0;
+  opts.onPhase?.("starting-rsync");
+  opts.onPhase?.("comparing");
   const result = await runRsync(argv, {
     ...(opts.bin !== undefined ? { bin: opts.bin } : {}),
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
@@ -222,6 +233,7 @@ export async function checkUnit(
 
   // After rsync, not before: the walk is read-only and cheap next to a check,
   // but doing it first would delay the run for a number only shown afterwards.
+  opts.onPhase?.("fingerprinting-destination");
   const targetFingerprint = fingerprint(join(target.path, unit), config.exclude);
 
   const s = summarize(items);
