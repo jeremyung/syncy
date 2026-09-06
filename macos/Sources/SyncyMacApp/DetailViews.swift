@@ -83,7 +83,7 @@ struct DifferencesView: View {
               ContentUnavailableView(
                 "No differences",
                 systemImage: "equal.circle",
-                description: Text(recordedCheckDescription(diff)))
+                description: Text(cleanDifferenceDescription(diff)))
             } else {
               let groups = differenceGroups(envelope: envelope, diff: diff)
               List {
@@ -131,7 +131,8 @@ struct DifferencesView: View {
             ContentUnavailableView(
               "No check recorded",
               systemImage: "arrow.left.arrow.right",
-              description: Text("Nothing has established what differs at this destination."))
+              description: Text(
+                "No recorded check for \(targetName). Run a check to record differences."))
           }
         }
         .task(id: query) {
@@ -201,6 +202,25 @@ struct DifferencesView: View {
     let when = Date(timeIntervalSince1970: diff.ts / 1_000).formatted(
       date: .abbreviated, time: .shortened)
     return "\(operation) \(when) · no differences recorded"
+  }
+
+  private func cleanDifferenceDescription(_ diff: RecordedDiff) -> String {
+    guard let source = diff.sourceHolds else { return recordedCheckDescription(diff) }
+    let sourceSummary =
+      "source \(source.nfiles.formatted()) files · \(bytes(source.bytes))"
+    guard let destination = diff.targetHolds else {
+      return "\(recordedCheckDescription(diff))\n\(sourceSummary) · destination not measured"
+    }
+    let destinationSummary =
+      "destination \(destination.nfiles.formatted()) files · \(bytes(destination.bytes))"
+    let totals =
+      source.nfiles == destination.nfiles && source.bytes == destination.bytes
+      ? " · identical totals" : ""
+    return "\(recordedCheckDescription(diff))\n\(sourceSummary) · \(destinationSummary)\(totals)"
+  }
+
+  private func bytes(_ value: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
   }
 }
 
