@@ -1,6 +1,6 @@
 import type { Config, Target } from "./config.ts";
 import { type Fingerprint, sameFingerprint } from "./fingerprint.ts";
-import { behindSummary, presentEvidence, presentReachability } from "./presentation.ts";
+import { presentDifference, presentEvidence, presentReachability } from "./presentation.ts";
 import type { SentinelStatus } from "./sentinel.ts";
 import { findScan, latestScan, type Scan, type State } from "./state.ts";
 
@@ -124,7 +124,7 @@ export interface CellInput {
  * falls back to the older, weaker phrasing rather than inventing a breakdown.
  */
 export function behindReason(latest: Scan): string {
-  return behindSummary(latest.nChanges, latest.nNew, latest.nFiles);
+  return presentDifference(latest).summary;
 }
 
 /**
@@ -211,7 +211,7 @@ export function cellState(input: CellInput): Cell {
   const extra = { ...base, nExtra: input.knownExtras ?? latest.nExtra };
 
   if (latest.outcome === "error") {
-    return { ...extra, state: "error", reason: "last check failed — rerun with SYNCY_DEBUG=1" };
+    return { ...extra, state: "error", reason: presentDifference(latest).summary };
   }
   if (latest.outcome === "missing") {
     // `base`'s nChanges/bytesPending are 0 — true of a check that itemised
@@ -223,7 +223,7 @@ export function cellState(input: CellInput): Cell {
     return {
       ...extra,
       state: "missing",
-      reason: "never copied",
+      reason: presentDifference(latest).summary,
       nChanges: input.fingerprintNow.nfiles,
       nFiles: input.fingerprintNow.nfiles,
       // Nothing is at the destination, so every file is a creation.
