@@ -138,14 +138,87 @@ public struct JobEventSnapshot: Decodable, Sendable {
     guard protocolVersion == 1 else {
       throw EngineClientError.protocolFailure("unsupported job event version \(protocolVersion)")
     }
-    guard type.hasPrefix("job."), at.isFinite else {
+    guard
+      Self.allowedTypes.contains(type), Self.allowedOperations.contains(operation), at.isFinite
+    else {
       throw EngineClientError.protocolFailure("invalid job event")
     }
-    let counts = [filesSeen, filesTotal, bytesDone, bytesTotal]
+    let counts = [
+      filesSeen, filesTotal, bytesDone, bytesTotal, batch?.position, batch?.total,
+      batch?.bytesDone, batch?.bytesTotal, unitSize?.files, unitSize?.bytes,
+      result?.nChanges, result?.nFiles, result?.nNew, result?.nExtra,
+      result?.bytesPending, result?.transferred, transferred,
+    ]
     guard counts.allSatisfy({ $0.map { $0 >= 0 } ?? true }) else {
       throw EngineClientError.protocolFailure("job event contains a negative count")
     }
+    guard priorDurationMs.map({ $0.isFinite && $0 >= 0 }) ?? true,
+      result?.durationMs.map({ $0.isFinite && $0 >= 0 }) ?? true
+    else {
+      throw EngineClientError.protocolFailure("job event contains an invalid duration")
+    }
+    if let batch {
+      guard batch.total > 0, batch.position > 0, batch.position <= batch.total else {
+        throw EngineClientError.protocolFailure("job event contains an invalid batch position")
+      }
+    }
+    switch type {
+    case "job.started":
+      guard phase == "queued", unitSize != nil else {
+        throw EngineClientError.protocolFailure("invalid job.started event")
+      }
+    case "job.phase-changed":
+      guard phase.map({ Self.allowedPhases.contains($0) }) == true else {
+        throw EngineClientError.protocolFailure("invalid job.phase-changed event")
+      }
+    case "job.progress-observed":
+      guard
+        [filesSeen, filesTotal, bytesDone, bytesTotal].contains(where: { $0 != nil })
+          || lastItem != nil
+      else {
+        throw EngineClientError.protocolFailure("progress event contains no observation")
+      }
+    case "job.skipped":
+      guard let reachability, reachability != .ok, reason != nil else {
+        throw EngineClientError.protocolFailure("invalid job.skipped event")
+      }
+    case "job.completed":
+      guard let result else {
+        throw EngineClientError.protocolFailure("completed event contains no result")
+      }
+      if operation == "sync" {
+        guard result.exitCode != nil, result.transferred != nil else {
+          throw EngineClientError.protocolFailure("invalid completed sync event")
+        }
+      } else {
+        guard result.outcome.map({ Self.allowedOutcomes.contains($0) }) == true,
+          result.nChanges != nil, result.nExtra != nil, result.bytesPending != nil
+        else {
+          throw EngineClientError.protocolFailure("invalid completed check event")
+        }
+      }
+    case "job.failed":
+      guard message != nil else {
+        throw EngineClientError.protocolFailure("failed event contains no message")
+      }
+    case "job.cancelled":
+      break
+    default:
+      preconditionFailure("allowed job event was not validated")
+    }
   }
+
+  private static let allowedTypes: Set<String> = [
+    "job.started", "job.phase-changed", "job.progress-observed", "job.skipped",
+    "job.completed", "job.failed", "job.cancelled",
+  ]
+  private static let allowedOperations: Set<String> = ["quick", "deep", "sync", "setup"]
+  private static let allowedPhases: Set<String> = [
+    "queued", "inspecting-source", "checking-destination-identity", "running-preflight",
+    "starting-rsync", "comparing-metadata", "comparing-content", "transferring",
+    "fingerprinting-destination", "recording-evidence", "cancelling",
+  ]
+  private static let allowedOutcomes: Set<String> = ["clean", "behind", "missing", "error"]
 
   private enum CodingKeys: String, CodingKey {
     case protocolVersion, type, jobId, at, operation, unit, target, phase, batch, unitSize

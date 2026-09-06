@@ -118,6 +118,20 @@ final class ModelsTests: XCTestCase {
     XCTAssertEqual(events[2].filesTotal, 12)
   }
 
+  func testJobProtocolRejectsUnknownEventTypes() {
+    let json =
+      #"{"protocolVersion":1,"type":"job.future","jobId":"j","at":1,"operation":"deep","unit":"photos","target":"Archive"}"#
+
+    XCTAssertThrowsError(try JSONDecoder().decode(JobEventSnapshot.self, from: Data(json.utf8)))
+  }
+
+  func testJobProtocolRejectsProgressWithoutAnObservation() {
+    let json =
+      #"{"protocolVersion":1,"type":"job.progress-observed","jobId":"j","at":1,"operation":"deep","unit":"photos","target":"Archive"}"#
+
+    XCTAssertThrowsError(try JSONDecoder().decode(JobEventSnapshot.self, from: Data(json.utf8)))
+  }
+
   func testSnapshotProtocolRejectsNullOptionalCounts() {
     let json =
       #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[{"unit":"a","state":"unchecked","reason":"never checked","fingerprint":{"nfiles":0,"bytes":0,"maxMtimeNs":"0"},"cells":[{"target":"one","state":"unchecked","reason":"never checked","nChanges":0,"nNew":null,"bytesPending":0,"nExtra":0}]}]}"#
