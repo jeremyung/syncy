@@ -13,6 +13,8 @@ export interface SyncIntent {
   readonly argv: readonly string[];
   readonly fingerprint: Fingerprint;
   readonly nChanges: number;
+  /** Changed file total used for transfer progress; absent on legacy intents. */
+  readonly nFiles?: number;
   readonly bytesPending: number;
   readonly needsChecksum: boolean;
 }
@@ -46,6 +48,7 @@ function parseIntent(raw: unknown): SyncIntent {
     typeof value.fingerprint !== "object" ||
     value.fingerprint === null ||
     typeof value.nChanges !== "number" ||
+    (value.nFiles !== undefined && typeof value.nFiles !== "number") ||
     typeof value.bytesPending !== "number" ||
     typeof value.needsChecksum !== "boolean"
   ) {

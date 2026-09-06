@@ -21,6 +21,7 @@ import type { Theme } from "./theme.ts";
 export interface SyncCandidate {
   readonly name: string;
   readonly nChanges: number;
+  readonly nFiles?: number;
   readonly bytesPending: number;
 }
 
@@ -42,6 +43,8 @@ export interface ConfirmProps {
   /** Called with the name of the destination to switch to. */
   readonly onSwitch?: (name: string) => void;
   readonly nChanges: number;
+  /** Changed files only; old evidence has no separate count. */
+  readonly nFiles?: number;
   /** Of `nChanges`, the ones not at the destination at all. */
   readonly nNew?: number;
   readonly nExtra: number;
@@ -242,7 +245,10 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
       </Box>
       <Rule width={W} theme={theme} />
 
-      {row("will transfer", `${count(props.nChanges)} files · ${bytes(props.bytesPending)}`)}
+      {row(
+        "will transfer",
+        `${count(props.nFiles ?? props.nChanges)} ${props.nFiles === undefined ? "changes" : "files"} · ${bytes(props.bytesPending)}`,
+      )}
       {(() => {
         const line = replaceLine(props.nChanges, props.nNew);
         return line === null ? null : row("will replace", line);

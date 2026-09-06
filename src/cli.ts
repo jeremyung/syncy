@@ -11,6 +11,7 @@ import { bytes } from "./format.ts";
 import { preflight } from "./guards.ts";
 import { acquireJobOwner } from "./job-owner.ts";
 import { configDir, configFile, stateDir, stateFile } from "./paths.ts";
+import { presentDiffSummary } from "./presentation.ts";
 import { serializeEngineMessage } from "./protocol-jsonl.ts";
 import { type LedgerRow, renderLedger } from "./render.ts";
 import { argvFor, checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
@@ -305,6 +306,12 @@ async function cmdEngine(
     if (!config.targets.some((target) => target.name === extra)) {
       fail(`no such destination: ${extra}`);
     }
+    const diff = loadDiff(detail, extra);
+    const target = config.targets.find((candidate) => candidate.name === extra)!;
+    const presentation = diff === null ? undefined : presentDiffSummary(diff);
+    const reachability = (await allReachability(config)).get(extra) ?? "unreachable";
+    const configuredIdentity = target.identity ?? target.sentinel ?? "";
+    const identityMatches = diff?.targetIdentity === configuredIdentity;
     process.stdout.write(
       serializeEngineMessage({
         protocolVersion: 1,
@@ -312,7 +319,25 @@ async function cmdEngine(
         generatedAt: Date.now(),
         unit: detail,
         target: extra,
-        diff: loadDiff(detail, extra),
+        diff,
+        ...(presentation === undefined
+          ? {}
+          : {
+              presentation: {
+                parts: presentation.parts,
+                copyableFiles: presentation.copyableFiles,
+              },
+            }),
+        ...(diff?.targetIdentity === undefined
+          ? {}
+          : {
+              provenance: {
+                targetIdentity: diff.targetIdentity,
+                identityMatches,
+                reachability,
+                current: identityMatches && reachability === "ok",
+              },
+            }),
       }),
     );
     return;
@@ -441,6 +466,7 @@ async function cmdSyncPreflight(
       argv,
       fingerprint: unit.fingerprint,
       nChanges: cell.nChanges,
+      ...(cell.nFiles === undefined ? {} : { nFiles: cell.nFiles }),
       bytesPending: cell.bytesPending,
       needsChecksum,
     });
@@ -456,6 +482,7 @@ async function cmdSyncPreflight(
       checks: result.checks,
       ok: result.ok,
       nChanges: cell.nChanges,
+      ...(cell.nFiles === undefined ? {} : { nFiles: cell.nFiles }),
       ...(cell.nNew === undefined ? {} : { nNew: cell.nNew }),
       nExtra: cell.nExtra,
       bytesPending: cell.bytesPending,
@@ -531,7 +558,10 @@ async function cmdEngineSync(config: Config, token: string): Promise<void> {
       type: "job.started",
       at: Date.now(),
       phase: "queued",
-      unitSize: { files: intent.nChanges, bytes: intent.bytesPending },
+      unitSize: {
+        ...(intent.nFiles === undefined ? {} : { files: intent.nFiles }),
+        bytes: intent.bytesPending,
+      },
     });
     emit({ ...base, type: "job.phase-changed", at: Date.now(), phase: "starting-rsync" });
     let transferred = 0;
@@ -540,13 +570,13 @@ async function cmdEngineSync(config: Config, token: string): Promise<void> {
       onItem: (item) => {
         if (item.kind !== "change" || item.flags[1] !== "f") return;
         transferred += 1;
-        if (transferred % 25 === 0 || transferred === intent.nChanges) {
+        if (transferred % 25 === 0 || transferred === intent.nFiles) {
           emit({
             ...base,
             type: "job.progress-observed",
             at: Date.now(),
             filesSeen: transferred,
-            filesTotal: intent.nChanges,
+            ...(intent.nFiles === undefined ? {} : { filesTotal: intent.nFiles }),
           });
         }
       },

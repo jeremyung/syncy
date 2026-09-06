@@ -158,11 +158,15 @@ export function detailLine(p: RunProgress, now: number): string {
   // say why, and that syncy is measuring this run so the next one has one.
   const eta =
     p.priorMs !== undefined && p.priorMs > 0
-      ? ` of ~${clock(p.priorMs)}`
+      ? ` elapsed · this folder ~${clock(p.priorMs)}`
       : barFraction(p, now).drawable
         ? ""
         : " · no estimate yet, timing this run";
-  return `${reading}${clock(elapsed)}${eta}`;
+  // The expected duration measures one folder, not the batch. When it is
+  // available, naming that relationship matters more than repeating the deep
+  // check's byte total (and keeps the fitted ledger line within its budget).
+  const hasPrior = p.priorMs !== undefined && p.priorMs > 0;
+  return `${hasPrior ? "" : reading}${clock(elapsed)}${eta}`;
 }
 
 /**

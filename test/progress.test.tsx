@@ -66,6 +66,7 @@ describe("the detail claims a file count only when rsync gives one", () => {
   test("with a prior run it gives that as the expectation", () => {
     const out = at({ ...base, priorMs: 720_000 }, 164_000);
     expect(out).toContain("12m");
+    expect(out).toContain("this folder");
     expect(out).not.toContain("reports at the end");
   });
 
@@ -264,6 +265,8 @@ describe("the detail line never contradicts the bar above it", () => {
   });
 
   test("with a timing sample the caption names the expected total", () => {
-    expect(at({ ...base, priorMs: 720_000 }, 360_000)).toContain("of ~12m");
+    const out = at({ ...base, priorMs: 720_000 }, 360_000);
+    expect(out).toContain("elapsed");
+    expect(out).toContain("this folder ~12m");
   });
 });

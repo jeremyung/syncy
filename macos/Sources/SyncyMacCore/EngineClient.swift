@@ -7,10 +7,15 @@ private final class ProcessBox: @unchecked Sendable {
 
 public protocol EngineClient: Sendable {
   func snapshot() async throws -> EngineSnapshot
-  func runCheck(_ operation: EngineCheckOperation, unit: String?, actor: EngineActor) async throws
+  func runCheck(
+    _ operation: EngineCheckOperation, unit: String?, actor: EngineActor,
+    onEvent: @escaping JobEventHandler
+  ) async throws
   func doctor() async throws -> String
   func prepareSync(unit: String, target: String) async throws -> SyncPreflight
-  func runSync(confirmationToken: String, actor: EngineActor) async throws
+  func runSync(
+    confirmationToken: String, actor: EngineActor, onEvent: @escaping JobEventHandler
+  ) async throws
   func setSource(path: String) async throws -> EngineSnapshot
   func addDestination(path: String, name: String) async throws -> EngineSnapshot
   func adoptDestination(name: String) async throws -> EngineSnapshot
@@ -22,13 +27,25 @@ public protocol EngineClient: Sendable {
 
 extension EngineClient {
   public func runCheck(_ operation: EngineCheckOperation, unit: String?) async throws {
-    try await runCheck(operation, unit: unit, actor: .mac)
+    try await runCheck(operation, unit: unit, actor: .mac, onEvent: { _ in })
+  }
+
+  public func runCheck(
+    _ operation: EngineCheckOperation, unit: String?, actor: EngineActor
+  ) async throws {
+    try await runCheck(operation, unit: unit, actor: actor, onEvent: { _ in })
   }
 
   public func runSync(confirmationToken: String) async throws {
-    try await runSync(confirmationToken: confirmationToken, actor: .mac)
+    try await runSync(confirmationToken: confirmationToken, actor: .mac, onEvent: { _ in })
+  }
+
+  public func runSync(confirmationToken: String, actor: EngineActor) async throws {
+    try await runSync(confirmationToken: confirmationToken, actor: actor, onEvent: { _ in })
   }
 }
+
+public typealias JobEventHandler = @Sendable (JobEventSnapshot) -> Void
 
 public enum EngineActor: String, Sendable {
   case mac
@@ -38,6 +55,103 @@ public enum EngineActor: String, Sendable {
 public enum EngineCheckOperation: String, Sendable {
   case quick = "check"
   case deep = "verify"
+
+  public var readerTitle: String {
+    self == .deep ? "Deep verify" : "Quick check"
+  }
+}
+
+public struct JobBatchSnapshot: Decodable, Sendable {
+  public let position: Int64
+  public let total: Int64
+  public let bytesDone: Int64
+  public let bytesTotal: Int64
+}
+
+public struct JobUnitSizeSnapshot: Decodable, Sendable {
+  public let files: Int64?
+  public let bytes: Int64
+}
+
+public struct JobResultSnapshot: Decodable, Sendable {
+  public let outcome: String?
+  public let nChanges: Int64?
+  public let nFiles: Int64?
+  public let nNew: Int64?
+  public let nExtra: Int64?
+  public let bytesPending: Int64?
+  public let exitCode: Int32?
+  public let durationMs: Double?
+  public let transferred: Int64?
+}
+
+/// One literal JSONL observation from the engine. Missing progress values remain missing.
+public struct JobEventSnapshot: Decodable, Sendable {
+  public let protocolVersion: Int
+  public let type: String
+  public let jobId: String
+  public let at: Double
+  public let operation: String
+  public let unit: String
+  public let target: String
+  public let phase: String?
+  public let batch: JobBatchSnapshot?
+  public let unitSize: JobUnitSizeSnapshot?
+  public let priorDurationMs: Double?
+  public let filesSeen: Int64?
+  public let filesTotal: Int64?
+  public let bytesDone: Int64?
+  public let bytesTotal: Int64?
+  public let lastItem: String?
+  public let reachability: Reachability?
+  public let reason: String?
+  public let result: JobResultSnapshot?
+  public let message: String?
+  public let exitCode: Int32?
+  public let transferred: Int64?
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    protocolVersion = try values.decode(Int.self, forKey: .protocolVersion)
+    type = try values.decode(String.self, forKey: .type)
+    jobId = try values.decode(String.self, forKey: .jobId)
+    at = try values.decode(Double.self, forKey: .at)
+    operation = try values.decode(String.self, forKey: .operation)
+    unit = try values.decode(String.self, forKey: .unit)
+    target = try values.decode(String.self, forKey: .target)
+    phase = try values.decodeIfPresent(String.self, forKey: .phase)
+    batch = try values.decodeIfPresent(JobBatchSnapshot.self, forKey: .batch)
+    unitSize = try values.decodeIfPresent(JobUnitSizeSnapshot.self, forKey: .unitSize)
+    priorDurationMs = try values.decodeIfPresent(Double.self, forKey: .priorDurationMs)
+    filesSeen = try values.decodeIfPresent(Int64.self, forKey: .filesSeen)
+    filesTotal = try values.decodeIfPresent(Int64.self, forKey: .filesTotal)
+    bytesDone = try values.decodeIfPresent(Int64.self, forKey: .bytesDone)
+    bytesTotal = try values.decodeIfPresent(Int64.self, forKey: .bytesTotal)
+    lastItem = try values.decodeIfPresent(String.self, forKey: .lastItem)
+    reachability = try values.decodeIfPresent(Reachability.self, forKey: .reachability)
+    reason = try values.decodeIfPresent(String.self, forKey: .reason)
+    result = try values.decodeIfPresent(JobResultSnapshot.self, forKey: .result)
+    message = try values.decodeIfPresent(String.self, forKey: .message)
+    exitCode = try values.decodeIfPresent(Int32.self, forKey: .exitCode)
+    transferred = try values.decodeIfPresent(Int64.self, forKey: .transferred)
+
+    guard protocolVersion == 1 else {
+      throw EngineClientError.protocolFailure("unsupported job event version \(protocolVersion)")
+    }
+    guard type.hasPrefix("job."), at.isFinite else {
+      throw EngineClientError.protocolFailure("invalid job event")
+    }
+    let counts = [filesSeen, filesTotal, bytesDone, bytesTotal]
+    guard counts.allSatisfy({ $0.map { $0 >= 0 } ?? true }) else {
+      throw EngineClientError.protocolFailure("job event contains a negative count")
+    }
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case protocolVersion, type, jobId, at, operation, unit, target, phase, batch, unitSize
+    case priorDurationMs, filesSeen, filesTotal, bytesDone, bytesTotal, lastItem, reachability
+    case reason, result, message, exitCode, transferred
+  }
 }
 
 public struct SyncGuardCheck: Decodable, Identifiable, Sendable {
@@ -58,6 +172,7 @@ public struct SyncPreflight: Decodable, Sendable {
   public let checks: [SyncGuardCheck]
   public let ok: Bool
   public let nChanges: Int64
+  public let nFiles: Int64?
   public let nNew: Int64?
   public let nExtra: Int64
   public let bytesPending: Int64
@@ -86,6 +201,28 @@ public struct RecordedDiff: Decodable, Sendable {
   public let entries: [DiffEntrySnapshot]
   public let truncated: Int64
   public let wholeFolderMissing: Bool
+  public let targetIdentity: String?
+  public let sourceHolds: FingerprintSnapshot?
+  public let targetHolds: FingerprintSnapshot?
+}
+
+public struct DiffPresentationPart: Decodable, Identifiable, Sendable {
+  public var id: String { kind }
+  public let kind: String
+  public let count: Int64
+  public let label: String
+}
+
+public struct DiffPresentationSnapshot: Decodable, Sendable {
+  public let parts: [DiffPresentationPart]
+  public let copyableFiles: Int64
+}
+
+public struct DiffProvenanceSnapshot: Decodable, Sendable {
+  public let targetIdentity: String
+  public let identityMatches: Bool?
+  public let reachability: Reachability?
+  public let current: Bool
 }
 
 public struct DiffEnvelope: Decodable, Sendable {
@@ -95,6 +232,8 @@ public struct DiffEnvelope: Decodable, Sendable {
   public let unit: String
   public let target: String
   public let diff: RecordedDiff?
+  public let presentation: DiffPresentationSnapshot?
+  public let provenance: DiffProvenanceSnapshot?
 }
 
 public struct HistorySnapshotEntry: Decodable, Identifiable, Sendable {
@@ -120,6 +259,15 @@ public enum Reachability: String, Codable, Sendable {
   case missing
   case mismatch
   case unreachable
+
+  public var ledgerPhrase: String {
+    switch self {
+    case .ok: "connected"
+    case .missing: "no sentinel found"
+    case .mismatch: "different volume"
+    case .unreachable: "not connected"
+    }
+  }
 }
 
 public struct TargetSnapshot: Codable, Identifiable, Sendable {
@@ -127,6 +275,7 @@ public struct TargetSnapshot: Codable, Identifiable, Sendable {
   public let name: String
   public let required: Bool
   public let reachability: Reachability
+  public let reachabilityPhrase: String?
   public let usesSentinel: Bool
 }
 
@@ -151,12 +300,33 @@ public struct FingerprintSnapshot: Decodable, Sendable {
   }
 }
 
+public struct CheckEvidenceSnapshot: Decodable, Sendable {
+  public let method: String
+  public let outcome: String
+  public let at: Double
+  public let durationMs: Double?
+  public let nChanges: Int64
+  public let nFiles: Int64?
+  public let nExtra: Int64
+  public let bytesPending: Int64
+}
+
+public struct CellEvidenceSnapshot: Decodable, Sendable {
+  public let currentTarget: Bool
+  public let lastCheck: CheckEvidenceSnapshot?
+  public let deepCheck: CheckEvidenceSnapshot?
+  public let extrasObservedAt: Double?
+}
+
 public struct CellSnapshot: Decodable, Identifiable, Sendable {
   public var id: String { target }
   public let target: String
   public let state: LedgerState
   public let reason: String
+  public let differenceSummary: String?
+  public let evidence: CellEvidenceSnapshot?
   public let nChanges: Int64
+  public let nFiles: Int64?
   public let nNew: Int64?
   public let bytesPending: Int64
   public let nExtra: Int64
@@ -167,7 +337,10 @@ public struct CellSnapshot: Decodable, Identifiable, Sendable {
     target = try values.decode(String.self, forKey: .target)
     state = try values.decode(LedgerState.self, forKey: .state)
     reason = try values.decode(String.self, forKey: .reason)
+    differenceSummary = try values.decodeIfPresent(String.self, forKey: .differenceSummary)
+    evidence = try values.decodeIfPresent(CellEvidenceSnapshot.self, forKey: .evidence)
     nChanges = try values.decode(Int64.self, forKey: .nChanges)
+    nFiles = try values.decodeIfPresent(Int64.self, forKey: .nFiles)
     nNew = values.contains(.nNew) ? try values.decode(Int64.self, forKey: .nNew) : nil
     bytesPending = try values.decode(Int64.self, forKey: .bytesPending)
     nExtra = try values.decode(Int64.self, forKey: .nExtra)
@@ -177,7 +350,8 @@ public struct CellSnapshot: Decodable, Identifiable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case target, state, reason, nChanges, nNew, bytesPending, nExtra, needsChecksum
+    case target, state, reason, differenceSummary, evidence, nChanges, nFiles, nNew, bytesPending, nExtra,
+      needsChecksum
   }
 }
 
@@ -200,6 +374,24 @@ public struct ActiveJobSnapshot: Decodable, Sendable {
   public let startedAt: Double
   public let heartbeatAt: Double
   public let activity: ActiveJobActivity?
+  public let priorDurationMs: Double?
+  public let batchPosition: Int64?
+  public let batchTotal: Int64?
+
+  public init(
+    actor: String, operation: String, startedAt: Double, heartbeatAt: Double,
+    activity: ActiveJobActivity?, priorDurationMs: Double? = nil,
+    batchPosition: Int64? = nil, batchTotal: Int64? = nil
+  ) {
+    self.actor = actor
+    self.operation = operation
+    self.startedAt = startedAt
+    self.heartbeatAt = heartbeatAt
+    self.activity = activity
+    self.priorDurationMs = priorDurationMs
+    self.batchPosition = batchPosition
+    self.batchTotal = batchTotal
+  }
 }
 
 public struct ActiveJobActivity: Decodable, Sendable {
@@ -211,6 +403,23 @@ public struct ActiveJobActivity: Decodable, Sendable {
   public let filesTotal: Int64?
   public let bytesDone: Int64?
   public let bytesTotal: Int64?
+  public let lastItem: String?
+
+  public init(
+    unit: String, target: String, phase: String, at: Double, filesSeen: Int64? = nil,
+    filesTotal: Int64? = nil, bytesDone: Int64? = nil, bytesTotal: Int64? = nil,
+    lastItem: String? = nil
+  ) {
+    self.unit = unit
+    self.target = target
+    self.phase = phase
+    self.at = at
+    self.filesSeen = filesSeen
+    self.filesTotal = filesTotal
+    self.bytesDone = bytesDone
+    self.bytesTotal = bytesTotal
+    self.lastItem = lastItem
+  }
 }
 
 public struct EngineSnapshot: Decodable, Sendable {
@@ -251,7 +460,8 @@ public struct EngineSnapshot: Decodable, Sendable {
       }
       for (cellIndex, cell) in unit.cells.enumerated() {
         guard
-          cell.nChanges >= 0, cell.nNew.map({ $0 >= 0 }) ?? true,
+          cell.nChanges >= 0, cell.nFiles.map({ $0 >= 0 }) ?? true,
+          cell.nNew.map({ $0 >= 0 }) ?? true,
           cell.bytesPending >= 0, cell.nExtra >= 0
         else {
           throw EngineClientError.protocolFailure(
@@ -325,13 +535,15 @@ public struct ProcessEngineClient: EngineClient {
   }
 
   public func runCheck(
-    _ operation: EngineCheckOperation, unit: String?, actor: EngineActor
+    _ operation: EngineCheckOperation, unit: String?, actor: EngineActor,
+    onEvent: @escaping JobEventHandler
   ) async throws {
     let executableURL = executableURL
     let worker = Task.detached(priority: .userInitiated) {
       try await Self.runJob(
         executableURL: executableURL,
-        arguments: [operation.rawValue] + (unit.map { [$0] } ?? []), actor: actor)
+        arguments: [operation.rawValue] + (unit.map { [$0] } ?? []), actor: actor,
+        onEvent: onEvent)
     }
     try await withTaskCancellationHandler {
       try await worker.value
@@ -373,11 +585,14 @@ public struct ProcessEngineClient: EngineClient {
     }.value
   }
 
-  public func runSync(confirmationToken: String, actor: EngineActor) async throws {
+  public func runSync(
+    confirmationToken: String, actor: EngineActor, onEvent: @escaping JobEventHandler
+  ) async throws {
     let executableURL = executableURL
     let worker = Task.detached(priority: .userInitiated) {
       try await Self.runJob(
-        executableURL: executableURL, arguments: ["sync", confirmationToken], actor: actor)
+        executableURL: executableURL, arguments: ["sync", confirmationToken], actor: actor,
+        onEvent: onEvent)
     }
     try await withTaskCancellationHandler {
       try await worker.value
@@ -489,7 +704,8 @@ public struct ProcessEngineClient: EngineClient {
   }
 
   private static func runJob(
-    executableURL: URL, arguments: [String], actor: EngineActor
+    executableURL: URL, arguments: [String], actor: EngineActor,
+    onEvent: @escaping JobEventHandler
   ) async throws {
     let process = Process()
     let processBox = ProcessBox(process)
@@ -510,10 +726,24 @@ public struct ProcessEngineClient: EngineClient {
       } catch {
         throw EngineClientError.launchFailed(error.localizedDescription)
       }
+      defer {
+        if process.isRunning { process.terminate() }
+      }
       if Task.isCancelled { process.terminate() }
       let errorHandle = stderr.fileHandleForReading
       let errorReader = Task.detached { errorHandle.readDataToEndOfFile() }
-      let output = stdout.fileHandleForReading.readDataToEndOfFile()
+      var output = Data()
+      var pending: [UInt8] = []
+      while let chunk = try stdout.fileHandleForReading.read(upToCount: 64 * 1_024), !chunk.isEmpty {
+        output.append(chunk)
+        pending.append(contentsOf: chunk)
+        while let newline = pending.firstIndex(of: 0x0A) {
+          let line = Data(pending[..<newline])
+          pending.removeFirst(newline + 1)
+          if !line.isEmpty { onEvent(try decodeJobEvent(line)) }
+        }
+      }
+      if !pending.isEmpty { onEvent(try decodeJobEvent(Data(pending))) }
       let errorOutput = await errorReader.value
       process.waitUntilExit()
       try Task.checkCancellation()
@@ -530,13 +760,16 @@ public struct ProcessEngineClient: EngineClient {
     }
     guard !output.isEmpty else { throw EngineClientError.emptyOutput }
 
-    for line in output.split(separator: 0x0A) {
-      let value = try JSONSerialization.jsonObject(with: Data(line))
-      guard let message = value as? [String: Any], message["protocolVersion"] as? Int == 1,
-        let type = message["type"] as? String, type.hasPrefix("job.")
-      else {
-        throw EngineClientError.protocolFailure("job output contained an invalid record")
-      }
+  }
+
+  private static func decodeJobEvent(_ data: Data) throws -> JobEventSnapshot {
+    do {
+      return try JSONDecoder().decode(JobEventSnapshot.self, from: data)
+    } catch let error as EngineClientError {
+      throw error
+    } catch {
+      throw EngineClientError.protocolFailure(
+        "job output contained an invalid record · \(error.localizedDescription)")
     }
   }
 
@@ -579,7 +812,7 @@ public struct DisconnectedEngineClient: EngineClient {
   }
 
   public func runCheck(
-    _: EngineCheckOperation, unit _: String?, actor _: EngineActor
+    _: EngineCheckOperation, unit _: String?, actor _: EngineActor, onEvent _: @escaping JobEventHandler
   ) async throws {
     throw EngineClientError.engineNotFound
   }
@@ -592,7 +825,9 @@ public struct DisconnectedEngineClient: EngineClient {
     throw EngineClientError.engineNotFound
   }
 
-  public func runSync(confirmationToken _: String, actor _: EngineActor) async throws {
+  public func runSync(
+    confirmationToken _: String, actor _: EngineActor, onEvent _: @escaping JobEventHandler
+  ) async throws {
     throw EngineClientError.engineNotFound
   }
 

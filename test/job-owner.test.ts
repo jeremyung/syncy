@@ -178,6 +178,25 @@ describe("cross-process job ownership", () => {
       at: 1_900,
       filesSeen: 12,
       filesTotal: 100,
+      lastItem: "image.jpg",
+    });
+
+    result.lease.observe({
+      protocolVersion: 1,
+      type: "job.phase-changed",
+      jobId: "job-1",
+      at: 1_950,
+      operation: "deep",
+      unit: "photos",
+      target: "archive",
+      phase: "recording-evidence",
+    });
+
+    expect(readJobOwner(root)?.activity).toMatchObject({
+      phase: "recording-evidence",
+      filesSeen: 12,
+      filesTotal: 100,
+      lastItem: "image.jpg",
     });
   });
 });

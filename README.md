@@ -319,7 +319,7 @@ own palette.
 ## Development
 
 ```
-bun test               # 949 tests
+bun test               # 965 tests
 bunx tsc --noEmit
 bun run build
 bun run audit          # no machine-specific data in the tree or the history

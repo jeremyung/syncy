@@ -22,7 +22,7 @@ struct MenuBarPanel: View {
       }
       .padding(.bottom, 18)
 
-      if model.isLaunchingJob, model.snapshot?.activeJob == nil {
+      if model.isLaunchingJob, model.activeJob == nil {
         HStack(spacing: 9) {
           ProgressView().controlSize(.small)
           Text("Starting work")
@@ -36,14 +36,21 @@ struct MenuBarPanel: View {
         StatusProblem(
           title: "Ledger unavailable",
           detail: engineError)
-      } else if let active = model.snapshot?.activeJob {
+      } else if let active = model.activeJob {
         ActiveJobSummary(job: active)
       } else if let error = model.errorMessage {
         StatusProblem(
           title: "Last work needs attention",
           detail: error)
       } else if let snapshot = model.snapshot {
-        SnapshotSummary(snapshot: snapshot)
+        VStack(alignment: .leading, spacing: SyncySpace.md) {
+          if let outcome = model.jobOutcomeMessage {
+            Text(outcome)
+              .font(.caption)
+              .foregroundStyle(SyncyTheme.secondaryInk)
+          }
+          SnapshotSummary(snapshot: snapshot)
+        }
       } else {
         StatusProblem(title: "Ledger unavailable", detail: "The engine returned no snapshot.")
       }
@@ -64,7 +71,7 @@ struct MenuBarPanel: View {
           .disabled(model.isCancellingJob)
         }
         Button("Refresh") { Task { await model.refresh() } }
-          .disabled(model.isLoading)
+          .disabled(model.isRefreshing)
       }
     }
     .padding(SyncySpace.lg)
@@ -74,16 +81,16 @@ struct MenuBarPanel: View {
   }
 
   private var statusWord: String {
+    if model.activeJob != nil { return "running" }
     if model.isLaunchingJob { return "starting" }
-    if model.snapshot?.activeJob != nil { return "running" }
-    if model.isLoading { return "reading" }
+    if model.isLoading, model.snapshot == nil { return "reading" }
     if model.engineErrorMessage != nil { return "unavailable" }
     if model.errorMessage != nil { return "error" }
     guard let snapshot = model.snapshot else { return "unchecked" }
-    if snapshot.targets.contains(where: { $0.reachability != .ok }) { return "unchecked" }
     for state in [LedgerState.error, .missing, .behind, .unchecked, .unverified, .verified] {
       if snapshot.units.contains(where: { $0.state == state }) { return state.rawValue }
     }
+    if snapshot.targets.contains(where: { $0.reachability != .ok }) { return "unchecked" }
     return "unchecked"
   }
 }
@@ -111,6 +118,11 @@ private struct ActiveJobSummary: View {
       VStack(alignment: .leading, spacing: 8) {
         Text(operationTitle)
           .font(.headline)
+        if let position = job.batchPosition, let total = job.batchTotal, total > 1 {
+          Text("Folder \(position.formatted()) of \(total.formatted())")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(SyncyTheme.secondaryInk)
+        }
         if let activity = job.activity {
           Text("\(phaseName(activity.phase)) · \(activity.unit) → \(activity.target)")
             .font(.callout)
@@ -118,6 +130,11 @@ private struct ActiveJobSummary: View {
           if let seen = activity.filesSeen, let total = activity.filesTotal, total > 0 {
             ProgressView(value: Double(seen), total: Double(total))
             Text("\(seen.formatted()) of \(total.formatted()) files observed")
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(SyncyTheme.secondaryInk)
+          } else if let done = activity.bytesDone, let total = activity.bytesTotal, total > 0 {
+            ProgressView(value: Double(done), total: Double(total))
+            Text("\(bytes(done)) of \(bytes(total)) observed · rsync measured")
               .font(.caption.monospacedDigit())
               .foregroundStyle(SyncyTheme.secondaryInk)
           } else if let seen = activity.filesSeen {
@@ -132,10 +149,22 @@ private struct ActiveJobSummary: View {
           Text("Last engine event \(age(since: activity.at, at: context.date))")
             .font(.caption)
             .foregroundStyle(SyncyTheme.quietInk)
+          if let item = activity.lastItem, !item.isEmpty {
+            Text(item)
+              .font(.caption.monospaced())
+              .foregroundStyle(SyncyTheme.quietInk)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
         }
         Text(elapsed(at: context.date))
           .font(.system(.title3, design: .monospaced, weight: .semibold))
           .monospacedDigit()
+        if let prior = job.priorDurationMs, prior > 0 {
+          Text("This folder previously took about \(duration(milliseconds: prior))")
+            .font(.caption)
+            .foregroundStyle(SyncyTheme.secondaryInk)
+        }
         Text("Owned by the \(ownerName). Refresh to read newly recorded evidence.")
           .font(.caption)
           .foregroundStyle(SyncyTheme.secondaryInk)
@@ -179,6 +208,17 @@ private struct ActiveJobSummary: View {
     return "\(seconds / 60)m ago"
   }
 
+  private func bytes(_ value: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
+  }
+
+  private func duration(milliseconds: Double) -> String {
+    let seconds = max(0, Int(milliseconds / 1_000))
+    if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
+    if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s" }
+    return "\(seconds)s"
+  }
+
   private func phaseName(_ value: String) -> String {
     value.replacingOccurrences(of: "-", with: " ").capitalized
   }
@@ -195,8 +235,13 @@ private struct SnapshotSummary: View {
           EvidenceSummaryRow(value: count.formatted(), label: unitLabel(count, state: state))
         }
       }
+      if verifiedBytes > 0 {
+        EvidenceSummaryRow(value: bytes(verifiedBytes), label: "source bytes deep verified")
+      }
       ForEach(snapshot.targets.filter { $0.reachability != .ok }) { target in
-        EvidenceSummaryRow(value: target.name, label: target.reachability.rawValue)
+        EvidenceSummaryRow(
+          value: target.name,
+          label: target.reachabilityPhrase ?? target.reachability.ledgerPhrase)
       }
       Text("Snapshot \(formattedDate)")
         .font(.caption)
@@ -208,6 +253,16 @@ private struct SnapshotSummary: View {
   private var formattedDate: String {
     Date(timeIntervalSince1970: snapshot.generatedAt / 1_000).formatted(
       date: .omitted, time: .shortened)
+  }
+
+  private var verifiedBytes: Int64 {
+    snapshot.units.filter { $0.state == .verified }.reduce(0) {
+      $0 + $1.fingerprint.bytes
+    }
+  }
+
+  private func bytes(_ value: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
   }
 
   private func unitLabel(_ count: Int, state: LedgerState) -> String {

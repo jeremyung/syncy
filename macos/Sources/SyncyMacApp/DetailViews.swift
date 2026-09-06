@@ -3,9 +3,17 @@ import ServiceManagement
 import SwiftUI
 import SyncyMacCore
 
+private struct DifferenceGroup: Identifiable {
+  var id: String { kind }
+  let kind: String
+  let label: String
+  let count: Int64
+}
+
 struct DifferencesView: View {
   @ObservedObject var model: AppModel
   @State private var targetName = ""
+  @State private var targetUnit = ""
 
   private var unit: UnitSnapshot? { model.selectedUnit }
   private var query: String { "\(unit?.unit ?? "")\u{0}\(targetName)" }
@@ -26,31 +34,90 @@ struct DifferencesView: View {
               Text("Reading recorded differences")
             }
             .padding(SyncySpace.xl)
-          } else if let diff = model.differences?.diff {
-            if diff.wholeFolderMissing {
+          } else if let error = model.differencesErrorMessage {
+            ContentUnavailableView(
+              "Differences unavailable",
+              systemImage: "exclamationmark.triangle",
+              description: Text(error))
+          } else if let envelope = model.differences,
+            envelope.unit == unit.unit, envelope.target == targetName,
+            let diff = envelope.diff
+          {
+            let reachability = envelope.provenance?.reachability
+              ?? model.snapshot?.targets.first(where: { $0.name == targetName })?.reachability
+            if envelope.provenance?.identityMatches == false || reachability == .mismatch {
+              ContentUnavailableView(
+                "Destination identity changed",
+                systemImage: "externaldrive.badge.questionmark",
+                description: Text(
+                  "This listing was recorded against a different volume. Current status is unchecked."))
+            } else if let reachability, reachability != .ok {
+              ContentUnavailableView(
+                "Destination unavailable",
+                systemImage: "externaldrive.badge.questionmark",
+                description: Text(
+                  "\(targetName) is \(reachability.ledgerPhrase). The recorded listing is historical; no current verification is implied."))
+            } else if envelope.provenance == nil {
+              ContentUnavailableView(
+                "Recorded listing has no destination identity",
+                systemImage: "externaldrive.badge.questionmark",
+                description: Text(
+                  "Run a check to establish whether this listing applies to the destination available now."))
+            } else if envelope.provenance?.current == false {
+              ContentUnavailableView(
+                "Recorded listing is not current",
+                systemImage: "clock.badge.exclamationmark",
+                description: Text("No current verification is implied."))
+            } else if sourceChanged(since: diff, current: unit.fingerprint) {
+              ContentUnavailableView(
+                "Evidence is stale",
+                systemImage: "clock.badge.exclamationmark",
+                description: Text(
+                  "The source changed after this listing was recorded. Current status is \(unit.cell(for: targetName)?.state.rawValue ?? "unverified")."))
+            } else if diff.wholeFolderMissing {
               ContentUnavailableView(
                 "Whole folder missing",
                 systemImage: "folder.badge.minus",
                 description: Text("The source holds the files; nothing was itemized at this destination."))
             } else if diff.entries.isEmpty {
-              ContentUnavailableView("No recorded differences", systemImage: "checkmark.circle")
+              ContentUnavailableView(
+                "No differences",
+                systemImage: "equal.circle",
+                description: Text(recordedCheckDescription(diff)))
             } else {
-              List(diff.entries) { entry in
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                  Text(differenceLabel(entry.kind))
-                    .font(.caption.weight(.semibold))
-                    .frame(width: 72, alignment: .leading)
-                  Text(entry.name).textSelection(.enabled)
-                  Spacer()
-                  if entry.sized {
-                    Text(
-                      ByteCountFormatter.string(fromByteCount: entry.bytes, countStyle: .file)
-                        .lowercased())
-                      .font(.caption.monospacedDigit())
-                      .foregroundStyle(SyncyTheme.secondaryInk)
+              let groups = differenceGroups(envelope: envelope, diff: diff)
+              List {
+                Section {
+                  HStack(spacing: SyncySpace.lg) {
+                    ForEach(groups) { group in
+                      Text("\(group.count.formatted()) \(group.label)")
+                    }
+                    Spacer()
+                    if envelope.truncated == 0, let files = envelope.presentation?.copyableFiles {
+                      Text("\(files.formatted()) files to copy")
+                    }
+                  }
+                  .font(.caption)
+                  .foregroundStyle(SyncyTheme.secondaryInk)
+                }
+                ForEach(groups) { group in
+                  Section("\(group.label) · \(group.count.formatted())") {
+                    ForEach(diff.entries.filter { $0.kind == group.kind }) { entry in
+                      HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(entry.name).textSelection(.enabled)
+                        Spacer()
+                        if entry.sized {
+                          Text(
+                            ByteCountFormatter.string(
+                              fromByteCount: entry.bytes, countStyle: .file).lowercased())
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(SyncyTheme.secondaryInk)
+                        }
+                      }
+                      .padding(.vertical, 4)
+                    }
                   }
                 }
-                .padding(.vertical, 4)
               }
               .overlay(alignment: .bottomTrailing) {
                 if diff.truncated > 0 {
@@ -62,13 +129,20 @@ struct DifferencesView: View {
             }
           } else {
             ContentUnavailableView(
-              "No recorded listing",
+              "No check recorded",
               systemImage: "arrow.left.arrow.right",
-              description: Text(model.auxiliaryMessage ?? "Run a check to record differences."))
+              description: Text("Nothing has established what differs at this destination."))
           }
         }
         .task(id: query) {
-          if targetName.isEmpty { targetName = unit.cells.first?.target ?? "" }
+          if targetUnit != unit.unit
+            || targetName.isEmpty
+            || !unit.cells.contains(where: { $0.target == targetName })
+          {
+            targetUnit = unit.unit
+            targetName = preferredDestination(in: unit) ?? ""
+            return
+          }
           if !targetName.isEmpty { await model.loadDifferences(unit: unit.unit, target: targetName) }
         }
       } else {
@@ -79,12 +153,54 @@ struct DifferencesView: View {
 
   private func differenceLabel(_ kind: String) -> String {
     switch kind {
-    case "new": "not copied"
-    case "changed": "different"
-    case "metadata": "attributes"
-    case "extra": "extra"
+    case "new": "not at destination"
+    case "changed": "content differs"
+    case "metadata": "attributes differ"
+    case "extra": "only at destination"
     default: kind
     }
+  }
+
+  private func differenceGroups(envelope: DiffEnvelope, diff: RecordedDiff)
+    -> [DifferenceGroup]
+  {
+    if let parts = envelope.presentation?.parts {
+      return parts.map { DifferenceGroup(kind: $0.kind, label: $0.label, count: $0.count) }
+    }
+    let order = ["new", "changed", "metadata", "extra"]
+    return order.compactMap { kind in
+      let count = Int64(diff.entries.filter { $0.kind == kind }.count)
+      return count == 0
+        ? nil : DifferenceGroup(kind: kind, label: differenceLabel(kind), count: count)
+    }
+  }
+
+  private func sourceChanged(since diff: RecordedDiff, current: FingerprintSnapshot) -> Bool {
+    guard let recorded = diff.sourceHolds else { return false }
+    return recorded.nfiles != current.nfiles || recorded.bytes != current.bytes
+      || recorded.maxMtimeNs != current.maxMtimeNs
+  }
+
+  private func preferredDestination(in unit: UnitSnapshot) -> String? {
+    let required = Set(
+      (model.snapshot?.targets ?? []).filter(\.required).map(\.name))
+    let needsWork: [LedgerState] = [.error, .missing, .behind, .unchecked, .unverified]
+    for state in needsWork {
+      if let match = unit.cells.first(where: {
+        $0.state == state && required.contains($0.target)
+      }) { return match.target }
+    }
+    for state in needsWork {
+      if let match = unit.cells.first(where: { $0.state == state }) { return match.target }
+    }
+    return unit.cells.first?.target
+  }
+
+  private func recordedCheckDescription(_ diff: RecordedDiff) -> String {
+    let operation = diff.method == "deep" ? "Deep verify" : "Quick check"
+    let when = Date(timeIntervalSince1970: diff.ts / 1_000).formatted(
+      date: .abbreviated, time: .shortened)
+    return "\(operation) \(when) · no differences recorded"
   }
 }
 
@@ -100,18 +216,23 @@ struct HistoryView: View {
           Text("Reading task history")
         }
         .padding(SyncySpace.xl)
+      } else if let error = model.historyErrorMessage {
+        ContentUnavailableView(
+          "History unavailable",
+          systemImage: "exclamationmark.triangle",
+          description: Text(error))
       } else if model.historyEntries.isEmpty {
         ContentUnavailableView(
           "No task outcomes",
           systemImage: "clock.arrow.circlepath",
-          description: Text(model.auxiliaryMessage ?? "Nothing has run yet."))
+          description: Text("Nothing has run yet."))
       } else {
         List(model.historyEntries) { entry in
           HStack(alignment: .firstTextBaseline, spacing: 14) {
             Text(Date(timeIntervalSince1970: entry.ts / 1_000).formatted(date: .abbreviated, time: .shortened))
               .font(.caption.monospacedDigit())
               .frame(width: 135, alignment: .leading)
-            Text(entry.operation).frame(width: 70, alignment: .leading)
+            Text(operationTitle(entry.operation)).frame(width: 92, alignment: .leading)
             VStack(alignment: .leading, spacing: 3) {
               Text("\(entry.unit) → \(entry.target)")
               if let detail = entry.detail {
@@ -137,6 +258,15 @@ struct HistoryView: View {
     case "failed": SyncyTheme.fault
     case "skipped", "missed": SyncyTheme.caution
     default: SyncyTheme.secondaryInk
+    }
+  }
+
+  private func operationTitle(_ operation: String) -> String {
+    switch operation {
+    case "deep": "Deep verify"
+    case "quick": "Quick check"
+    case "sync": "Sync"
+    default: operation
     }
   }
 }
@@ -272,7 +402,7 @@ struct SchedulesView: View {
     if schedule.operation == .sync {
       return "Sync · \(schedule.unit ?? "no folder") → \(schedule.target ?? "no destination")"
     }
-    return "\(schedule.operation.rawValue.capitalized) check · \(schedule.unit ?? "all folders")"
+    return "\(schedule.operation.readerTitle) · \(schedule.unit ?? "all folders")"
   }
 }
 
@@ -284,21 +414,68 @@ struct EvidenceView: View {
       PageHeader(title: "Evidence", detail: unit?.unit ?? "No folder selected")
       if let unit {
         List(unit.cells) { destination in
-          HStack(alignment: .top, spacing: 12) {
-            StateMark(state: destination.state)
-            VStack(alignment: .leading, spacing: 5) {
-              Text(destination.target).font(.headline)
-              Text(destination.state.rawValue).foregroundStyle(
-                SyncyTheme.color(for: destination.state))
-              Text(destination.reason).font(.callout).foregroundStyle(SyncyTheme.secondaryInk)
+          Section(destination.target) {
+            HStack(alignment: .top, spacing: 12) {
+              StateMark(state: destination.state)
+              VStack(alignment: .leading, spacing: 7) {
+                Text(destination.state.rawValue)
+                  .font(.headline)
+                  .foregroundStyle(SyncyTheme.color(for: destination.state))
+                Text(destination.differenceSummary ?? destination.reason)
+                  .font(.callout)
+                  .foregroundStyle(SyncyTheme.secondaryInk)
+                if destination.evidence?.currentTarget == false {
+                  Text("Recorded evidence does not establish the destination available now.")
+                    .font(.caption)
+                    .foregroundStyle(SyncyTheme.caution)
+                }
+              }
+              Spacer()
             }
-            Spacer()
+            if let check = destination.evidence?.lastCheck {
+              LabeledContent(
+                destination.evidence?.currentTarget == false ? "Historical check" : "Last check",
+                value: checkDescription(check))
+              LabeledContent(
+                "Result",
+                value: "\(check.nChanges.formatted()) changes · \(formatBytes(check.bytesPending)) pending")
+              if let deep = destination.evidence?.deepCheck, deep.at != check.at {
+                LabeledContent("Last deep verify", value: checkDescription(deep))
+              }
+              if destination.nExtra > 0 {
+                LabeledContent(
+                  "Only at destination",
+                  value: "\(destination.nExtra.formatted()) · left unchanged")
+              }
+            } else {
+              Text("No check recorded for this destination.")
+                .font(.caption)
+                .foregroundStyle(SyncyTheme.secondaryInk)
+            }
           }
-          .padding(.vertical, 8)
         }
         .listStyle(.inset)
       }
     }
+  }
+
+  private func checkDescription(_ check: CheckEvidenceSnapshot) -> String {
+    let method = check.method == "deep" ? "Deep verify" : "Quick check"
+    let when = Date(timeIntervalSince1970: check.at / 1_000).formatted(
+      date: .abbreviated, time: .shortened)
+    guard let duration = check.durationMs else { return "\(method) · \(when)" }
+    return "\(method) · \(when) · \(formatDuration(duration))"
+  }
+
+  private func formatBytes(_ value: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
+  }
+
+  private func formatDuration(_ milliseconds: Double) -> String {
+    let seconds = max(0, Int(milliseconds / 1_000))
+    if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
+    if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s" }
+    return "\(seconds)s"
   }
 }
 
@@ -346,7 +523,9 @@ struct SyncConfirmationView: View {
               LabeledContent(check.name, value: "\(check.ok ? "passed" : "blocked") · \(check.detail)")
                 .foregroundStyle(check.ok ? .primary : SyncyTheme.fault)
             }
-            LabeledContent("Files to transfer", value: prepared.nChanges.formatted())
+            LabeledContent(
+              prepared.nFiles == nil ? "Changes to transfer" : "Files to transfer",
+              value: (prepared.nFiles ?? prepared.nChanges).formatted())
             LabeledContent(
               "Bytes to transfer",
               value: ByteCountFormatter.string(
@@ -374,7 +553,7 @@ struct SyncConfirmationView: View {
           }
           .disabled(
             unit == nil || targetName.isEmpty || model.isPreparingSync || model.isLaunchingJob
-              || model.snapshot?.activeJob != nil)
+              || model.activeJob != nil)
           Spacer()
           if model.isLaunchingJob {
             Button(model.isCancellingJob ? "Cancelling…" : "Cancel sync…", role: .destructive) {
@@ -387,7 +566,7 @@ struct SyncConfirmationView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(SyncyTheme.caution)
-            .disabled(prepared?.ok != true || !reviewed || model.snapshot?.activeJob != nil)
+            .disabled(prepared?.ok != true || !reviewed || model.activeJob != nil)
             .help("Requires a fresh preflight and explicit review")
           }
         }
@@ -421,7 +600,7 @@ struct SetupView: View {
             else { return }
             Task { await model.setSource(path: url.path) }
           }
-          .disabled(model.isUpdatingSetup || model.snapshot?.activeJob != nil)
+          .disabled(model.isUpdatingSetup || model.activeJob != nil)
         }
         Section("Destinations") {
           if let targets = snapshot?.targets, !targets.isEmpty {
@@ -430,11 +609,11 @@ struct SetupView: View {
                 LabeledContent(
                   target.name,
                   value:
-                    "\(target.reachability.rawValue) · \(target.required ? "required" : "optional")"
+                    "\(target.reachabilityPhrase ?? target.reachability.ledgerPhrase) · \(target.required ? "required" : "optional")"
                 )
                 Button("Remove…", role: .destructive) { destinationToRemove = target.name }
                   .buttonStyle(.link)
-                  .disabled(model.isUpdatingSetup || model.snapshot?.activeJob != nil)
+                  .disabled(model.isUpdatingSetup || model.activeJob != nil)
                 if target.usesSentinel {
                   Text("sentinel recorded")
                     .font(.caption)
@@ -444,7 +623,7 @@ struct SetupView: View {
                     Task { await model.adoptDestination(name: target.name) }
                   }
                   .buttonStyle(.link)
-                  .disabled(model.isUpdatingSetup || model.snapshot?.activeJob != nil)
+                  .disabled(model.isUpdatingSetup || model.activeJob != nil)
                   .help(
                     "Write Syncy's identity sentinel through rsync and record it in configuration")
                 }
@@ -460,7 +639,7 @@ struct SetupView: View {
           }
           .disabled(
             snapshot?.source.isEmpty != false || model.isUpdatingSetup
-              || model.snapshot?.activeJob != nil)
+              || model.activeJob != nil)
         }
         if let pendingDestination {
           Section("Add destination") {

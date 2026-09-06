@@ -4,10 +4,24 @@ import type { Config } from "./config.ts";
 import { ENGINE_PROTOCOL_VERSION, type SnapshotMessage } from "./engine-protocol.ts";
 import { type Fingerprint, fingerprint } from "./fingerprint.ts";
 import type { JobOwnerRecord } from "./job-owner.ts";
-import { readJobOwner } from "./job-owner.ts";
+import { isJobOwnerActive, readJobOwner } from "./job-owner.ts";
+import { presentReachability } from "./presentation.ts";
 import { allReachability, listUnits, type Reachability } from "./scan.ts";
-import type { State } from "./state.ts";
-import { evaluateUnit } from "./status.ts";
+import { findScan, latestScan, type Scan, type State } from "./state.ts";
+import { evaluateUnit, targetIdentity } from "./status.ts";
+
+function evidenceSnapshot(scan: Scan) {
+  return {
+    method: scan.method,
+    outcome: scan.outcome,
+    at: scan.ts,
+    ...(scan.durationMs === undefined ? {} : { durationMs: scan.durationMs }),
+    nChanges: scan.nChanges,
+    ...(scan.nFiles === undefined ? {} : { nFiles: scan.nFiles }),
+    nExtra: scan.nExtra,
+    bytesPending: scan.bytesPending,
+  };
+}
 
 /**
  * Read-side dependencies are injectable so the protocol boundary can be
@@ -18,6 +32,9 @@ export interface SnapshotIo {
   readonly fingerprint: (root: string, exclude: readonly string[]) => Fingerprint;
   readonly reachability: (config: Config) => Promise<ReadonlyMap<string, Reachability>>;
   readonly owner?: () => JobOwnerRecord | undefined;
+  readonly pidAlive?: (pid: number) => boolean;
+  /** Read after scanning, so a snapshot timestamp means the read is complete. */
+  readonly completedAt?: () => number;
 }
 
 const REAL_IO: SnapshotIo = {
@@ -25,6 +42,7 @@ const REAL_IO: SnapshotIo = {
   fingerprint,
   reachability: allReachability,
   owner: readJobOwner,
+  completedAt: Date.now,
 };
 
 /**
@@ -55,21 +73,45 @@ export async function buildEngineSnapshot(
       state: status.state,
       reason: status.reason,
       fingerprint: current,
-      cells: status.cells,
+      cells: status.cells.map((cell) => {
+        const target = config.targets.find((candidate) => candidate.name === cell.target)!;
+        const identity = targetIdentity(target);
+        const last = latestScan(state, unit, cell.target, identity);
+        const deep = findScan(state, unit, cell.target, "deep", identity);
+        const quick = findScan(state, unit, cell.target, "quick", identity);
+        return {
+          ...cell,
+          differenceSummary: cell.reason,
+          evidence: {
+            currentTarget: (reach.get(cell.target) ?? "unreachable") === "ok",
+            ...(last === undefined ? {} : { lastCheck: evidenceSnapshot(last) }),
+            ...(deep === undefined ? {} : { deepCheck: evidenceSnapshot(deep) }),
+            ...(quick === undefined ? {} : { extrasObservedAt: quick.ts }),
+          },
+        };
+      }),
     };
   });
-  const owner = io.owner?.();
+  // A lease is a live-work signal, not durable history. A crashed owner can
+  // remain on disk until the next contender archives it, so publishing it as
+  // active would leave a native UI claiming work is still happening forever.
+  const candidate = io.owner?.();
+  const owner =
+    candidate !== undefined && isJobOwnerActive(candidate, now, 30_000, io.pidAlive)
+      ? candidate
+      : undefined;
 
   return {
     protocolVersion: ENGINE_PROTOCOL_VERSION,
     type: "snapshot",
-    generatedAt: now,
+    generatedAt: io.completedAt?.() ?? now,
     source: config.source,
     configRevision: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
     targets: config.targets.map((target) => ({
       name: target.name,
       required: target.required,
       reachability: reach.get(target.name) ?? "unreachable",
+      reachabilityPhrase: presentReachability(reach.get(target.name) ?? "unreachable").phrase,
       usesSentinel: target.sentinel !== undefined,
     })),
     units,

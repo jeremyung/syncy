@@ -59,14 +59,20 @@ describe("engine snapshot", () => {
     expect(snapshot.protocolVersion).toBe(ENGINE_PROTOCOL_VERSION);
     expect(snapshot.configRevision).toHaveLength(64);
     expect(snapshot.targets).toEqual([
-      { name: "archive", required: true, reachability: "ok", usesSentinel: false },
+      {
+        name: "archive",
+        required: true,
+        reachability: "ok",
+        reachabilityPhrase: "connected",
+        usesSentinel: false,
+      },
     ]);
     expect(snapshot.units[0]).toMatchObject({
       unit: "photos-2019",
       state: "verified",
       reason: "all destinations deep verified",
       fingerprint: fp,
-      cells: [{ target: "archive", state: "verified" }],
+      cells: [{ target: "archive", state: "verified", differenceSummary: "deep verified today" }],
     });
   });
 
@@ -113,6 +119,7 @@ describe("engine snapshot", () => {
   test("exposes current process ownership without implying job completion", async () => {
     const snapshot = await buildEngineSnapshot(config, EMPTY_STATE, 1_750_000_001_000, {
       ...io(),
+      pidAlive: () => true,
       owner: () => ({
         version: 1,
         token: "private-owner-token",
@@ -147,5 +154,39 @@ describe("engine snapshot", () => {
       },
     });
     expect(JSON.stringify(snapshot)).not.toContain("private-owner-token");
+  });
+
+  test("does not present an abandoned lease as active work", async () => {
+    const snapshot = await buildEngineSnapshot(config, EMPTY_STATE, 1_750_000_100_000, {
+      ...io(),
+      owner: () => ({
+        version: 1,
+        token: "stale-owner-token",
+        pid: 321,
+        actor: "mac",
+        operation: "deep",
+        startedAt: 1_750_000_000_000,
+        heartbeatAt: 1_750_000_000_500,
+      }),
+    });
+    expect(snapshot.activeJob).toBeUndefined();
+  });
+
+  test("does not present a fresh lease whose process is dead", async () => {
+    const snapshot = await buildEngineSnapshot(config, EMPTY_STATE, 1_750_000_001_000, {
+      ...io(),
+      pidAlive: () => false,
+      owner: () => ({
+        version: 1,
+        token: "dead-owner-token",
+        pid: 321,
+        actor: "mac",
+        operation: "deep",
+        startedAt: 1_750_000_000_000,
+        heartbeatAt: 1_750_000_000_500,
+      }),
+    });
+
+    expect(snapshot.activeJob).toBeUndefined();
   });
 });

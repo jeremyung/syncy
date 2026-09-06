@@ -634,6 +634,17 @@ describe("the magnitude line gives the listing a denominator", () => {
     expect(rows[1]?.kind).toBe("magnitude");
   });
 
+  test("a listing from another volume is identified and not rendered as current", () => {
+    const d = mk(fp(935, 13e9), fp(431, 7.2e9));
+    const rows = diffRows(["NAS"], new Map([["NAS", d]]), {
+      provenance: new Map([["NAS", "different-volume"]]),
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ kind: "header", provenance: "different-volume" });
+    expect(rows[1]?.kind).toBe("blank");
+  });
+
   test("it never overflows the window", () => {
     const d = mk(fp(9_999_999, 999e12), fp(1, 1));
     for (const w of [76, 92, 120]) {

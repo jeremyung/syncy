@@ -29,6 +29,8 @@ export interface JobProps {
   readonly unit: string;
   readonly target: Target;
   readonly nChanges: number;
+  /** Changed files only; old evidence has no separate count. */
+  readonly nFiles?: number;
   readonly bytesPending: number;
   readonly needsChecksum?: boolean;
   readonly theme: Theme;
@@ -133,7 +135,10 @@ export function Job(props: JobProps): React.ReactElement {
         type: "job.started",
         at: started,
         phase: "queued",
-        unitSize: { files: props.nChanges, bytes: props.bytesPending },
+        unitSize: {
+          ...(props.nFiles === undefined ? {} : { files: props.nFiles }),
+          bytes: props.bytesPending,
+        },
       });
       ownership.lease.observe({
         ...base,
@@ -178,13 +183,13 @@ export function Job(props: JobProps): React.ReactElement {
         onItem: (item) => {
           if (item.kind !== "change" || item.flags[1] !== "f") return;
           seen += 1;
-          if (seen % 25 === 0 || seen === props.nChanges) {
+          if (seen % 25 === 0 || seen === props.nFiles) {
             ownership.lease.observe({
               ...base,
               type: "job.progress-observed",
               at: Date.now(),
               filesSeen: seen,
-              filesTotal: props.nChanges,
+              ...(props.nFiles === undefined ? {} : { filesTotal: props.nFiles }),
             });
           }
         },
@@ -359,7 +364,7 @@ export function Job(props: JobProps): React.ReactElement {
         <Text color={theme.figure}>{target.name}</Text>
       </Box>
       <Text color={theme.dim}>
-        {`  elapsed ${clock} · ${count(props.nChanges)} files · ${bytes(props.bytesPending)} to move`}
+        {`  elapsed ${clock} · ${count(props.nFiles ?? props.nChanges)} ${props.nFiles === undefined ? "changes" : "files"} · ${bytes(props.bytesPending)} to move`}
       </Text>
       <Rule width={W} theme={theme} />
 

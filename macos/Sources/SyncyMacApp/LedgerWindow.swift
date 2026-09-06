@@ -41,8 +41,9 @@ struct LedgerWindow: View {
   }
 
   private var footerText: String {
+    if model.activeJob != nil { return "Engine work is running" }
     if model.isLaunchingJob { return "Starting engine job" }
-    if model.isLoading { return "Reading engine snapshot" }
+    if model.isLoading, model.snapshot == nil { return "Reading engine snapshot" }
     if let error = model.engineErrorMessage ?? model.errorMessage { return error }
     return model.snapshot == nil ? "No snapshot loaded" : "Engine snapshot loaded"
   }
@@ -74,7 +75,7 @@ private struct LedgerView: View {
           snapshot: snapshot,
           selection: $model.selectedUnitID
         )
-        if let activeJob = snapshot.activeJob {
+        if let activeJob = model.activeJob {
           LedgerJobStrip(job: activeJob, model: model)
             .padding(.horizontal, SyncySpace.xl)
             .padding(.vertical, SyncySpace.md)
@@ -92,7 +93,7 @@ private struct LedgerView: View {
         Button("Refresh", systemImage: "arrow.clockwise") {
           Task { await model.refresh() }
         }
-        .disabled(model.isLoading)
+        .disabled(model.isRefreshing)
         Menu("Quick check", systemImage: "bolt") {
           Button("Selected folder") {
             Task { await model.runCheck(.quick, unit: model.selectedUnit?.unit) }
@@ -100,7 +101,7 @@ private struct LedgerView: View {
           .disabled(model.selectedUnit == nil)
           Button("All folders") { Task { await model.runCheck(.quick) } }
         }
-        .disabled(model.isLaunchingJob || model.snapshot?.activeJob != nil || model.snapshot == nil)
+        .disabled(model.isLaunchingJob || model.activeJob != nil || model.snapshot == nil)
         Menu("Deep verify", systemImage: "checkmark.seal") {
           Button("Selected folder") {
             Task { await model.runCheck(.deep, unit: model.selectedUnit?.unit) }
@@ -108,7 +109,7 @@ private struct LedgerView: View {
           .disabled(model.selectedUnit == nil)
           Button("All folders") { Task { await model.runCheck(.deep) } }
         }
-        .disabled(model.isLaunchingJob || model.snapshot?.activeJob != nil || model.snapshot == nil)
+        .disabled(model.isLaunchingJob || model.activeJob != nil || model.snapshot == nil)
       }
     }
   }
@@ -159,7 +160,13 @@ private struct LedgerJobStrip: View {
   private var jobTitle: String {
     let operation = job.operation == "deep" ? "Deep verify" : job.operation.capitalized
     guard let activity = job.activity else { return "\(operation) is running" }
-    return "\(operation) · \(activity.unit) → \(activity.target)"
+    let batch =
+      if let position = job.batchPosition, let total = job.batchTotal, total > 1 {
+        " · folder \(position.formatted()) of \(total.formatted())"
+      } else {
+        ""
+      }
+    return "\(operation) · \(activity.unit) → \(activity.target)\(batch)"
   }
 
   private func detail(at date: Date) -> String {
@@ -168,7 +175,16 @@ private struct LedgerJobStrip: View {
       ? "\(elapsed / 3_600)h \((elapsed % 3_600) / 60)m"
       : "\(elapsed / 60)m \(elapsed % 60)s"
     let phase = job.activity?.phase.replacingOccurrences(of: "-", with: " ") ?? "starting"
-    return "\(duration) elapsed · \(phase) · window may close"
+    let progress: String
+    if let seen = job.activity?.filesSeen, let total = job.activity?.filesTotal, total > 0 {
+      progress = " · \(seen.formatted()) of \(total.formatted()) files observed"
+    } else if let done = job.activity?.bytesDone, let total = job.activity?.bytesTotal, total > 0 {
+      progress =
+        " · \(ByteCountFormatter.string(fromByteCount: done, countStyle: .file).lowercased()) of \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file).lowercased()) observed"
+    } else {
+      progress = " · no measured percentage"
+    }
+    return "\(duration) elapsed · \(phase)\(progress) · window may close"
   }
 }
 
@@ -203,7 +219,7 @@ private struct LedgerGrid: View {
       HeaderCell("Size", width: sizeWidth, alignment: .trailing)
       HeaderCell("Files", width: filesWidth, alignment: .trailing)
       ForEach(snapshot.targets) { target in
-        HeaderCell(target.name, width: destinationWidth)
+        HeaderCell(target.name, width: destinationWidth, leadingInset: 20)
       }
     }
     .padding(.horizontal, SyncySpace.lg)
@@ -258,18 +274,26 @@ private struct HeaderCell: View {
   let label: String
   let width: CGFloat
   let alignment: Alignment
+  let leadingInset: CGFloat
 
-  init(_ label: String, width: CGFloat, alignment: Alignment = .leading) {
+  init(
+    _ label: String,
+    width: CGFloat,
+    alignment: Alignment = .leading,
+    leadingInset: CGFloat = 0
+  ) {
     self.label = label
     self.width = width
     self.alignment = alignment
+    self.leadingInset = leadingInset
   }
 
   var body: some View {
     Text(label)
       .font(.caption.weight(.semibold))
       .foregroundStyle(SyncyTheme.secondaryInk)
-      .frame(width: width, alignment: alignment)
+      .frame(width: max(0, width - leadingInset), alignment: alignment)
+      .padding(.leading, leadingInset)
   }
 }
 
@@ -282,7 +306,7 @@ private struct DestinationCell: View {
         Text(destination.state.rawValue)
           .font(.callout.weight(.medium))
           .foregroundStyle(SyncyTheme.color(for: destination.state))
-        Text(destination.reason)
+        Text(destination.differenceSummary ?? destination.reason)
           .font(.caption)
           .foregroundStyle(SyncyTheme.secondaryInk)
           .lineLimit(1)

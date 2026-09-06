@@ -243,6 +243,7 @@ export async function checkUnit(
       durationMs: Date.now() - startedAt,
       outcome: s.nChanges === 0 ? "clean" : "behind",
       nChanges: s.nChanges,
+      nFiles: s.nFiles,
       nNew: s.nNew,
       nExtra: s.nExtra,
       bytesPending: s.bytesPending,

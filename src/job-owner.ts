@@ -31,6 +31,7 @@ export interface JobOwnerActivity {
   readonly filesTotal?: number;
   readonly bytesDone?: number;
   readonly bytesTotal?: number;
+  readonly lastItem?: string;
 }
 
 export interface JobOwnerLease {
@@ -73,6 +74,22 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+/** Whether an ownership record still represents active work to an observer. */
+export function isJobOwnerActive(
+  owner: JobOwnerRecord,
+  now: number = Date.now(),
+  staleAfterMs: number = DEFAULT_STALE_AFTER_MS,
+  pidAlive: (pid: number) => boolean = processIsAlive,
+): boolean {
+  // A future heartbeat is tolerated only within the normal clock-skew window;
+  // otherwise a bad clock would pin every client to a fictional active job.
+  return (
+    owner.heartbeatAt >= now - staleAfterMs &&
+    owner.heartbeatAt <= now + staleAfterMs &&
+    pidAlive(owner.pid)
+  );
+}
+
 function ownerPaths(root: string): { current: string; archive: string; record: string } {
   const current = join(root, "job-owner");
   return { current, archive: join(root, "job-owners"), record: join(current, "owner.json") };
@@ -107,7 +124,8 @@ function parseRecord(value: unknown): JobOwnerRecord | undefined {
       typeof activity.target !== "string" ||
       typeof activity.phase !== "string" ||
       typeof activity.at !== "number" ||
-      !Number.isFinite(activity.at)
+      !Number.isFinite(activity.at) ||
+      (activity.lastItem !== undefined && typeof activity.lastItem !== "string")
     ) {
       return undefined;
     }
@@ -206,6 +224,12 @@ export function acquireJobOwner(
                   ? event.phase
                   : (active.activity?.phase ?? "queued"));
             const progress = event.type === "job.progress-observed" ? event : undefined;
+            const previous = event.type === "job.started" ? undefined : active.activity;
+            const filesSeen = progress?.filesSeen ?? previous?.filesSeen;
+            const filesTotal = progress?.filesTotal ?? previous?.filesTotal;
+            const bytesDone = progress?.bytesDone ?? previous?.bytesDone;
+            const bytesTotal = progress?.bytesTotal ?? previous?.bytesTotal;
+            const lastItem = progress?.lastItem ?? previous?.lastItem;
             publish({
               ...active,
               heartbeatAt: now(),
@@ -214,10 +238,11 @@ export function acquireJobOwner(
                 target: event.target,
                 phase,
                 at: event.at,
-                ...(progress?.filesSeen === undefined ? {} : { filesSeen: progress.filesSeen }),
-                ...(progress?.filesTotal === undefined ? {} : { filesTotal: progress.filesTotal }),
-                ...(progress?.bytesDone === undefined ? {} : { bytesDone: progress.bytesDone }),
-                ...(progress?.bytesTotal === undefined ? {} : { bytesTotal: progress.bytesTotal }),
+                ...(filesSeen === undefined ? {} : { filesSeen }),
+                ...(filesTotal === undefined ? {} : { filesTotal }),
+                ...(bytesDone === undefined ? {} : { bytesDone }),
+                ...(bytesTotal === undefined ? {} : { bytesTotal }),
+                ...(lastItem === undefined ? {} : { lastItem }),
               },
             });
           },

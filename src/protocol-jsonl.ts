@@ -112,7 +112,28 @@ function validateCell(value: unknown, where: string): void {
   string(cell["target"], `${where}.target`);
   member(cell["state"], CELL_STATES, `${where}.state`);
   string(cell["reason"], `${where}.reason`);
+  string(cell["differenceSummary"], `${where}.differenceSummary`);
+  if (cell["evidence"] !== undefined) {
+    const evidence = record(cell["evidence"], `${where}.evidence`);
+    bool(evidence["currentTarget"], `${where}.evidence.currentTarget`);
+    for (const name of ["lastCheck", "deepCheck"] as const) {
+      if (evidence[name] === undefined) continue;
+      const check = record(evidence[name], `${where}.evidence.${name}`);
+      member(check["method"], new Set(["quick", "deep"]), `${where}.evidence.${name}.method`);
+      member(check["outcome"], OUTCOMES, `${where}.evidence.${name}.outcome`);
+      finite(check["at"], `${where}.evidence.${name}.at`);
+      if (check["durationMs"] !== undefined)
+        finite(check["durationMs"], `${where}.evidence.${name}.durationMs`);
+      count(check["nChanges"], `${where}.evidence.${name}.nChanges`);
+      optionalCount(check["nFiles"], `${where}.evidence.${name}.nFiles`);
+      count(check["nExtra"], `${where}.evidence.${name}.nExtra`);
+      count(check["bytesPending"], `${where}.evidence.${name}.bytesPending`);
+    }
+    if (evidence["extrasObservedAt"] !== undefined)
+      finite(evidence["extrasObservedAt"], `${where}.evidence.extrasObservedAt`);
+  }
   count(cell["nChanges"], `${where}.nChanges`);
+  optionalCount(cell["nFiles"], `${where}.nFiles`);
   optionalCount(cell["nNew"], `${where}.nNew`);
   count(cell["bytesPending"], `${where}.bytesPending`);
   count(cell["nExtra"], `${where}.nExtra`);
@@ -138,6 +159,7 @@ function validateSnapshot(message: RecordValue): void {
     string(target["name"], `snapshot.targets[${index}].name`);
     bool(target["required"], `snapshot.targets[${index}].required`);
     member(target["reachability"], REACHABILITY, `snapshot.targets[${index}].reachability`);
+    string(target["reachabilityPhrase"], `snapshot.targets[${index}].reachabilityPhrase`);
     bool(target["usesSentinel"], `snapshot.targets[${index}].usesSentinel`);
   });
   array(message["units"], "snapshot.units");
@@ -199,6 +221,7 @@ function validateSyncPreflight(message: RecordValue): void {
   });
   bool(message["ok"], "sync.preflight.ok");
   count(message["nChanges"], "sync.preflight.nChanges");
+  optionalCount(message["nFiles"], "sync.preflight.nFiles");
   optionalCount(message["nNew"], "sync.preflight.nNew");
   count(message["nExtra"], "sync.preflight.nExtra");
   count(message["bytesPending"], "sync.preflight.bytesPending");
@@ -222,6 +245,26 @@ function validateDiff(message: RecordValue): void {
   if (diff["version"] !== 1) throw new ProtocolError("diff.diff.version must be 1");
   string(diff["unit"], "diff.diff.unit");
   string(diff["target"], "diff.diff.target");
+  if (diff["targetIdentity"] !== undefined)
+    string(diff["targetIdentity"], "diff.diff.targetIdentity");
+  if (message["provenance"] !== undefined) {
+    const provenance = record(message["provenance"], "diff.provenance");
+    string(provenance["targetIdentity"], "diff.provenance.targetIdentity");
+    bool(provenance["identityMatches"], "diff.provenance.identityMatches");
+    member(provenance["reachability"], REACHABILITY, "diff.provenance.reachability");
+    bool(provenance["current"], "diff.provenance.current");
+  }
+  if (message["presentation"] !== undefined) {
+    const presentation = record(message["presentation"], "diff.presentation");
+    array(presentation["parts"], "diff.presentation.parts");
+    presentation["parts"].forEach((part, index) => {
+      const item = record(part, `diff.presentation.parts[${index}]`);
+      member(item["kind"], DIFF_KINDS, `diff.presentation.parts[${index}].kind`);
+      count(item["count"], `diff.presentation.parts[${index}].count`);
+      string(item["label"], `diff.presentation.parts[${index}].label`);
+    });
+    count(presentation["copyableFiles"], "diff.presentation.copyableFiles");
+  }
   finite(diff["ts"], "diff.diff.ts");
   string(diff["method"], "diff.diff.method");
   count(diff["truncated"], "diff.diff.truncated");
@@ -274,7 +317,7 @@ function validateJob(message: RecordValue): void {
         }
       }
       const unitSize = record(message["unitSize"], "job.started.unitSize");
-      count(unitSize["files"], "job.started.unitSize.files");
+      optionalCount(unitSize["files"], "job.started.unitSize.files");
       count(unitSize["bytes"], "job.started.unitSize.bytes");
       optionalCount(message["priorDurationMs"], "job.started.priorDurationMs");
       return;
@@ -313,6 +356,7 @@ function validateJob(message: RecordValue): void {
       member(result["outcome"], OUTCOMES, "job.completed.result.outcome");
       count(result["nChanges"], "job.completed.result.nChanges");
       optionalCount(result["nNew"], "job.completed.result.nNew");
+      optionalCount(result["nFiles"], "job.completed.result.nFiles");
       count(result["nExtra"], "job.completed.result.nExtra");
       count(result["bytesPending"], "job.completed.result.bytesPending");
       if (result["exitCode"] !== null) {

@@ -40,9 +40,18 @@ distribution step and is not needed for a personal local build.
 
 It launches versioned engine commands, requires successful exit status, and validates the
 version, message type, enums, required fields, and non-negative counts. While a
-job runs, snapshots expose its single process owner, elapsed time, current phase,
-and only progress rsync actually measured. UI code does not infer completion
-from process silence or scrape the terminal renderer.
+job runs, the app consumes the engine's JSON Lines events as they arrive;
+snapshots remain the recovery path when the app opens during work another
+process started. Both paths expose the single process owner, elapsed time,
+current phase, last observed file, and only progress rsync actually measured.
+UI code does not infer completion from process silence or scrape the terminal
+renderer.
+
+Reader-facing status phrases, difference labels, evidence timestamps, file-only
+counts, and destination provenance are produced by the same presentation and
+protocol layer the terminal UI uses. Bun and Swift tests decode the same golden
+fixtures under `test/fixtures/ui-contract` so either client changing meaning
+without the other is a contract failure.
 
 ## Background work
 

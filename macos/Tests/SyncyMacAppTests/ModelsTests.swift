@@ -4,6 +4,15 @@ import XCTest
 @testable import SyncyMacCore
 
 final class ModelsTests: XCTestCase {
+  private func contractFixture(_ name: String) throws -> Data {
+    let repository = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    return try Data(contentsOf: repository.appendingPathComponent("test/fixtures/ui-contract/\(name)"))
+  }
+
   func testElapsedTimeNeverBecomesNegative() {
     let now = Date(timeIntervalSince1970: 2_000)
     let job = RunningJob(
@@ -37,6 +46,13 @@ final class ModelsTests: XCTestCase {
       ])
   }
 
+  func testReachabilityUsesCanonicalLedgerLanguage() {
+    XCTAssertEqual(Reachability.ok.ledgerPhrase, "connected")
+    XCTAssertEqual(Reachability.missing.ledgerPhrase, "no sentinel found")
+    XCTAssertEqual(Reachability.mismatch.ledgerPhrase, "different volume")
+    XCTAssertEqual(Reachability.unreachable.ledgerPhrase, "not connected")
+  }
+
   func testDisconnectedClientCannotProduceEvidence() async {
     let client = DisconnectedEngineClient()
 
@@ -63,6 +79,43 @@ final class ModelsTests: XCTestCase {
     let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
 
     XCTAssertEqual(snapshot.targets.map(\.name), ["one", "two"])
+  }
+
+  func testSharedSnapshotFixtureCarriesCanonicalPresentation() throws {
+    let snapshot = try JSONDecoder().decode(
+      EngineSnapshot.self, from: contractFixture("snapshot.json"))
+
+    XCTAssertEqual(snapshot.targets[1].reachabilityPhrase, "different volume")
+    XCTAssertEqual(snapshot.units[0].cells[1].differenceSummary, "2 files not copied yet")
+    XCTAssertEqual(snapshot.units[0].cells[1].nFiles, 2)
+    XCTAssertEqual(snapshot.units[0].cells[0].evidence?.lastCheck?.method, "deep")
+    XCTAssertEqual(snapshot.units[0].cells[0].evidence?.lastCheck?.durationMs, 42_000)
+  }
+
+  func testSharedDifferenceFixturePreservesIdentityAndLabels() throws {
+    let envelope = try JSONDecoder().decode(
+      DiffEnvelope.self, from: contractFixture("diff.json"))
+
+    XCTAssertEqual(envelope.provenance?.current, false)
+    XCTAssertEqual(envelope.provenance?.identityMatches, false)
+    XCTAssertEqual(envelope.provenance?.reachability, .mismatch)
+    XCTAssertEqual(envelope.presentation?.parts.first?.label, "not at destination")
+    XCTAssertEqual(envelope.presentation?.copyableFiles, 2)
+  }
+
+  func testSharedJobFixturePreservesMeasuredProgress() throws {
+    let data = try contractFixture("events.jsonl")
+    let lines = try XCTUnwrap(String(data: data, encoding: .utf8))
+      .split(separator: "\n")
+    let events = try lines.map {
+      try JSONDecoder().decode(JobEventSnapshot.self, from: Data($0.utf8))
+    }
+
+    XCTAssertEqual(events.map(\.type), [
+      "job.started", "job.phase-changed", "job.progress-observed", "job.completed",
+    ])
+    XCTAssertEqual(events[2].filesSeen, 4)
+    XCTAssertEqual(events[2].filesTotal, 12)
   }
 
   func testSnapshotProtocolRejectsNullOptionalCounts() {

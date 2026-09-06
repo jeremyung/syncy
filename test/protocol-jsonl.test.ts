@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  type DiffMessage,
   ENGINE_PROTOCOL_VERSION,
   type JobEvent,
   type SnapshotMessage,
@@ -32,7 +33,15 @@ const snapshot: SnapshotMessage = {
       filesTotal: 120,
     },
   },
-  targets: [{ name: "archive", required: true, reachability: "ok", usesSentinel: true }],
+  targets: [
+    {
+      name: "archive",
+      required: true,
+      reachability: "ok",
+      reachabilityPhrase: "connected",
+      usesSentinel: true,
+    },
+  ],
   units: [
     {
       unit: "photos-2019",
@@ -44,6 +53,7 @@ const snapshot: SnapshotMessage = {
           target: "archive",
           state: "unverified",
           reason: "size and date match, bytes unread",
+          differenceSummary: "size and date match, bytes unread",
           nChanges: 0,
           nExtra: 0,
           bytesPending: 0,
@@ -88,6 +98,31 @@ const preflight: SyncPreflightMessage = {
   expiresAt: 1_750_000_300_000,
 };
 
+const diffWithProvenance: DiffMessage = {
+  protocolVersion: ENGINE_PROTOCOL_VERSION,
+  type: "diff",
+  generatedAt: 1_750_000_000_000,
+  unit: "photos-2019",
+  target: "archive",
+  diff: {
+    version: 1,
+    unit: "photos-2019",
+    target: "archive",
+    targetIdentity: "volume-1",
+    ts: 1_750_000_000_000,
+    method: "quick",
+    entries: [],
+    truncated: 0,
+    wholeFolderMissing: false,
+  },
+  provenance: {
+    targetIdentity: "volume-1",
+    identityMatches: true,
+    reachability: "ok",
+    current: true,
+  },
+};
+
 describe("engine JSON Lines protocol", () => {
   test("round-trips a full snapshot as one newline-delimited record", () => {
     const line = serializeEngineMessage(snapshot);
@@ -105,6 +140,12 @@ describe("engine JSON Lines protocol", () => {
 
   test("round-trips a guarded sync preflight with a one-use confirmation", () => {
     expect(parseEngineMessage(serializeEngineMessage(preflight))).toEqual(preflight);
+  });
+
+  test("carries stored-difference provenance instead of treating another volume's list as current", () => {
+    expect(parseEngineMessage(serializeEngineMessage(diffWithProvenance))).toEqual(
+      diffWithProvenance,
+    );
   });
 
   test("a successful preflight cannot omit its confirmation", () => {

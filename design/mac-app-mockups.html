@@ -180,6 +180,32 @@
     .measured-fill { width:62%; height:100%; background:var(--verified); }
     .error-panel { margin:0 16px 14px; padding:12px; border:1px solid color-mix(in oklch, var(--missing), var(--rule) 62%); border-radius:9px; background:var(--missing-bg); color:color-mix(in oklch, var(--missing), var(--figure) 20%); line-height:1.4; }
 
+    /* Canonical state matrix */
+    .canonical-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:1px; background:var(--rule); }
+    .canonical-card { min-height:150px; display:flex; flex-direction:column; gap:10px; padding:16px; background:var(--surface); }
+    .canonical-card .label { color:var(--faint); }
+    .canonical-card h3 { margin:0; color:var(--figure); font-size:15px; letter-spacing:-.01em; }
+    .canonical-card p { margin:0; color:var(--dim); font:11px/1.5 var(--font-ledger); }
+    .canonical-card p strong { color:var(--ink); font-weight:600; }
+    .canonical-columns { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1px; margin-top:1px; background:var(--rule); }
+    .canonical-panel { min-width:0; padding:18px; background:var(--surface); }
+    .canonical-panel h3 { margin:0; color:var(--figure); font-size:15px; }
+    .canonical-panel > p { margin:8px 0 0; color:var(--dim); font:11px/1.5 var(--font-ledger); }
+    .destination-picker { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; margin-top:16px; padding:10px; border:1px solid var(--rule); background:var(--surface-raised); color:var(--ink); font:11px/1.35 var(--font-ledger); }
+    .destination-picker strong { color:var(--figure); font-weight:600; }
+    .destination-picker .chevron { color:var(--dim); font-size:14px; }
+    .progress-compare { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1px; margin-top:1px; background:var(--rule); }
+    .progress-state { min-width:0; padding:18px; background:var(--surface); }
+    .progress-state h3 { margin:7px 0 0; color:var(--figure); font-size:15px; }
+    .progress-state p { margin:8px 0 0; color:var(--dim); font:11px/1.5 var(--font-ledger); }
+    .progress-state .measured-track { margin-top:14px; }
+    .no-progress { display:grid; place-items:center; height:30px; margin-top:14px; border:1px dashed var(--rule); color:var(--faint); font:10px/1 var(--font-ledger); }
+    .outcome-table { width:100%; margin-top:1px; border-collapse:collapse; background:var(--surface); }
+    .outcome-table th { padding:10px 14px; border-bottom:1px solid var(--rule); color:var(--dim); font:600 9px/1 var(--font-ledger); letter-spacing:.05em; text-align:left; text-transform:uppercase; }
+    .outcome-table td { padding:11px 14px; border-bottom:1px solid var(--rule-soft); color:var(--dim); font:11px/1.4 var(--font-ledger); vertical-align:top; }
+    .outcome-table td:first-child { width:110px; color:var(--figure); font-weight:650; }
+    .outcome-table tr:last-child td { border-bottom:0; }
+
     /* Ledger */
     .app-layout { display:grid; grid-template-columns:190px minmax(0, 1fr); min-height:620px; }
     .sidebar { padding:16px 10px; border-right:1px solid var(--rule); background:var(--sidebar); }
@@ -337,6 +363,7 @@
         <a href="#popover">Menu popover</a>
         <a href="#ledger">Main ledger</a>
         <a href="#evidence">Differences &amp; evidence</a>
+        <a href="#canonical">Canonical states</a>
         <div class="nav-label">Workflows</div>
         <a href="#sync">Sync &amp; cancellation</a>
         <a href="#setup">Setup &amp; doctor</a>
@@ -354,14 +381,16 @@
       </header>
 
       <section class="section" id="menu-bar">
-        <div class="section-heading"><div class="section-number">01 / 07</div><div><h2>One mark, five legible states</h2><p class="section-note">The menu-bar mark changes only when the underlying condition changes. Shape carries the state before color does; the optional elapsed label appears only while work is running.</p></div></div>
+        <div class="section-heading"><div class="section-number">01 / 08</div><div><h2>One mark, seven legible states</h2><p class="section-note">The menu-bar mark changes only when the underlying condition changes. Shape carries the state before color does; the optional elapsed label appears only while work is running.</p></div></div>
         <div class="plate">
-          <div class="plate-label"><span>MENU-BAR PRESENCE</span><span>24 pt target · monochrome-safe</span></div>
+          <div class="plate-label"><span>MENU-BAR PRESENCE</span><span>24 pt mark · monochrome-safe</span></div>
           <div class="menubar-demo">
             <div class="menubar-strip"><span class="menu-generic">⌁ ◉ ◌</span><span class="menu-syncy active"><span class="menu-symbol">↻</span><span>18m</span></span><span class="menu-generic">⌕ ◉</span></div>
             <div class="state-grid">
               <div class="state-cell"><div class="state-icon verified">✓</div><div><div class="state-name">Verified</div><div class="state-detail">All required destinations have current evidence.</div></div></div>
+              <div class="state-cell"><div class="state-icon unverified">~</div><div><div class="state-name">Unverified</div><div class="state-detail">Size and date match; bytes remain unread.</div></div></div>
               <div class="state-cell"><div class="state-icon unverified">↑</div><div><div class="state-name">Behind</div><div class="state-detail">At least one destination is missing current files.</div></div></div>
+              <div class="state-cell"><div class="state-icon missing">−</div><div><div class="state-name">Missing</div><div class="state-detail">The folder is not present at a required destination.</div></div></div>
               <div class="state-cell"><div class="state-icon dim">?</div><div><div class="state-name">Unchecked</div><div class="state-detail">A required destination cannot be identified.</div></div></div>
               <div class="state-cell"><div class="state-icon missing">!</div><div><div class="state-name">Error</div><div class="state-detail">A task or configuration failed.</div></div></div>
               <div class="state-cell"><div class="state-icon unverified">↻</div><div><div class="state-name">Working · 18m</div><div class="state-detail">Elapsed time advances in the menu bar.</div></div></div>
@@ -372,7 +401,7 @@
       </section>
 
       <section class="section" id="popover">
-        <div class="section-heading"><div class="section-number">02 / 07</div><div><h2>The status story, without opening a window</h2><p class="section-note">The popover gives elapsed time, current phase, last observable activity, and historical context. When rsync is silent there is deliberately no bar.</p></div></div>
+        <div class="section-heading"><div class="section-number">02 / 08</div><div><h2>The status story, without opening a window</h2><p class="section-note">The popover gives elapsed time, current phase, last observable activity, and historical context. When rsync is silent there is deliberately no bar.</p></div></div>
         <div class="plate">
           <div class="plate-label"><span>MENU POPOVER STATES</span><span>360 × variable height</span></div>
           <div class="popover-grid">
@@ -411,7 +440,7 @@
             <div class="popover-wrap"><div class="popover-caption">FINISHED · PARTIAL SKIP</div><article class="popover">
               <div class="pop-head"><div class="brand-lockup"><div class="brand-icon unverified">·</div><div class="brand-name">Check finished</div></div><span class="label">10:08 AM</span></div>
               <div class="status-summary"><div class="status-title">1 destination checked</div><div class="status-sub">External archive was checked. Studio NAS was not reached.</div></div>
-              <div class="pop-list"><div class="pop-row"><span class="glyph verified">✓</span><span class="row-title">External archive</span><span class="row-value">5 verified</span></div><div class="pop-row"><span class="glyph dim">×</span><span class="row-title">Studio NAS</span><span class="row-value">volume unavailable</span></div></div>
+              <div class="pop-list"><div class="pop-row"><span class="glyph verified">✓</span><span class="row-title">External archive</span><span class="row-value">5 verified</span></div><div class="pop-row"><span class="glyph dim">×</span><span class="row-title">Studio NAS</span><span class="row-value">not connected</span></div></div>
               <div class="pop-actions"><span></span><button type="button" class="small-button">Open Syncy…</button></div>
             </article></div>
 
@@ -426,7 +455,7 @@
       </section>
 
       <section class="section" id="ledger">
-        <div class="section-heading"><div class="section-number">03 / 07</div><div><h2>A full ledger, still quiet</h2><p class="section-note">The main window scales the terminal ledger into a native, inspectable table. Facts align vertically; the running task remains attached to its folder even if selection changes.</p></div></div>
+        <div class="section-heading"><div class="section-number">03 / 08</div><div><h2>A full ledger, still quiet</h2><p class="section-note">The main window scales the terminal ledger into a native, inspectable table. Facts align vertically; the running task remains attached to its folder even if selection changes.</p></div></div>
         <div class="plate">
           <div class="plate-label"><span>MAIN WINDOW · LEDGER</span><span>1040 × 680</span></div>
           <div class="mac-window">
@@ -452,21 +481,21 @@
       </section>
 
       <section class="section" id="evidence">
-        <div class="section-heading"><div class="section-number">04 / 07</div><div><h2>Differences on the left. Evidence on the right.</h2><p class="section-note">A selected folder becomes a record to inspect. Difference categories say what rsync established; evidence preserves method, time, identity, and literal command.</p></div></div>
+        <div class="section-heading"><div class="section-number">04 / 08</div><div><h2>Differences on the left. Evidence on the right.</h2><p class="section-note">A selected folder becomes a record to inspect. Difference categories say what rsync established; evidence preserves method, time, identity, and literal command.</p></div></div>
         <div class="plate">
           <div class="plate-label"><span>FOLDER DETAIL · DIFFERENCES &amp; EVIDENCE</span><span>Nothing prescribes an action</span></div>
           <div class="mac-window"><div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="window-title">field-recordings</div><div class="toolbar-end"><button type="button" class="small-button">Quick check</button><button type="button" class="small-button">Verify bytes</button></div></div>
             <div class="detail-layout"><div class="detail-main"><div class="back">‹ Archive ledger</div><h3>field-recordings</h3><div class="detail-summary">28 files short · 4.7 gb · Studio NAS</div>
               <div class="diff-group"><div class="diff-group-head"><strong>Not at destination</strong><span>24 files · 4.6 gb</span></div><div class="file-row"><span class="path">interviews/day-04.wav</span><span class="size">1.8 gb</span></div><div class="file-row"><span class="path">interviews/day-05.wav</span><span class="size">1.7 gb</span></div><div class="file-row"><span class="path">room-tone/session-b.wav</span><span class="size">892 mb</span></div></div>
-              <div class="diff-group"><div class="diff-group-head"><strong>Different bytes</strong><span>4 files · 116 mb</span></div><div class="file-row"><span class="path">notes/cue-sheet.pdf</span><span class="size">18 mb</span></div><div class="file-row"><span class="path">edits/assembly-v7.wav</span><span class="size">98 mb</span></div></div>
-              <div class="diff-group"><div class="diff-group-head"><strong>Extra at destination</strong><span>2 files · 31 mb</span></div><div class="file-row"><span class="path">exports/assembly-v5.wav</span><span class="size">31 mb</span></div></div>
+              <div class="diff-group"><div class="diff-group-head"><strong>Content differs</strong><span>4 files · 116 mb</span></div><div class="file-row"><span class="path">notes/cue-sheet.pdf</span><span class="size">18 mb</span></div><div class="file-row"><span class="path">edits/assembly-v7.wav</span><span class="size">98 mb</span></div></div>
+              <div class="diff-group"><div class="diff-group-head"><strong>Only at destination</strong><span>2 files · 31 mb</span></div><div class="file-row"><span class="path">exports/assembly-v5.wav</span><span class="size">31 mb</span></div></div>
             </div><aside class="detail-aside"><div class="evidence-block"><div class="label">Current evidence</div><div style="margin-top:8px" class="evidence-title unverified">size and date differ</div><dl><div class="evidence-line"><dt>Method</dt><dd>Quick check</dd></div><div class="evidence-line"><dt>Read</dt><dd>Today, 9:46 AM</dd></div><div class="evidence-line"><dt>Source</dt><dd>2,306 files · 72.3 gb</dd></div><div class="evidence-line"><dt>Destination</dt><dd>Studio NAS</dd></div><div class="evidence-line"><dt>Volume</dt><dd class="mono">volume UUID …C42A</dd></div></dl><div class="evidence-note">Bytes were not read. A deep verification last matched on August 31.</div></div><div class="evidence-block"><div class="label">Command</div><div class="command">/opt/homebrew/bin/rsync -aAX -n -i --delete --out-format=%i|%l|%n …</div></div></aside></div>
           </div>
         </div>
       </section>
 
       <section class="section" id="sync">
-        <div class="section-heading"><div class="section-number">05 / 07</div><div><h2>Sync remains deliberate</h2><p class="section-note">The plan and preflight are visible before the write begins. Once running, progress is measured from rsync’s bytes; cancellation says exactly what will remain.</p></div></div>
+        <div class="section-heading"><div class="section-number">05 / 08</div><div><h2>Sync remains deliberate</h2><p class="section-note">The plan and preflight are visible before the write begins. Once running, progress is measured from rsync’s bytes; cancellation says exactly what will remain.</p></div></div>
         <div class="plate">
           <div class="plate-label"><span>SYNC PLAN · CONFIRM · RUN · CANCEL</span><span>Writes only through rsync</span></div>
           <div class="flow-grid">
@@ -478,7 +507,7 @@
       </section>
 
       <section class="section" id="setup">
-        <div class="section-heading"><div class="section-number">06 / 07</div><div><h2>Setup records what the OS can prove</h2><p class="section-note">Finder pickers choose paths, but identity comes from the mounted volume. Capability probes and doctor results use the same exact language as the CLI.</p></div></div>
+        <div class="section-heading"><div class="section-number">06 / 08</div><div><h2>Setup records what the OS can prove</h2><p class="section-note">Finder pickers choose paths, but identity comes from the mounted volume. Capability probes and doctor results use the same exact language as the CLI.</p></div></div>
         <div class="plate">
           <div class="plate-label"><span>SETTINGS · DESTINATIONS · DOCTOR</span><span>Native controls, engine-owned facts</span></div>
           <div class="mac-window"><div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="window-title">Syncy Settings</div><div></div></div><div class="settings-layout">
@@ -494,14 +523,49 @@
       </section>
 
       <section class="section" id="schedules">
-        <div class="section-heading"><div class="section-number">07 / 07</div><div><h2>Background work leaves a complete record</h2><p class="section-note">Schedules state their skip conditions up front. History distinguishes completed, skipped, failed, cancelled, and missed work; “finished” is never used for work that did not run.</p></div></div>
+        <div class="section-heading"><div class="section-number">07 / 08</div><div><h2>Background work leaves a complete record</h2><p class="section-note">Schedules state their skip conditions up front. History distinguishes completed, skipped, failed, cancelled, and missed work; “finished” is never used for work that did not run.</p></div></div>
         <div class="plate">
           <div class="plate-label"><span>SCHEDULES · HISTORY</span><span>Launch at login · one task at a time</span></div>
           <div class="flow-grid">
             <article class="sheet"><div class="sheet-head"><h3>Schedules</h3><p>Tasks run whenever the Mac and Syncy are awake, including on battery. Unavailable destinations are recorded as skipped.</p></div><div class="sheet-body"><div class="schedule-row"><div class="schedule-mark">q</div><div><strong>Quick check · all folders</strong><p>Every day at 8:00 PM · required destinations</p></div><div class="switch" aria-hidden="true"></div></div><div class="schedule-row"><div class="schedule-mark">d</div><div><strong>Deep verify · all folders</strong><p>Sunday at 2:00 AM · required destinations</p></div><div class="switch" aria-hidden="true"></div></div><div class="schedule-row"><div class="schedule-mark">s</div><div><strong>Sync field-recordings</strong><p class="unverified">Suspended · configuration changed</p></div><button type="button" class="small-button">Review</button></div><div class="evidence-note">After sleep: run the latest missed check once. Never duplicate. Configuration changes suspend affected sync schedules until reviewed.</div></div><div class="sheet-actions"><button type="button" class="small-button">New schedule…</button></div></article>
             <article class="sheet"><div class="sheet-head"><h3>Task history</h3><p>Literal outcomes, newest first.</p></div><div class="sheet-body" style="padding-top:10px"><table class="history-table"><thead><tr><th>When</th><th>Task</th><th>Outcome</th><th>Time</th></tr></thead><tbody><tr><td class="when">Today 10:08</td><td>Quick check · all</td><td class="verified">completed · 10</td><td class="when">3m 12s</td></tr><tr><td class="when">Today 02:00</td><td>Deep verify · all</td><td class="unverified">completed 5 · skipped 5</td><td class="when">2h 44m</td></tr><tr><td class="when">Fri 22:00</td><td>Sync · field-recordings</td><td class="missing">failed · code 12</td><td class="when">24m 08s</td></tr><tr><td class="when">Sep 02</td><td>Deep verify · photos-2019</td><td class="dim">cancelled</td><td class="when">18m 42s</td></tr><tr><td class="when">Sep 01</td><td>Quick check · all</td><td class="dim">missed · Mac asleep</td><td class="when">—</td></tr></tbody></table></div><div class="sheet-actions"><button type="button" class="small-button">Open selected log</button><button type="button" class="small-button">Export history…</button></div></article>
           </div>
-          <div class="annotation"><strong>Notification</strong><span>“Deep verify: 5 folders verified · Studio NAS skipped, volume unavailable.” Routine full successes may remain quiet; partial work is always named.</span></div>
+          <div class="annotation"><strong>Notification</strong><span>“Deep verify: 5 folders verified · Studio NAS skipped, not connected.” Routine full successes may remain quiet; partial work is always named.</span></div>
+        </div>
+      </section>
+
+      <section class="section" id="canonical">
+        <div class="section-heading"><div class="section-number">08 / 08</div><div><h2>Canonical states, named once</h2><p class="section-note">These are the evidence claims the Mac surface may render. A missing record never becomes “clean,” a stale record never becomes “verified,” and a task outcome never becomes a verification result.</p></div></div>
+        <div class="plate">
+          <div class="plate-label"><span>CANONICAL COPY · LEDGER · DIFFERENCES · TASKS</span><span>Shared vocabulary</span></div>
+          <div class="canonical-grid">
+            <article class="canonical-card"><div class="label verified">CLEAN · NO DIFFERENCES</div><h3>No differences</h3><p><strong>Quick check</strong> · 1,842 files read · 72.3 gb · 10:08 AM</p><p>The listing is empty because this recorded check found no differences.</p></article>
+            <article class="canonical-card"><div class="label dim">NO RECORD</div><h3>No check recorded</h3><p>No recorded check for Studio NAS.</p><p>Run a check to record differences. This is not the same as a clean listing.</p></article>
+            <article class="canonical-card"><div class="label missing">ERROR</div><h3>Differences unavailable</h3><p>The recorded listing could not be read.</p><p><strong>No new verification was recorded.</strong> Previous evidence remains unchanged.</p></article>
+            <article class="canonical-card"><div class="label unverified">STALE EVIDENCE</div><h3>Evidence is stale</h3><p>Deep verify 31d ago · source changed since verify.</p><p>Current status: <strong>unverified</strong>.</p></article>
+            <article class="canonical-card"><div class="label dim">WRONG VOLUME</div><h3>Destination identity changed</h3><p>The records here were made against a different volume.</p><p>Current status: <strong>unchecked</strong>.</p></article>
+            <article class="canonical-card"><div class="label missing">WHOLE FOLDER MISSING</div><h3>Whole folder missing</h3><p>The source holds the files; nothing was itemized at this destination.</p><p>Counts remain at folder level.</p></article>
+            <article class="canonical-card"><div class="label dim">TRUNCATED LISTING</div><h3>Listing truncated</h3><p><strong>1,200 more not stored · counts remain exact.</strong></p><p>The cap limits rows, not the total counts or the evidence timestamp.</p></article>
+          </div>
+
+          <div class="progress-compare">
+            <article class="progress-state"><div class="label unverified">SILENT CHECKSUM</div><h3>Deep verify is running</h3><p>18m 42s elapsed · Comparing file contents · rsync is running</p><div class="no-progress">no measured percentage</div><p>No file-level results yet · elapsed time remains authoritative.</p></article>
+            <article class="progress-state"><div class="label verified">MEASURED TRANSFER</div><h3>Sync is running</h3><p>44.8 gb of 72.3 gb transferred · rsync measured</p><div class="measured-track"><div class="measured-fill"></div></div><p>1,842 of 2,306 files observed · <strong>62%</strong></p></article>
+          </div>
+
+          <div class="canonical-columns">
+            <article class="canonical-panel"><h3>Relevant destination default</h3><p>The Differences and Sync surfaces open on the first required destination that needs work. If none needs work, they use the first recorded destination.</p><div class="destination-picker"><span class="glyph unverified">↑</span><span><strong>Studio NAS</strong><br>behind 28 · 4.7 gb</span><span class="chevron">⌄</span></div><p>Destination is the visible term everywhere.</p></article>
+            <article class="canonical-panel"><h3>Silent background refresh</h3><p>Background refresh · 10:11 AM</p><p>No new evidence recorded · ledger remains unchanged.</p><p>Owned by the background scheduler. Refresh to read newly recorded evidence.</p></article>
+          </div>
+
+          <table class="outcome-table"><thead><tr><th>Outcome</th><th>Canonical copy</th><th>Evidence rule</th></tr></thead><tbody>
+            <tr><td class="verified">completed</td><td>Deep verify · 5 folders · evidence recorded</td><td>Only work that ran and recorded its result is completed.</td></tr>
+            <tr><td class="unverified">skipped</td><td>Studio NAS · not connected · skipped</td><td>No check ran; it never reads as completed.</td></tr>
+            <tr><td class="missing">failed</td><td>rsync exited with code 12</td><td>No new verification was recorded.</td></tr>
+            <tr><td class="dim">cancelled</td><td>Check cancelled · no verification was recorded</td><td>Previous evidence remains with its original time.</td></tr>
+            <tr><td class="dim">missed</td><td>Quick check · Mac asleep · missed</td><td>Nothing ran; the absence is named.</td></tr>
+          </tbody></table>
+          <div class="annotation"><strong>Vocabulary</strong><span>Use <b>destination</b> consistently. The ledger states are <b>verified</b> · <b>unverified</b> · <b>behind</b> · <b>missing</b> · <b>unchecked</b> · <b>error</b>.</span></div>
         </div>
       </section>
     </main>

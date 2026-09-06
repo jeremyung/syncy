@@ -37,6 +37,8 @@ export interface TargetSnapshot {
   readonly name: string;
   readonly required: boolean;
   readonly reachability: Reachability;
+  /** Canonical phrase for the observed reachability, not an inferred verdict. */
+  readonly reachabilityPhrase: string;
   readonly usesSentinel: boolean;
 }
 
@@ -44,11 +46,33 @@ export interface CellSnapshot {
   readonly target: string;
   readonly state: CellState;
   readonly reason: string;
+  /** Canonical difference/evidence summary for clients that do not share the TUI. */
+  readonly differenceSummary: string;
+  readonly evidence?: {
+    /** Whether the configured destination identity is present now. */
+    readonly currentTarget: boolean;
+    readonly lastCheck?: CheckEvidenceSnapshot;
+    readonly deepCheck?: CheckEvidenceSnapshot;
+    readonly extrasObservedAt?: number;
+  };
   readonly nChanges: number;
+  /** Changed files only. Older recorded scans may not have this count. */
+  readonly nFiles?: number;
   readonly nNew?: number;
   readonly bytesPending: number;
   readonly nExtra: number;
   readonly needsChecksum?: boolean;
+}
+
+export interface CheckEvidenceSnapshot {
+  readonly method: "quick" | "deep";
+  readonly outcome: ScanOutcome;
+  readonly at: number;
+  readonly durationMs?: number;
+  readonly nChanges: number;
+  readonly nFiles?: number;
+  readonly nExtra: number;
+  readonly bytesPending: number;
 }
 
 export interface UnitSnapshot {
@@ -104,6 +128,8 @@ export interface SyncPreflightMessage {
   }[];
   readonly ok: boolean;
   readonly nChanges: number;
+  /** Changed files only; absent for preflights based on legacy evidence. */
+  readonly nFiles?: number;
   readonly nNew?: number;
   readonly nExtra: number;
   readonly bytesPending: number;
@@ -119,6 +145,22 @@ export interface DiffMessage {
   readonly unit: string;
   readonly target: string;
   readonly diff: Diff | null;
+  /** Shared difference labels/counts, so native clients need not duplicate them. */
+  readonly presentation?: {
+    readonly parts: readonly {
+      readonly kind: string;
+      readonly count: number;
+      readonly label: string;
+    }[];
+    readonly copyableFiles: number;
+  };
+  /** The target identity the stored listing was made against, if recorded. */
+  readonly provenance?: {
+    readonly targetIdentity: string;
+    readonly identityMatches: boolean;
+    readonly reachability: Reachability;
+    readonly current: boolean;
+  };
 }
 
 export interface HistoryMessage {
@@ -148,7 +190,8 @@ export interface JobStartedEvent extends JobEventBase {
     readonly bytesTotal: number;
   };
   readonly unitSize: {
-    readonly files: number;
+    /** Absent when legacy evidence did not retain a file-only count. */
+    readonly files?: number;
     readonly bytes: number;
   };
   /** One measured prior run, not a promise that this run will take as long. */
@@ -185,6 +228,7 @@ export interface CheckCompletedEvent extends JobEventBase {
   readonly result: {
     readonly outcome: ScanOutcome;
     readonly nChanges: number;
+    readonly nFiles?: number;
     readonly nNew?: number;
     readonly nExtra: number;
     readonly bytesPending: number;

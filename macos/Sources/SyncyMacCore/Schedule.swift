@@ -90,4 +90,12 @@ public enum EngineCheckOperationValue: String, Codable, CaseIterable, Sendable {
     case .sync: nil
     }
   }
+
+  public var readerTitle: String {
+    switch self {
+    case .quick: "Quick check"
+    case .deep: "Deep verify"
+    case .sync: "Sync"
+    }
+  }
 }

@@ -246,6 +246,7 @@ export async function runCheckQueue(
           wholeFolderMissing: result.scan.outcome === "missing",
           source: result.scan.fingerprint,
           target: result.targetFingerprint,
+          targetIdentity: result.scan.sentinel,
         }),
       );
       deps.appendHistory({
@@ -265,6 +266,7 @@ export async function runCheckQueue(
         result: {
           outcome: result.scan.outcome,
           nChanges: result.scan.nChanges,
+          ...(result.scan.nFiles === undefined ? {} : { nFiles: result.scan.nFiles }),
           ...(result.scan.nNew === undefined ? {} : { nNew: result.scan.nNew }),
           nExtra: result.scan.nExtra,
           bytesPending: result.scan.bytesPending,

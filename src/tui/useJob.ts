@@ -3,9 +3,9 @@ import { type CheckRunResult, runCheckQueue } from "../check-runner.ts";
 import type { Config } from "../config.ts";
 import type { Fingerprint } from "../fingerprint.ts";
 import { acquireJobOwner } from "../job-owner.ts";
+import { presentCheckOutcome } from "../presentation.ts";
 import type { Reachability } from "../scan.ts";
 import type { State } from "../state.ts";
-import { reachWord } from "../status.ts";
 import type { Row } from "./Ledger.tsx";
 import type { RunProgress } from "./Progress.tsx";
 import { useTimers } from "./useTimers.ts";
@@ -153,7 +153,7 @@ export function useJob(facts: JobFacts): Job {
                 startedAt,
                 jobStartedAt: event.at,
                 filesSeen: 0,
-                filesTotal: event.unitSize.files,
+                ...(event.unitSize.files === undefined ? {} : { filesTotal: event.unitSize.files }),
                 unitBytes: event.unitSize.bytes,
                 ...(event.priorDurationMs === undefined ? {} : { priorMs: event.priorDurationMs }),
               });
@@ -185,28 +185,25 @@ export function useJob(facts: JobFacts): Job {
     // A check can change what is at the target, and the source may have moved
     // under us while it ran, so both facts are re-read once at the end.
     facts.refresh();
-    // A run in which every destination was skipped checked nothing, and must
-    // not report otherwise.
-    if (result.ran === 0 && result.skipped.length > 0) {
-      setBusy(
-        `nothing checked — ${result.skipped.map((s) => `${s.target} ${reachWord(s.why)}`).join(", ")}`,
-      );
-    } else if (result.skipped.length > 0) {
-      setBusy(
-        `${mode} check finished · ${result.ran} of ${result.total} · skipped ` +
-          result.skipped.map((s) => `${s.target} (${reachWord(s.why)})`).join(", "),
-      );
-    } else {
-      setBusy(
-        scope === "all"
-          ? `${mode} check finished · ${chosen.length} folders`
-          : `${mode} check finished · ${chosen[0]?.status.unit ?? ""}`,
-      );
-    }
+    setBusy(
+      presentCheckOutcome({
+        mode,
+        scope,
+        ...(chosen[0] === undefined ? {} : { selectedUnit: chosen[0].status.unit }),
+        selectedFolders: chosen.length,
+        total: result.total,
+        ran: result.ran,
+        failed: result.failed,
+        skipped: result.skipped,
+      }).summary,
+    );
     facts.setNow(Date.now());
     // A skip needs longer on screen than a success: it is the message the
     // user has to read and act on.
-    timers.later(() => setBusy(null), result.skipped.length > 0 ? 8000 : 2500);
+    timers.later(
+      () => setBusy(null),
+      result.failed.length > 0 || result.skipped.length > 0 ? 8000 : 2500,
+    );
   };
 
   return { running, busy, runCheck };
