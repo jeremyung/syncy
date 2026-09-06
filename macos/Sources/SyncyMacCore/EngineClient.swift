@@ -97,7 +97,7 @@ public struct JobEventSnapshot: Decodable, Sendable {
   public let phase: String?
   public let batch: JobBatchSnapshot?
   public let unitSize: JobUnitSizeSnapshot?
-  public let priorDurationMs: Double?
+  public let estimatedDurationMs: Double?
   public let filesSeen: Int64?
   public let filesTotal: Int64?
   public let bytesDone: Int64?
@@ -122,7 +122,9 @@ public struct JobEventSnapshot: Decodable, Sendable {
     phase = try values.decodeIfPresent(String.self, forKey: .phase)
     batch = try values.decodeIfPresent(JobBatchSnapshot.self, forKey: .batch)
     unitSize = try values.decodeIfPresent(JobUnitSizeSnapshot.self, forKey: .unitSize)
-    priorDurationMs = try values.decodeIfPresent(Double.self, forKey: .priorDurationMs)
+    estimatedDurationMs =
+      try values.decodeIfPresent(Double.self, forKey: .estimatedDurationMs)
+      ?? (try values.decodeIfPresent(Double.self, forKey: .priorDurationMs))
     filesSeen = try values.decodeIfPresent(Int64.self, forKey: .filesSeen)
     filesTotal = try values.decodeIfPresent(Int64.self, forKey: .filesTotal)
     bytesDone = try values.decodeIfPresent(Int64.self, forKey: .bytesDone)
@@ -152,7 +154,7 @@ public struct JobEventSnapshot: Decodable, Sendable {
     guard counts.allSatisfy({ $0.map { $0 >= 0 } ?? true }) else {
       throw EngineClientError.protocolFailure("job event contains a negative count")
     }
-    guard priorDurationMs.map({ $0.isFinite && $0 >= 0 }) ?? true,
+    guard estimatedDurationMs.map({ $0.isFinite && $0 >= 0 }) ?? true,
       result?.durationMs.map({ $0.isFinite && $0 >= 0 }) ?? true
     else {
       throw EngineClientError.protocolFailure("job event contains an invalid duration")
@@ -222,7 +224,8 @@ public struct JobEventSnapshot: Decodable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case protocolVersion, type, jobId, at, operation, unit, target, phase, batch, unitSize
-    case priorDurationMs, filesSeen, filesTotal, bytesDone, bytesTotal, lastItem, reachability
+    case estimatedDurationMs, priorDurationMs, filesSeen, filesTotal, bytesDone, bytesTotal, lastItem,
+      reachability
     case reason, result, message, exitCode, transferred
   }
 }
@@ -447,13 +450,13 @@ public struct ActiveJobSnapshot: Decodable, Sendable {
   public let startedAt: Double
   public let heartbeatAt: Double
   public let activity: ActiveJobActivity?
-  public let priorDurationMs: Double?
+  public let estimatedDurationMs: Double?
   public let batchPosition: Int64?
   public let batchTotal: Int64?
 
   public init(
     actor: String, operation: String, startedAt: Double, heartbeatAt: Double,
-    activity: ActiveJobActivity?, priorDurationMs: Double? = nil,
+    activity: ActiveJobActivity?, estimatedDurationMs: Double? = nil,
     batchPosition: Int64? = nil, batchTotal: Int64? = nil
   ) {
     self.actor = actor
@@ -461,7 +464,7 @@ public struct ActiveJobSnapshot: Decodable, Sendable {
     self.startedAt = startedAt
     self.heartbeatAt = heartbeatAt
     self.activity = activity
-    self.priorDurationMs = priorDurationMs
+    self.estimatedDurationMs = estimatedDurationMs
     self.batchPosition = batchPosition
     self.batchTotal = batchTotal
   }
@@ -539,6 +542,21 @@ public struct EngineSnapshot: Decodable, Sendable {
         else {
           throw EngineClientError.protocolFailure(
             "units[\(index)].cells[\(cellIndex)] contains a negative count")
+        }
+      }
+    }
+    if let activeJob {
+      guard activeJob.startedAt.isFinite, activeJob.heartbeatAt.isFinite,
+        activeJob.estimatedDurationMs.map({ $0.isFinite && $0 >= 0 }) ?? true
+      else {
+        throw EngineClientError.protocolFailure("activeJob contains an invalid time")
+      }
+      guard (activeJob.batchPosition == nil) == (activeJob.batchTotal == nil) else {
+        throw EngineClientError.protocolFailure("activeJob batch position and total must appear together")
+      }
+      if let position = activeJob.batchPosition, let total = activeJob.batchTotal {
+        guard position > 0, total > 0, position <= total else {
+          throw EngineClientError.protocolFailure("activeJob contains an invalid batch position")
         }
       }
     }

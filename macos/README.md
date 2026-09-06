@@ -43,7 +43,8 @@ version, message type, enums, required fields, and non-negative counts. While a
 job runs, the app consumes the engine's JSON Lines events as they arrive;
 snapshots remain the recovery path when the app opens during work another
 process started. Both paths expose the single process owner, elapsed time,
-current phase, last observed file, and only progress rsync actually measured.
+current phase, batch position, historical duration estimate, last observed
+file, and only progress rsync actually measured.
 UI code does not infer completion from process silence or scrape the terminal
 renderer.
 

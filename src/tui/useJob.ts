@@ -155,7 +155,9 @@ export function useJob(facts: JobFacts): Job {
                 filesSeen: 0,
                 ...(event.unitSize.files === undefined ? {} : { filesTotal: event.unitSize.files }),
                 unitBytes: event.unitSize.bytes,
-                ...(event.priorDurationMs === undefined ? {} : { priorMs: event.priorDurationMs }),
+                ...(event.estimatedDurationMs === undefined
+                  ? {}
+                  : { estimatedMs: event.estimatedDurationMs }),
               });
             } else if (event.type === "job.progress-observed" && event.filesSeen !== undefined) {
               // The engine reports every observation; Ink renders at a lower

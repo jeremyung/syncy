@@ -18,6 +18,13 @@ describe("cross-platform UI contract", () => {
       method: "deep",
       durationMs: 42_000,
     });
+    expect(message.activeJob).toMatchObject({
+      actor: "scheduler",
+      estimatedDurationMs: 42_000,
+      batchPosition: 2,
+      batchTotal: 4,
+      activity: { phase: "comparing-content", lastItem: "rsync started" },
+    });
   });
 
   test("difference provenance and labels survive the wire", () => {

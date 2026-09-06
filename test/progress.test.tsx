@@ -63,10 +63,10 @@ describe("the detail claims a file count only when rsync gives one", () => {
     expect(at(base, 164_000)).toContain("no estimate yet");
   });
 
-  test("with a prior run it gives that as the expectation", () => {
-    const out = at({ ...base, priorMs: 720_000 }, 164_000);
+  test("with historical samples it gives an estimate", () => {
+    const out = at({ ...base, estimatedMs: 720_000 }, 164_000);
     expect(out).toContain("12m");
-    expect(out).toContain("this folder");
+    expect(out).toContain("est.");
     expect(out).not.toContain("reports at the end");
   });
 
@@ -86,23 +86,23 @@ describe("the bar is measured against something real", () => {
   test("a single folder does not sit at 0% for the whole run", () => {
     // The byte fraction only moves when a folder completes, so with one folder
     // it is 0% until it is 100% — a light that turns on at the end.
-    const f = barFraction({ ...base, priorMs: 720_000 }, NOW + 360_000);
+    const f = barFraction({ ...base, estimatedMs: 720_000 }, NOW + 360_000);
     expect(f.fraction).toBeGreaterThan(0.4);
     expect(f.fraction).toBeLessThan(0.6);
   });
 
   test("an estimate is marked as one", () => {
-    expect(barFraction({ ...base, priorMs: 720_000 }, NOW + 1000).estimated).toBe(true);
+    expect(barFraction({ ...base, estimatedMs: 720_000 }, NOW + 1000).estimated).toBe(true);
     expect(barFraction(base, NOW + 1000).estimated).toBe(false);
   });
 
   test("it never reaches 100% while the check is still running", () => {
     // Overrunning the estimate must not claim the work is done.
-    const f = barFraction({ ...base, priorMs: 60_000 }, NOW + 600_000);
+    const f = barFraction({ ...base, estimatedMs: 60_000 }, NOW + 600_000);
     expect(f.fraction).toBeLessThan(1);
   });
 
-  test("without a prior run it falls back to bytes across folders", () => {
+  test("without historical samples it falls back to bytes across folders", () => {
     const f = barFraction({ ...base, done: 1, total: 4, bytesDone: 6_500_000_000 }, NOW + 1000);
     expect(f.estimated).toBe(false);
     expect(f.fraction).toBeCloseTo(0.5, 1);
@@ -113,7 +113,7 @@ describe("the bar reflects the whole run, not one folder repeated", () => {
   /**
    * REPRODUCED on a real run: five folders, each ~60s and each estimated at
    * 60s. `barFraction` measured `now - startedAt` — elapsed time for the
-   * *whole run* — against `priorMs`, an estimate for one job. Measured
+   * *whole run* — against `estimatedMs`, an estimate for one job. Measured
    * fractions before the fix: 10s into folder 1, 17%; 50s into folder 1,
    * 83%; 10s into folder 2, 99%; 10s into folder 4, still 99%. Once the run
    * had gone on longer than a single job's estimate, the bar pinned at the
@@ -122,11 +122,11 @@ describe("the bar reflects the whole run, not one folder repeated", () => {
    */
   const unitSize = 12_000_000_000;
   const jobs = 5;
-  const priorMs = 60_000;
+  const estimatedMs = 60_000;
   const runStart = NOW;
 
-  // Job `i` (0-indexed) is estimated to run from runStart + i*priorMs to
-  // runStart + (i+1)*priorMs, exactly matching the measured real run above.
+  // Job `i` (0-indexed) is estimated to run from runStart + i*estimatedMs to
+  // runStart + (i+1)*estimatedMs, exactly matching the measured real run above.
   const progressFor = (i: number): RunProgress => ({
     ...base,
     done: i,
@@ -134,12 +134,12 @@ describe("the bar reflects the whole run, not one folder repeated", () => {
     bytesDone: i * unitSize,
     bytesTotal: jobs * unitSize,
     startedAt: runStart,
-    jobStartedAt: runStart + i * priorMs,
+    jobStartedAt: runStart + i * estimatedMs,
     unitBytes: unitSize,
-    priorMs,
+    estimatedMs,
   });
   const fractionAt = (jobIndex: number, intoJobMs: number): number =>
-    barFraction(progressFor(jobIndex), runStart + jobIndex * priorMs + intoJobMs).fraction;
+    barFraction(progressFor(jobIndex), runStart + jobIndex * estimatedMs + intoJobMs).fraction;
 
   test("the old formula's exact pathology does not reproduce", () => {
     // Before the fix, every one of these read 0.99 — the old formula only
@@ -187,7 +187,7 @@ describe("the rendered line", () => {
   test("never wraps, at any width", () => {
     // A wrapped progress line sheared the ledger layout beneath it.
     for (const width of [76, 92, 120]) {
-      for (const line of frame({ ...base, priorMs: 720_000 }, width)) {
+      for (const line of frame({ ...base, estimatedMs: 720_000 }, width)) {
         expect(displayWidth(line), `width ${width}: ${line}`).toBeLessThanOrEqual(width + 2);
       }
     }
@@ -201,7 +201,7 @@ describe("the rendered line", () => {
   });
 
   test("the tilde marks an estimated bar", () => {
-    expect(frame({ ...base, priorMs: 720_000 }, 92).join("\n")).toContain("~");
+    expect(frame({ ...base, estimatedMs: 720_000 }, 92).join("\n")).toContain("~");
     expect(frame(base, 92).join("\n")).not.toContain("~");
   });
 });
@@ -224,7 +224,7 @@ describe("the bar is drawn only when it would mean something", () => {
   });
 
   test("a timing estimate makes it drawable", () => {
-    expect(barFraction({ ...base, priorMs: 720_000 }, NOW + 1000).drawable).toBe(true);
+    expect(barFraction({ ...base, estimatedMs: 720_000 }, NOW + 1000).drawable).toBe(true);
   });
 
   test("several folders make it drawable without an estimate", () => {
@@ -247,8 +247,8 @@ describe("the bar is drawn only when it would mean something", () => {
     // height would leave a blank row or, worse, overflow.
     expect(progressLines(base, NOW + 1000, false)).toBe(1);
     expect(progressLines(base, NOW + 1000, true)).toBe(2);
-    expect(progressLines({ ...base, priorMs: 720_000 }, NOW + 1000, false)).toBe(2);
-    expect(progressLines({ ...base, priorMs: 720_000 }, NOW + 1000, true)).toBe(3);
+    expect(progressLines({ ...base, estimatedMs: 720_000 }, NOW + 1000, false)).toBe(2);
+    expect(progressLines({ ...base, estimatedMs: 720_000 }, NOW + 1000, true)).toBe(3);
   });
 });
 
@@ -265,8 +265,8 @@ describe("the detail line never contradicts the bar above it", () => {
   });
 
   test("with a timing sample the caption names the expected total", () => {
-    const out = at({ ...base, priorMs: 720_000 }, 360_000);
+    const out = at({ ...base, estimatedMs: 720_000 }, 360_000);
     expect(out).toContain("elapsed");
-    expect(out).toContain("this folder ~12m");
+    expect(out).toContain("est. ~12m");
   });
 });

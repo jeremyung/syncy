@@ -88,6 +88,9 @@ export interface ActiveJobSnapshot {
   readonly operation: JobOperation;
   readonly startedAt: number;
   readonly heartbeatAt: number;
+  readonly estimatedDurationMs?: number;
+  readonly batchPosition?: number;
+  readonly batchTotal?: number;
   readonly activity?: {
     readonly unit: string;
     readonly target: string;
@@ -97,6 +100,7 @@ export interface ActiveJobSnapshot {
     readonly filesTotal?: number;
     readonly bytesDone?: number;
     readonly bytesTotal?: number;
+    readonly lastItem?: string;
   };
 }
 
@@ -194,8 +198,8 @@ export interface JobStartedEvent extends JobEventBase {
     readonly files?: number;
     readonly bytes: number;
   };
-  /** One measured prior run, not a promise that this run will take as long. */
-  readonly priorDurationMs?: number;
+  /** Estimated from measured throughput of prior checks on this destination. */
+  readonly estimatedDurationMs?: number;
 }
 
 export interface JobPhaseChangedEvent extends JobEventBase {

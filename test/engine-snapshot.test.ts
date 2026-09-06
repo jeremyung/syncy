@@ -128,6 +128,9 @@ describe("engine snapshot", () => {
         operation: "deep",
         startedAt: 1_750_000_000_000,
         heartbeatAt: 1_750_000_000_500,
+        estimatedDurationMs: 42_000,
+        batchPosition: 2,
+        batchTotal: 4,
         activity: {
           unit: "photos-2019",
           target: "archive",
@@ -135,6 +138,7 @@ describe("engine snapshot", () => {
           at: 1_750_000_000_400,
           filesSeen: 12,
           filesTotal: 120,
+          lastItem: "image.jpg",
         },
       }),
     });
@@ -144,6 +148,9 @@ describe("engine snapshot", () => {
       operation: "deep",
       startedAt: 1_750_000_000_000,
       heartbeatAt: 1_750_000_000_500,
+      estimatedDurationMs: 42_000,
+      batchPosition: 2,
+      batchTotal: 4,
       activity: {
         unit: "photos-2019",
         target: "archive",
@@ -151,6 +158,7 @@ describe("engine snapshot", () => {
         at: 1_750_000_000_400,
         filesSeen: 12,
         filesTotal: 120,
+        lastItem: "image.jpg",
       },
     });
     expect(JSON.stringify(snapshot)).not.toContain("private-owner-token");

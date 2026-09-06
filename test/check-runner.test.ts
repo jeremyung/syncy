@@ -131,7 +131,7 @@ describe("the UI-independent check runner", () => {
     ).toHaveLength(2);
   });
 
-  test("carries batch bytes and measured prior duration into the start event", async () => {
+  test("carries batch bytes and the historical duration estimate into the start event", async () => {
     const events: JobEvent[] = [];
     const priorState = {
       version: 1,
@@ -154,7 +154,7 @@ describe("the UI-independent check runner", () => {
     if (started?.type !== "job.started") throw new Error("missing start event");
     expect(started.batch).toEqual({ position: 1, total: 2, bytesDone: 0, bytesTotal: 400 });
     expect(started.unitSize).toEqual({ files: 7, bytes: 200 });
-    expect(started.priorDurationMs).toBe(2000);
+    expect(started.estimatedDurationMs).toBe(2000);
   });
 
   test("reuses one cached source fingerprint across every destination", async () => {

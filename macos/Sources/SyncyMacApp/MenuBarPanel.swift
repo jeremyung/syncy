@@ -160,8 +160,8 @@ private struct ActiveJobSummary: View {
         Text(elapsed(at: context.date))
           .font(.system(.title3, design: .monospaced, weight: .semibold))
           .monospacedDigit()
-        if let prior = job.priorDurationMs, prior > 0 {
-          Text("This folder previously took about \(duration(milliseconds: prior))")
+        if let estimate = job.estimatedDurationMs, estimate > 0 {
+          Text("Estimated around \(duration(milliseconds: estimate)) from previous checks")
             .font(.caption)
             .foregroundStyle(SyncyTheme.secondaryInk)
         }

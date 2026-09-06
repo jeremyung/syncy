@@ -20,9 +20,9 @@ import type { Theme } from "./theme.ts";
  *
  * So a file counter cannot be relied on. It is shown when lines are genuinely
  * arriving and replaced when they are not, rather than sitting at `0/935` for
- * twelve minutes telling the user their machine has hung. The bar is measured
- * against the previous run of the same check, which is the only honest number
- * available when rsync itself is silent.
+ * twelve minutes telling the user their machine has hung. The estimated bar
+ * uses measured historical throughput for this destination, which is the only
+ * honest timing signal available when rsync itself is silent.
  */
 
 export interface RunProgress {
@@ -38,7 +38,7 @@ export interface RunProgress {
   /**
    * When THIS job began.
    *
-   * Distinct from `startedAt` on purpose: `priorMs` estimates one folder, and
+   * Distinct from `startedAt` on purpose: `estimatedMs` estimates one folder, and
    * measuring it against how long the whole run has been going pinned the bar
    * near 100% from partway through the second folder onward (see the doc
    * comment on `barFraction`). This is what the estimate is actually for.
@@ -49,8 +49,8 @@ export interface RunProgress {
   readonly filesTotal?: number;
   /** Bytes in the folder being checked, which a deep check reads in full. */
   readonly unitBytes?: number;
-  /** How long this same check took last time, if it has ever run. */
-  readonly priorMs?: number;
+  /** Duration estimated from measured checks on this destination. */
+  readonly estimatedMs?: number;
 }
 
 export interface ProgressProps {
@@ -80,11 +80,11 @@ const QUIET_GRACE_MS = 4000;
 /**
  * How full the bar is, and whether that is a measurement or an estimate.
  *
- * Preferring the previous duration over completed-folder bytes matters most in
+ * Preferring the historical estimate over completed-folder bytes matters most in
  * the single-folder case, where the byte fraction is 0% for the entire run and
  * then 100% — which is not progress, it is a light that turns on at the end.
  *
- * MEASURED, before the blend below existed: `priorMs` estimates one job, but
+ * MEASURED, before the blend below existed: `estimatedMs` estimates one job, but
  * this was comparing it against `now - startedAt` — elapsed time for the
  * *whole run*. Five folders, each ~60s and each estimated at 60s: 10s into
  * folder 1 read 17%, 50s into folder 1 read 83%, then 10s into folder 2 read
@@ -111,9 +111,9 @@ export function barFraction(
    */
   readonly drawable: boolean;
 } {
-  if (p.priorMs !== undefined && p.priorMs > 0) {
+  if (p.estimatedMs !== undefined && p.estimatedMs > 0) {
     // How far the current job alone has gotten against its own estimate.
-    const inJob = Math.min(1, (now - p.jobStartedAt) / p.priorMs);
+    const inJob = Math.min(1, (now - p.jobStartedAt) / p.estimatedMs);
     // Blended with the bytes other jobs in this run have actually finished,
     // so the bar reflects the whole run rather than repeating one folder's
     // progress five times. bytesTotal <= 0 has nothing to divide by — one
@@ -157,15 +157,15 @@ export function detailLine(p: RunProgress, now: number): string {
   // no sample, say nothing — the bar already carries it. With no bar at all,
   // say why, and that syncy is measuring this run so the next one has one.
   const eta =
-    p.priorMs !== undefined && p.priorMs > 0
-      ? ` elapsed · this folder ~${clock(p.priorMs)}`
+    p.estimatedMs !== undefined && p.estimatedMs > 0
+      ? ` elapsed · est. ~${clock(p.estimatedMs)}`
       : barFraction(p, now).drawable
         ? ""
         : " · no estimate yet, timing this run";
   // The expected duration measures one folder, not the batch. When it is
   // available, naming that relationship matters more than repeating the deep
   // check's byte total (and keeps the fitted ledger line within its budget).
-  const hasPrior = p.priorMs !== undefined && p.priorMs > 0;
+  const hasPrior = p.estimatedMs !== undefined && p.estimatedMs > 0;
   return `${hasPrior ? "" : reading}${clock(elapsed)}${eta}`;
 }
 
@@ -192,7 +192,7 @@ export function Progress({
   const barWidth = Math.max(10, width - 22);
   const filled = Math.min(barWidth, Math.max(0, Math.round(fraction * barWidth)));
   const bar = "━".repeat(filled) + "─".repeat(barWidth - filled);
-  // A tilde marks the estimate, so a bar derived from last time's duration is
+  // A tilde marks the estimate, so a bar derived from historical throughput is
   // never mistaken for a count of work actually completed.
   const pct = `${estimated ? "~" : ""}${Math.round(fraction * 100)}%`.padStart(5);
 

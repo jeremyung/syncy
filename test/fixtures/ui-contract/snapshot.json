@@ -77,5 +77,21 @@
         }
       ]
     }
-  ]
+  ],
+  "activeJob": {
+    "actor": "scheduler",
+    "operation": "deep",
+    "startedAt": 1788681600000,
+    "heartbeatAt": 1788681602000,
+    "estimatedDurationMs": 42000,
+    "batchPosition": 2,
+    "batchTotal": 4,
+    "activity": {
+      "unit": "photos",
+      "target": "Archive",
+      "phase": "comparing-content",
+      "at": 1788681602000,
+      "lastItem": "rsync started"
+    }
+  }
 }

@@ -21,7 +21,7 @@ final class ModelsTests: XCTestCase {
       destination: "NAS",
       phase: "Comparing file contents",
       startedAt: now.addingTimeInterval(10),
-      typicalDuration: nil,
+      estimatedDuration: nil,
       lastEvent: "rsync is running",
       measuredFraction: nil
     )
@@ -35,7 +35,7 @@ final class ModelsTests: XCTestCase {
 
     XCTAssertNil(job.measuredFraction)
     XCTAssertTrue(job.lastEvent.contains("no file-level results"))
-    XCTAssertEqual(job.typicalText, "Typically 42m 0s–55m 0s on this destination")
+    XCTAssertEqual(job.estimateText, "Estimated around 49m 0s from previous checks")
   }
 
   func testVocabularyMatchesLedgerStates() {
@@ -90,6 +90,11 @@ final class ModelsTests: XCTestCase {
     XCTAssertEqual(snapshot.units[0].cells[1].nFiles, 2)
     XCTAssertEqual(snapshot.units[0].cells[0].evidence?.lastCheck?.method, "deep")
     XCTAssertEqual(snapshot.units[0].cells[0].evidence?.lastCheck?.durationMs, 42_000)
+    XCTAssertEqual(snapshot.activeJob?.actor, "scheduler")
+    XCTAssertEqual(snapshot.activeJob?.estimatedDurationMs, 42_000)
+    XCTAssertEqual(snapshot.activeJob?.batchPosition, 2)
+    XCTAssertEqual(snapshot.activeJob?.batchTotal, 4)
+    XCTAssertEqual(snapshot.activeJob?.activity?.lastItem, "rsync started")
   }
 
   func testSharedDifferenceFixturePreservesIdentityAndLabels() throws {
@@ -116,6 +121,7 @@ final class ModelsTests: XCTestCase {
     ])
     XCTAssertEqual(events[2].filesSeen, 4)
     XCTAssertEqual(events[2].filesTotal, 12)
+    XCTAssertEqual(events[0].estimatedDurationMs, 42_000)
   }
 
   func testJobProtocolRejectsUnknownEventTypes() {

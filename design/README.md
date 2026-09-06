@@ -15,8 +15,8 @@ The time model separates measurement from inference:
 - elapsed time and current phase are always shown;
 - rsync byte/file progress appears only when rsync reports it;
 - silent checksum work has no progress bar;
-- historical durations are labeled as a range, never a measured percentage;
-- a run beyond that range remains “running” unless a failure is observed;
+- a historical duration is labeled as one prior measurement, never a measured percentage;
+- a run beyond that prior duration remains “running” unless a failure is observed;
 - partial, skipped, failed, cancelled, and missed work remain distinct outcomes.
 
 ## Existing-function coverage
@@ -49,11 +49,11 @@ The time model separates measurement from inference:
 ## Review checklist
 
 - The menu-bar mark is useful without relying on color.
-- A silent deep verify answers: alive, elapsed, phase, normal range, last event.
+- A silent deep verify answers: alive, elapsed, phase, historical estimate, last event.
 - No silent deep verify shows a synthetic percentage or bar.
 - A measured sync identifies its denominator and labels progress as measured.
 - A partially skipped batch never reads as fully completed.
 - A failed or cancelled job never creates new verification evidence.
-- No interface contains a delete affordance.
+- No interface offers to delete files from a source or destination.
 - All desktop and narrow layouts avoid horizontal document overflow.
 - Both appearances use the same semantic hierarchy.

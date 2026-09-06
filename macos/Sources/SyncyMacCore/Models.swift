@@ -71,7 +71,7 @@ public struct RunningJob: Codable, Sendable {
   public let destination: String
   public let phase: String
   public let startedAt: Date
-  public let typicalDuration: ClosedRange<TimeInterval>?
+  public let estimatedDuration: TimeInterval?
   public let lastEvent: String
   public let measuredFraction: Double?
 
@@ -81,7 +81,7 @@ public struct RunningJob: Codable, Sendable {
     destination: String,
     phase: String,
     startedAt: Date,
-    typicalDuration: ClosedRange<TimeInterval>?,
+    estimatedDuration: TimeInterval?,
     lastEvent: String,
     measuredFraction: Double?
   ) {
@@ -90,7 +90,7 @@ public struct RunningJob: Codable, Sendable {
     self.destination = destination
     self.phase = phase
     self.startedAt = startedAt
-    self.typicalDuration = typicalDuration
+    self.estimatedDuration = estimatedDuration
     self.lastEvent = lastEvent
     self.measuredFraction = measuredFraction
   }
@@ -103,10 +103,9 @@ public struct RunningJob: Codable, Sendable {
     Self.duration(elapsed(at: date)) + " elapsed"
   }
 
-  public var typicalText: String? {
-    guard let typicalDuration else { return nil }
-    return
-      "Typically \(Self.duration(typicalDuration.lowerBound))–\(Self.duration(typicalDuration.upperBound)) on this destination"
+  public var estimateText: String? {
+    guard let estimatedDuration else { return nil }
+    return "Estimated around \(Self.duration(estimatedDuration)) from previous checks"
   }
 
   private static func duration(_ interval: TimeInterval) -> String {
@@ -164,7 +163,7 @@ public struct RunningJob: Codable, Sendable {
         destination: "NAS",
         phase: "Comparing file contents",
         startedAt: now.addingTimeInterval(-18 * 60 - 42),
-        typicalDuration: (42 * 60)...(55 * 60),
+        estimatedDuration: 49 * 60,
         lastEvent: "rsync is running · no file-level results have arrived yet",
         measuredFraction: nil
       )

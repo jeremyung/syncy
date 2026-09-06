@@ -143,7 +143,7 @@ export async function runCheckQueue(
       options.jobId?.(job.unit, job.target.name, position) ??
       `${startedAt}-${position}-${job.unit}-${job.target.name}`;
     const jobStartedAt = now();
-    const prior = estimateMs(working, job.target.name, methodOf(mode), job.bytes);
+    const estimate = estimateMs(working, job.target.name, methodOf(mode), job.bytes);
     const base = {
       protocolVersion: 1,
       jobId,
@@ -158,7 +158,7 @@ export async function runCheckQueue(
       phase: "queued",
       batch: { position, total: jobs.length, bytesDone, bytesTotal },
       unitSize: { files: job.files, bytes: job.bytes },
-      ...(prior === undefined ? {} : { priorDurationMs: prior }),
+      ...(estimate === undefined ? {} : { estimatedDurationMs: estimate }),
     });
 
     const status = reach.get(job.target.name) ?? "unreachable";
@@ -196,7 +196,7 @@ export async function runCheckQueue(
       target: job.target.name,
       bytes: job.bytes,
       files: job.files,
-      estimateMs: prior ?? null,
+      estimateMs: estimate ?? null,
     });
     try {
       const sourceFingerprint = fingerprints.get(job.unit);

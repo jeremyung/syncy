@@ -74,7 +74,7 @@ const started: JobEvent = {
   phase: "queued",
   batch: { position: 1, total: 2, bytesDone: 0, bytesTotal: 8192 },
   unitSize: { files: 12, bytes: 4096 },
-  priorDurationMs: 42_000,
+  estimatedDurationMs: 42_000,
 };
 
 const preflight: SyncPreflightMessage = {
@@ -135,7 +135,7 @@ describe("engine JSON Lines protocol", () => {
     expect(parseEngineMessage(serializeEngineMessage(started))).toEqual(started);
     const parsed = parseEngineMessage(serializeEngineMessage(started));
     if (parsed.type !== "job.started") throw new Error("wrong event type");
-    expect(parsed.priorDurationMs).toBe(42_000);
+    expect(parsed.estimatedDurationMs).toBe(42_000);
   });
 
   test("round-trips a guarded sync preflight with a one-use confirmation", () => {

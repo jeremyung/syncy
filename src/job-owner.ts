@@ -19,6 +19,9 @@ export interface JobOwnerRecord {
   readonly operation: "quick" | "deep" | "sync" | "setup";
   readonly startedAt: number;
   readonly heartbeatAt: number;
+  readonly estimatedDurationMs?: number;
+  readonly batchPosition?: number;
+  readonly batchTotal?: number;
   readonly activity?: JobOwnerActivity;
 }
 
@@ -130,6 +133,25 @@ function parseRecord(value: unknown): JobOwnerRecord | undefined {
       return undefined;
     }
   }
+  for (const key of ["estimatedDurationMs", "batchPosition", "batchTotal"] as const) {
+    const value = record[key];
+    if (
+      value !== undefined &&
+      (typeof value !== "number" || !Number.isInteger(value) || value < 0)
+    ) {
+      return undefined;
+    }
+  }
+  if ((record.batchPosition === undefined) !== (record.batchTotal === undefined)) {
+    return undefined;
+  }
+  if (
+    typeof record.batchPosition === "number" &&
+    typeof record.batchTotal === "number" &&
+    (record.batchPosition < 1 || record.batchPosition > record.batchTotal)
+  ) {
+    return undefined;
+  }
   return record as unknown as JobOwnerRecord;
 }
 
@@ -230,9 +252,23 @@ export function acquireJobOwner(
             const bytesDone = progress?.bytesDone ?? previous?.bytesDone;
             const bytesTotal = progress?.bytesTotal ?? previous?.bytesTotal;
             const lastItem = progress?.lastItem ?? previous?.lastItem;
+            const estimatedDurationMs =
+              event.type === "job.started" ? event.estimatedDurationMs : active.estimatedDurationMs;
+            const batchPosition =
+              event.type === "job.started" ? event.batch?.position : active.batchPosition;
+            const batchTotal =
+              event.type === "job.started" ? event.batch?.total : active.batchTotal;
             publish({
-              ...active,
+              version: active.version,
+              token: active.token,
+              pid: active.pid,
+              actor: active.actor,
+              operation: active.operation,
+              startedAt: active.startedAt,
               heartbeatAt: now(),
+              ...(estimatedDurationMs === undefined ? {} : { estimatedDurationMs }),
+              ...(batchPosition === undefined ? {} : { batchPosition }),
+              ...(batchTotal === undefined ? {} : { batchTotal }),
               activity: {
                 unit: event.unit,
                 target: event.target,

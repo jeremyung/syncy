@@ -123,6 +123,11 @@ export async function buildEngineSnapshot(
             operation: owner.operation,
             startedAt: owner.startedAt,
             heartbeatAt: owner.heartbeatAt,
+            ...(owner.estimatedDurationMs === undefined
+              ? {}
+              : { estimatedDurationMs: owner.estimatedDurationMs }),
+            ...(owner.batchPosition === undefined ? {} : { batchPosition: owner.batchPosition }),
+            ...(owner.batchTotal === undefined ? {} : { batchTotal: owner.batchTotal }),
             ...(owner.activity === undefined ? {} : { activity: owner.activity }),
           },
         }),

@@ -502,7 +502,7 @@ final class AppModel: ObservableObject {
           bytesDone: event.bytesDone ?? previous?.bytesDone,
           bytesTotal: event.bytesTotal ?? previous?.bytesTotal,
           lastItem: event.lastItem ?? previous?.lastItem),
-        priorDurationMs: event.priorDurationMs ?? existing?.priorDurationMs,
+        estimatedDurationMs: event.estimatedDurationMs ?? existing?.estimatedDurationMs,
         batchPosition: event.batch?.position ?? existing?.batchPosition,
         batchTotal: event.batch?.total ?? existing?.batchTotal)
     }

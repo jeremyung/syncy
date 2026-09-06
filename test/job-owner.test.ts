@@ -160,6 +160,19 @@ describe("cross-process job ownership", () => {
     if (!result.acquired) throw new Error("expected ownership");
     result.lease.observe({
       protocolVersion: 1,
+      type: "job.started",
+      jobId: "job-1",
+      at: 1_800,
+      operation: "deep",
+      unit: "photos",
+      target: "archive",
+      phase: "queued",
+      batch: { position: 2, total: 4, bytesDone: 1_000, bytesTotal: 4_000 },
+      unitSize: { files: 100, bytes: 1_000 },
+      estimatedDurationMs: 42_000,
+    });
+    result.lease.observe({
+      protocolVersion: 1,
       type: "job.progress-observed",
       jobId: "job-1",
       at: 1_900,
@@ -180,6 +193,11 @@ describe("cross-process job ownership", () => {
       filesTotal: 100,
       lastItem: "image.jpg",
     });
+    expect(readJobOwner(root)).toMatchObject({
+      estimatedDurationMs: 42_000,
+      batchPosition: 2,
+      batchTotal: 4,
+    });
 
     result.lease.observe({
       protocolVersion: 1,
@@ -198,5 +216,20 @@ describe("cross-process job ownership", () => {
       filesTotal: 100,
       lastItem: "image.jpg",
     });
+
+    result.lease.observe({
+      protocolVersion: 1,
+      type: "job.started",
+      jobId: "job-2",
+      at: 1_975,
+      operation: "deep",
+      unit: "videos",
+      target: "archive",
+      phase: "queued",
+      unitSize: { files: 2, bytes: 200 },
+    });
+    expect(readJobOwner(root)).not.toHaveProperty("estimatedDurationMs");
+    expect(readJobOwner(root)).not.toHaveProperty("batchPosition");
+    expect(readJobOwner(root)?.activity).toMatchObject({ unit: "videos", phase: "queued" });
   });
 });

@@ -180,6 +180,21 @@ function validateSnapshot(message: RecordValue): void {
     member(active["operation"], OPERATIONS, "snapshot.activeJob.operation");
     finite(active["startedAt"], "snapshot.activeJob.startedAt");
     finite(active["heartbeatAt"], "snapshot.activeJob.heartbeatAt");
+    optionalCount(active["estimatedDurationMs"], "snapshot.activeJob.estimatedDurationMs");
+    optionalCount(active["batchPosition"], "snapshot.activeJob.batchPosition");
+    optionalCount(active["batchTotal"], "snapshot.activeJob.batchTotal");
+    const batchPosition = active["batchPosition"];
+    const batchTotal = active["batchTotal"];
+    if ((batchPosition === undefined) !== (batchTotal === undefined)) {
+      throw new ProtocolError("snapshot.activeJob batch position and total must appear together");
+    }
+    if (
+      typeof batchPosition === "number" &&
+      typeof batchTotal === "number" &&
+      (batchPosition < 1 || batchPosition > batchTotal)
+    ) {
+      throw new ProtocolError("snapshot.activeJob.batchPosition must be between 1 and total");
+    }
     if (active["activity"] !== undefined) {
       const activity = record(active["activity"], "snapshot.activeJob.activity");
       string(activity["unit"], "snapshot.activeJob.activity.unit");
@@ -190,6 +205,9 @@ function validateSnapshot(message: RecordValue): void {
       optionalCount(activity["filesTotal"], "snapshot.activeJob.activity.filesTotal");
       optionalCount(activity["bytesDone"], "snapshot.activeJob.activity.bytesDone");
       optionalCount(activity["bytesTotal"], "snapshot.activeJob.activity.bytesTotal");
+      if (activity["lastItem"] !== undefined) {
+        string(activity["lastItem"], "snapshot.activeJob.activity.lastItem");
+      }
     }
   }
 }
@@ -319,7 +337,7 @@ function validateJob(message: RecordValue): void {
       const unitSize = record(message["unitSize"], "job.started.unitSize");
       optionalCount(unitSize["files"], "job.started.unitSize.files");
       count(unitSize["bytes"], "job.started.unitSize.bytes");
-      optionalCount(message["priorDurationMs"], "job.started.priorDurationMs");
+      optionalCount(message["estimatedDurationMs"], "job.started.estimatedDurationMs");
       return;
     }
     case "job.phase-changed":
