@@ -59,7 +59,7 @@ final class ModelsTests: XCTestCase {
 
   func testSnapshotProtocolDecodesArbitraryTargets() throws {
     let json =
-      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[{"name":"one","required":true,"reachability":"ok"},{"name":"two","required":false,"reachability":"unreachable"}],"units":[]}"#
+      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[{"name":"one","required":true,"reachability":"ok","usesSentinel":false},{"name":"two","required":false,"reachability":"unreachable","usesSentinel":true}],"units":[]}"#
     let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
 
     XCTAssertEqual(snapshot.targets.map(\.name), ["one", "two"])

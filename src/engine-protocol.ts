@@ -37,6 +37,7 @@ export interface TargetSnapshot {
   readonly name: string;
   readonly required: boolean;
   readonly reachability: Reachability;
+  readonly usesSentinel: boolean;
 }
 
 export interface CellSnapshot {

@@ -192,6 +192,11 @@ sentinel = "${sentinel}"
       operation: "sync",
       result: { exitCode: 0, transferred: 1 },
     });
+    expect(
+      syncEvents.find(
+        (event) => event.type === "job.progress-observed" && event.operation === "sync",
+      ),
+    ).toMatchObject({ filesSeen: 1, filesTotal: 1 });
     // The transfer records nothing the ledger reads, so the sync ends with a
     // quick check of the one destination it wrote to. Without it the row goes
     // on reporting the backlog its last check found, for files now copied.

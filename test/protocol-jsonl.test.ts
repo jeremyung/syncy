@@ -32,7 +32,7 @@ const snapshot: SnapshotMessage = {
       filesTotal: 120,
     },
   },
-  targets: [{ name: "archive", required: true, reachability: "ok" }],
+  targets: [{ name: "archive", required: true, reachability: "ok", usesSentinel: true }],
   units: [
     {
       unit: "photos-2019",

@@ -138,6 +138,7 @@ function validateSnapshot(message: RecordValue): void {
     string(target["name"], `snapshot.targets[${index}].name`);
     bool(target["required"], `snapshot.targets[${index}].required`);
     member(target["reachability"], REACHABILITY, `snapshot.targets[${index}].reachability`);
+    bool(target["usesSentinel"], `snapshot.targets[${index}].usesSentinel`);
   });
   array(message["units"], "snapshot.units");
   message["units"].forEach((value, index) => {

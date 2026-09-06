@@ -546,6 +546,7 @@ async function cmdEngineSync(config: Config, token: string): Promise<void> {
             type: "job.progress-observed",
             at: Date.now(),
             filesSeen: transferred,
+            filesTotal: intent.nChanges,
           });
         }
       },

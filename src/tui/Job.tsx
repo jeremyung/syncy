@@ -184,6 +184,7 @@ export function Job(props: JobProps): React.ReactElement {
               type: "job.progress-observed",
               at: Date.now(),
               filesSeen: seen,
+              filesTotal: props.nChanges,
             });
           }
         },

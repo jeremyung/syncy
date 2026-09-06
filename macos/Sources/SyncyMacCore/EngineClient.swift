@@ -127,6 +127,7 @@ public struct TargetSnapshot: Codable, Identifiable, Sendable {
   public let name: String
   public let required: Bool
   public let reachability: Reachability
+  public let usesSentinel: Bool
 }
 
 public struct FingerprintSnapshot: Decodable, Sendable {

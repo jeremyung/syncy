@@ -29,6 +29,7 @@
       --shadow: 0 30px 70px oklch(0.26 0.015 75 / 0.16), 0 2px 8px oklch(0.26 0.015 75 / 0.12);
       --menushadow: 0 18px 50px oklch(0.20 0.015 75 / 0.23), 0 1px 3px oklch(0.20 0.015 75 / 0.18);
       --font-ui: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      --font-display: "New York", "Iowan Old Style", Palatino, serif;
       --font-ledger: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, monospace;
       --space-xs: 4px;
       --space-sm: 8px;
@@ -90,7 +91,7 @@
     }
     .catalog-mark { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-2xl); }
     .mark-box { width: 38px; height: 38px; display:grid; place-items:center; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface-raised); font: 700 17px/1 var(--font-ledger); letter-spacing:-2px; }
-    .catalog-title { font-weight: 650; color: var(--figure); letter-spacing: -0.015em; }
+    .catalog-title { font-family:var(--font-display); font-weight: 650; color: var(--figure); letter-spacing: -0.015em; }
     .catalog-kicker { margin-top: 2px; color: var(--dim); font: 11px/1.25 var(--font-ledger); }
     .catalog nav { display: grid; gap: 2px; }
     .catalog nav a { padding: 8px 10px; border-radius: 7px; color: var(--dim); text-decoration: none; font-size: 13px; }
@@ -102,12 +103,12 @@
     main { min-width:0; padding: clamp(28px, 5vw, 72px); }
     .intro { max-width: 1040px; display:grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .6fr); gap: var(--space-3xl); align-items:end; margin-bottom: 72px; }
     .eyebrow { color:var(--unverified); font: 700 11px/1 var(--font-ledger); text-transform:uppercase; letter-spacing:.11em; }
-    h1 { margin: 14px 0 0; max-width: 760px; color:var(--figure); font-size: clamp(38px, 5vw, 68px); line-height:.98; letter-spacing:-.052em; font-weight: 690; }
+    h1 { margin: 14px 0 0; max-width: 760px; color:var(--figure); font-family:var(--font-display); font-size: clamp(38px, 5vw, 68px); line-height:.98; letter-spacing:-.052em; font-weight: 690; }
     .intro p { margin:0; color:var(--dim); font-size: 16px; line-height:1.55; max-width: 42ch; }
     .section { max-width: 1180px; margin: 0 0 88px; scroll-margin-top: 32px; }
     .section-heading { display:grid; grid-template-columns: 80px minmax(0, 1fr); gap:var(--space-lg); align-items:start; margin-bottom:var(--space-xl); }
     .section-number { padding-top:5px; color:var(--faint); font: 12px/1 var(--font-ledger); }
-    h2 { margin:0; color:var(--figure); font-size: 26px; line-height:1.12; letter-spacing:-.025em; }
+    h2 { margin:0; color:var(--figure); font-family:var(--font-display); font-size: 26px; line-height:1.12; letter-spacing:-.025em; }
     .section-note { margin:7px 0 0; max-width:68ch; color:var(--dim); line-height:1.5; }
     .plate { border:1px solid var(--rule); border-radius:22px; background:color-mix(in oklch, var(--canvas), transparent 10%); padding: clamp(18px, 3vw, 36px); overflow:hidden; }
     .plate-label { display:flex; justify-content:space-between; gap:12px; margin-bottom:16px; color:var(--dim); font: 11px/1 var(--font-ledger); }
@@ -158,7 +159,7 @@
     .pop-head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px 12px; }
     .brand-lockup { display:flex; align-items:center; gap:9px; }
     .brand-icon { width:25px; height:25px; display:grid; place-items:center; border:1px solid var(--rule); border-radius:7px; color:var(--figure); font:700 11px/1 var(--font-ledger); }
-    .brand-name { color:var(--figure); font-size:13px; font-weight:650; }
+    .brand-name { color:var(--figure); font-family:var(--font-display); font-size:13px; font-weight:650; }
     .status-summary { padding:18px 16px 20px; border-top:1px solid var(--rule-soft); border-bottom:1px solid var(--rule-soft); }
     .status-title { margin-top:6px; color:var(--figure); font-size:20px; line-height:1.15; letter-spacing:-.02em; font-weight:650; }
     .status-sub { margin-top:6px; color:var(--dim); line-height:1.42; }
@@ -188,14 +189,14 @@
     .sidebar-label { margin:22px 9px 7px; color:var(--faint); font:700 9px/1 var(--font-ledger); letter-spacing:.08em; text-transform:uppercase; }
     .app-content { min-width:0; background:var(--window); }
     .content-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; padding:28px 30px 18px; }
-    .content-head h3 { margin:0; color:var(--figure); font-size:24px; letter-spacing:-.025em; }
+    .content-head h3 { margin:0; color:var(--figure); font-family:var(--font-display); font-size:24px; letter-spacing:-.025em; }
     .content-sub { margin-top:5px; color:var(--dim); font-size:12px; }
     .segmented { display:flex; padding:2px; border:1px solid var(--rule); border-radius:7px; background:var(--surface); }
     .segment { padding:4px 9px; border:0; border-radius:5px; background:transparent; color:var(--dim); font-size:11px; }
     .segment.active { background:var(--surface-raised); color:var(--figure); box-shadow:0 1px 3px color-mix(in oklch, var(--ink), transparent 86%); }
     .ledger { width:100%; border-collapse:collapse; font-size:12px; }
     .ledger th { height:35px; padding:0 12px; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); color:var(--dim); font:600 10px/1 var(--font-ledger); letter-spacing:.045em; text-align:left; text-transform:uppercase; }
-    .ledger th:first-child, .ledger td:first-child { padding-left:30px; }
+    .ledger th:first-child, .ledger td:first-child { width:44px; padding-left:18px; padding-right:6px; text-align:center; }
     .ledger td { height:44px; padding:0 12px; border-bottom:1px solid var(--rule-soft); color:var(--ink); }
     .ledger tr.selected-row td { background:color-mix(in oklch, var(--selected), transparent 28%); }
     .folder-name { color:var(--figure); font-weight:580; }
@@ -254,7 +255,7 @@
     .settings-layout { display:grid; grid-template-columns:170px 1fr; min-height:570px; }
     .settings-side { padding:18px 10px; border-right:1px solid var(--rule); background:var(--sidebar); }
     .settings-content { padding:30px 34px; }
-    .settings-content h3 { margin:0 0 25px; color:var(--figure); font-size:21px; }
+    .settings-content h3 { margin:0 0 25px; color:var(--figure); font-family:var(--font-display); font-size:21px; }
     .form-row { display:grid; grid-template-columns:140px 1fr auto; gap:12px; align-items:center; padding:14px 0; border-bottom:1px solid var(--rule-soft); }
     .form-row > label { color:var(--dim); font-size:12px; }
     .path-field { min-width:0; padding:7px 9px; border:1px solid var(--rule); border-radius:6px; background:var(--surface); color:var(--ink); font:11px/1.25 var(--font-ledger); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -309,7 +310,8 @@
       .sidebar-brand { padding:0 10px; }
       .sidebar-item { white-space:nowrap; }
       .content-head { align-items:flex-start; padding:20px 16px 14px; }
-      .ledger th:nth-child(2), .ledger td:nth-child(2), .ledger th:nth-child(5), .ledger td:nth-child(5) { display:none; }
+      .app-content { overflow-x:auto; }
+      .ledger { min-width:720px; }
       .ledger th:first-child, .ledger td:first-child { padding-left:16px; }
       .ledger-foot { padding:12px 16px; }
       .task-shelf { margin:14px 16px 20px; }
@@ -358,9 +360,9 @@
           <div class="menubar-demo">
             <div class="menubar-strip"><span class="menu-generic">⌁ ◉ ◌</span><span class="menu-syncy active"><span class="menu-symbol">↻</span><span>18m</span></span><span class="menu-generic">⌕ ◉</span></div>
             <div class="state-grid">
-              <div class="state-cell"><div class="state-icon verified">✓</div><div><div class="state-name">Established</div><div class="state-detail">All required destinations verified.</div></div></div>
-              <div class="state-cell"><div class="state-icon unverified">·</div><div><div class="state-name">Not established</div><div class="state-detail">Unchecked, unverified, or behind.</div></div></div>
-              <div class="state-cell"><div class="state-icon dim">×</div><div><div class="state-name">Unavailable</div><div class="state-detail">A required destination cannot be identified.</div></div></div>
+              <div class="state-cell"><div class="state-icon verified">✓</div><div><div class="state-name">Verified</div><div class="state-detail">All required destinations have current evidence.</div></div></div>
+              <div class="state-cell"><div class="state-icon unverified">↑</div><div><div class="state-name">Behind</div><div class="state-detail">At least one destination is missing current files.</div></div></div>
+              <div class="state-cell"><div class="state-icon dim">?</div><div><div class="state-name">Unchecked</div><div class="state-detail">A required destination cannot be identified.</div></div></div>
               <div class="state-cell"><div class="state-icon missing">!</div><div><div class="state-name">Error</div><div class="state-detail">A task or configuration failed.</div></div></div>
               <div class="state-cell"><div class="state-icon unverified">↻</div><div><div class="state-name">Working · 18m</div><div class="state-detail">Elapsed time advances in the menu bar.</div></div></div>
             </div>
@@ -428,17 +430,17 @@
         <div class="plate">
           <div class="plate-label"><span>MAIN WINDOW · LEDGER</span><span>1040 × 680</span></div>
           <div class="mac-window">
-            <div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="window-title">Syncy</div><div class="toolbar-end"><button type="button" class="icon-button">↻</button><button type="button" class="icon-button">···</button></div></div>
+            <div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="window-title">Syncy</div><div class="toolbar-end"><button type="button" class="icon-button" aria-label="Refresh ledger">↻</button><button type="button" class="icon-button" aria-label="Open settings">···</button></div></div>
             <div class="app-layout">
-              <aside class="sidebar"><div class="sidebar-brand"><div class="brand-icon">s:</div>Syncy</div><div class="sidebar-item selected"><span>▤</span>Ledger</div><div class="sidebar-item"><span>↻</span>Tasks</div><div class="sidebar-item"><span>◷</span>History</div><div class="sidebar-label">Destinations</div><div class="sidebar-item"><span class="verified">●</span>External archive</div><div class="sidebar-item"><span class="dim">●</span>Studio NAS</div><div class="sidebar-label">System</div><div class="sidebar-item"><span>⌁</span>Schedules</div><div class="sidebar-item"><span>+</span>Setup</div><div class="sidebar-item"><span>◇</span>Doctor</div></aside>
+              <aside class="sidebar"><div class="sidebar-brand"><div class="brand-icon">s:</div>Syncy</div><div class="sidebar-item selected"><span>▤</span>Ledger</div><div class="sidebar-item"><span>⇄</span>Differences</div><div class="sidebar-item"><span>◇</span>Evidence</div><div class="sidebar-item"><span>↻</span>Sync</div><div class="sidebar-item"><span>⌁</span>Schedules</div><div class="sidebar-item"><span>◷</span>History</div><div class="sidebar-item"><span>+</span>Setup</div><div class="sidebar-item"><span>◇</span>Diagnostics</div></aside>
               <div class="app-content">
-                <div class="content-head"><div><h3>Archive ledger</h3><div class="content-sub">Source read at 10:04 AM · 5 folders · 412.2 gb</div></div><div class="segmented"><button type="button" class="segment active">All</button><button type="button" class="segment">Verified</button><button type="button" class="segment">Attention</button></div></div>
-                <table class="ledger"><thead><tr><th>Folder</th><th>Size</th><th>External</th><th>NAS</th><th>Status</th><th>Established</th></tr></thead><tbody>
-                  <tr><td><span class="folder-name">client-archive</span></td><td class="figure">84.6 gb</td><td class="status-word verified">verified</td><td class="status-word verified">verified</td><td class="status-word verified">verified</td><td class="figure dim">today 03:18</td></tr>
-                  <tr class="selected-row"><td><span class="folder-name">field-recordings</span></td><td class="figure">72.3 gb</td><td class="status-word unverified">syncing</td><td class="status-word unverified">behind 28</td><td class="status-word unverified">behind</td><td class="figure dim">Aug 31</td></tr>
-                  <tr><td><span class="folder-name">photos-2018</span></td><td class="figure">96.8 gb</td><td class="status-word verified">verified</td><td class="status-word verified">verified</td><td class="status-word verified">verified</td><td class="figure dim">yesterday</td></tr>
-                  <tr><td><span class="folder-name">photos-2019</span></td><td class="figure">113.7 gb</td><td class="status-word verified">verified</td><td class="status-word dim">unchecked</td><td class="status-word dim">unchecked</td><td class="figure dim">—</td></tr>
-                  <tr><td><span class="folder-name">working-scans</span></td><td class="figure">44.8 gb</td><td class="status-word missing">missing</td><td class="status-word unverified">behind 6</td><td class="status-word missing">missing</td><td class="figure dim">—</td></tr>
+                <div class="content-head"><div><h3>Ledger</h3><div class="content-sub">What the last checks established · 5 folders · 412.2 gb</div></div><div class="toolbar-end"><button type="button" class="small-button">Quick check</button><button type="button" class="small-button">Deep verify</button></div></div>
+                <table class="ledger"><thead><tr><th></th><th>Folder</th><th>Size</th><th>Files</th><th>External archive</th><th>Studio NAS</th></tr></thead><tbody>
+                  <tr><td class="verified">✓</td><td><span class="folder-name">client-archive</span></td><td class="figure">84.6 gb</td><td class="figure">8,420</td><td class="status-word verified">verified</td><td class="status-word verified">verified</td></tr>
+                  <tr class="selected-row"><td class="unverified">↻</td><td><span class="folder-name">field-recordings</span></td><td class="figure">72.3 gb</td><td class="figure">2,306</td><td class="status-word unverified">syncing</td><td class="status-word unverified">behind 28</td></tr>
+                  <tr><td class="verified">✓</td><td><span class="folder-name">photos-2018</span></td><td class="figure">96.8 gb</td><td class="figure">6,932</td><td class="status-word verified">verified</td><td class="status-word verified">verified</td></tr>
+                  <tr><td class="dim">?</td><td><span class="folder-name">photos-2019</span></td><td class="figure">113.7 gb</td><td class="figure">7,104</td><td class="status-word verified">verified</td><td class="status-word dim">unchecked</td></tr>
+                  <tr><td class="missing">−</td><td><span class="folder-name">working-scans</span></td><td class="figure">44.8 gb</td><td class="figure">1,842</td><td class="status-word missing">missing</td><td class="status-word unverified">behind 6</td></tr>
                 </tbody></table>
                 <div class="ledger-foot"><span><span class="verified">●</span> verified &nbsp; <span class="unverified">●</span> behind &nbsp; <span class="missing">●</span> missing &nbsp; <span class="dim">●</span> unchecked</span><span>2 / 5 verified · 181.4 gb</span></div>
                 <div class="task-shelf"><div><strong>Syncing field-recordings → External archive</strong><span>08m 14s elapsed · 44.8 gb of 72.3 gb measured · window may close</span></div><button type="button" class="small-button">Show task</button></div>
@@ -482,8 +484,8 @@
           <div class="mac-window"><div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="window-title">Syncy Settings</div><div></div></div><div class="settings-layout">
             <aside class="settings-side"><div class="sidebar-item selected">Source &amp; destinations</div><div class="sidebar-item">Schedules</div><div class="sidebar-item">Notifications</div><div class="sidebar-item">General</div><div class="sidebar-item">Doctor</div></aside>
             <div class="settings-content"><h3>Source &amp; destinations</h3><div class="form-row"><span class="label">Source folder</span><div class="path-field">/Users/user/Archive</div><button type="button" class="small-button">Choose…</button></div><div style="margin-top:24px" class="label">Destinations</div>
-              <div class="destination"><div class="drive verified">✓</div><div><strong>External archive</strong><span>/Volumes/Archive · APFS · volume UUID …7B12</span></div><button type="button" class="small-button">Inspect</button></div>
-              <div class="destination"><div class="drive verified">✓</div><div><strong>Studio NAS</strong><span>/Volumes/Studio · SMB · sentinel …C42A · ACL and xattr omitted</span></div><button type="button" class="small-button">Inspect</button></div>
+              <div class="destination"><div class="drive verified">✓</div><div><strong>External archive</strong><span>/Volumes/Archive · APFS · volume UUID …7B12</span></div><button type="button" class="small-button">Add sentinel</button></div>
+              <div class="destination"><div class="drive verified">✓</div><div><strong>Studio NAS</strong><span>/Volumes/Studio · SMB · sentinel …C42A · ACL and xattr omitted</span></div><span class="label">sentinel recorded</span></div>
               <div style="margin-top:12px"><button type="button" class="small-button">Add destination…</button></div>
               <div class="doctor-list"><div class="label">Doctor · last run just now</div><div class="doctor-row"><span class="verified">✓</span><span>rsync 3.4.1</span><small>/opt/homebrew/bin/rsync</small></div><div class="doctor-row"><span class="verified">✓</span><span>Source readable</span><small>5 folders</small></div><div class="doctor-row"><span class="verified">✓</span><span>External archive identified</span><small>APFS · volume UUID</small></div><div class="doctor-row"><span class="verified">✓</span><span>Studio NAS identified</span><small>SMB · sentinel</small></div><div class="doctor-row"><span class="unverified">·</span><span>Studio NAS attributes</span><small>ACL and xattr not persisted</small></div></div>
             </div>
@@ -496,7 +498,7 @@
         <div class="plate">
           <div class="plate-label"><span>SCHEDULES · HISTORY</span><span>Launch at login · one task at a time</span></div>
           <div class="flow-grid">
-            <article class="sheet"><div class="sheet-head"><h3>Schedules</h3><p>Tasks run while Syncy is in the menu bar. Unavailable destinations are recorded as skipped.</p></div><div class="sheet-body"><div class="schedule-row"><div class="schedule-mark">q</div><div><strong>Quick check · all folders</strong><p>Every day at 8:00 PM · required destinations</p></div><div class="switch" aria-hidden="true"></div></div><div class="schedule-row"><div class="schedule-mark">d</div><div><strong>Deep verify · all folders</strong><p>Sunday at 2:00 AM · while connected to power</p></div><div class="switch" aria-hidden="true"></div></div><div class="schedule-row"><div class="schedule-mark">s</div><div><strong>Sync field-recordings</strong><p>Friday at 10:00 PM · External archive · explicit write schedule</p></div><div class="switch" aria-hidden="true"></div></div><div class="evidence-note">After sleep: run the latest missed check once. Never duplicate. Configuration changes suspend affected sync schedules until reviewed.</div></div><div class="sheet-actions"><button type="button" class="small-button">New schedule…</button></div></article>
+            <article class="sheet"><div class="sheet-head"><h3>Schedules</h3><p>Tasks run whenever the Mac and Syncy are awake, including on battery. Unavailable destinations are recorded as skipped.</p></div><div class="sheet-body"><div class="schedule-row"><div class="schedule-mark">q</div><div><strong>Quick check · all folders</strong><p>Every day at 8:00 PM · required destinations</p></div><div class="switch" aria-hidden="true"></div></div><div class="schedule-row"><div class="schedule-mark">d</div><div><strong>Deep verify · all folders</strong><p>Sunday at 2:00 AM · required destinations</p></div><div class="switch" aria-hidden="true"></div></div><div class="schedule-row"><div class="schedule-mark">s</div><div><strong>Sync field-recordings</strong><p class="unverified">Suspended · configuration changed</p></div><button type="button" class="small-button">Review</button></div><div class="evidence-note">After sleep: run the latest missed check once. Never duplicate. Configuration changes suspend affected sync schedules until reviewed.</div></div><div class="sheet-actions"><button type="button" class="small-button">New schedule…</button></div></article>
             <article class="sheet"><div class="sheet-head"><h3>Task history</h3><p>Literal outcomes, newest first.</p></div><div class="sheet-body" style="padding-top:10px"><table class="history-table"><thead><tr><th>When</th><th>Task</th><th>Outcome</th><th>Time</th></tr></thead><tbody><tr><td class="when">Today 10:08</td><td>Quick check · all</td><td class="verified">completed · 10</td><td class="when">3m 12s</td></tr><tr><td class="when">Today 02:00</td><td>Deep verify · all</td><td class="unverified">completed 5 · skipped 5</td><td class="when">2h 44m</td></tr><tr><td class="when">Fri 22:00</td><td>Sync · field-recordings</td><td class="missing">failed · code 12</td><td class="when">24m 08s</td></tr><tr><td class="when">Sep 02</td><td>Deep verify · photos-2019</td><td class="dim">cancelled</td><td class="when">18m 42s</td></tr><tr><td class="when">Sep 01</td><td>Quick check · all</td><td class="dim">missed · Mac asleep</td><td class="when">—</td></tr></tbody></table></div><div class="sheet-actions"><button type="button" class="small-button">Open selected log</button><button type="button" class="small-button">Export history…</button></div></article>
           </div>
           <div class="annotation"><strong>Notification</strong><span>“Deep verify: 5 folders verified · Studio NAS skipped, volume unavailable.” Routine full successes may remain quiet; partial work is always named.</span></div>

@@ -33,7 +33,7 @@ struct LedgerWindow: View {
         text: footerText,
         trailing: model.snapshot.map { "snapshot · \(formatted(date: $0.generatedAt))" }
       )
-      .padding(.horizontal, 16)
+      .padding(.horizontal, SyncySpace.lg)
       .frame(height: 34)
       .background(.bar)
     }
@@ -43,7 +43,7 @@ struct LedgerWindow: View {
   private var footerText: String {
     if model.isLaunchingJob { return "Starting engine job" }
     if model.isLoading { return "Reading engine snapshot" }
-    if let error = model.errorMessage { return error }
+    if let error = model.engineErrorMessage ?? model.errorMessage { return error }
     return model.snapshot == nil ? "No snapshot loaded" : "Engine snapshot loaded"
   }
 
@@ -74,11 +74,16 @@ private struct LedgerView: View {
           snapshot: snapshot,
           selection: $model.selectedUnitID
         )
+        if let activeJob = snapshot.activeJob {
+          LedgerJobStrip(job: activeJob, model: model)
+            .padding(.horizontal, SyncySpace.xl)
+            .padding(.vertical, SyncySpace.md)
+        }
       } else {
         ContentUnavailableView(
           "Ledger unavailable",
           systemImage: "externaldrive.badge.exclamationmark",
-          description: Text(model.errorMessage ?? "The engine returned no snapshot.")
+          description: Text(model.engineErrorMessage ?? "The engine returned no snapshot.")
         )
       }
     }
@@ -89,19 +94,19 @@ private struct LedgerView: View {
         }
         .disabled(model.isLoading)
         Menu("Quick check", systemImage: "bolt") {
-          Button("Selected unit") {
+          Button("Selected folder") {
             Task { await model.runCheck(.quick, unit: model.selectedUnit?.unit) }
           }
           .disabled(model.selectedUnit == nil)
-          Button("All units") { Task { await model.runCheck(.quick) } }
+          Button("All folders") { Task { await model.runCheck(.quick) } }
         }
         .disabled(model.isLaunchingJob || model.snapshot?.activeJob != nil || model.snapshot == nil)
         Menu("Deep verify", systemImage: "checkmark.seal") {
-          Button("Selected unit") {
+          Button("Selected folder") {
             Task { await model.runCheck(.deep, unit: model.selectedUnit?.unit) }
           }
           .disabled(model.selectedUnit == nil)
-          Button("All units") { Task { await model.runCheck(.deep) } }
+          Button("All folders") { Task { await model.runCheck(.deep) } }
         }
         .disabled(model.isLaunchingJob || model.snapshot?.activeJob != nil || model.snapshot == nil)
       }
@@ -112,7 +117,58 @@ private struct LedgerView: View {
     guard let snapshot = model.snapshot else { return nil }
     let bytes = snapshot.units.reduce(Int64(0)) { $0 + $1.fingerprint.bytes }
     return
-      "\(snapshot.units.count) units · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file).lowercased())"
+      "\(snapshot.units.count) folders · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file).lowercased())"
+  }
+}
+
+private struct LedgerJobStrip: View {
+  let job: ActiveJobSnapshot
+  @ObservedObject var model: AppModel
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      HStack(spacing: SyncySpace.md) {
+        Image(systemName: "arrow.triangle.2.circlepath")
+          .foregroundStyle(SyncyTheme.caution)
+          .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: SyncySpace.xs) {
+          Text(jobTitle).font(.callout.weight(.semibold))
+          Text(detail(at: context.date))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(SyncyTheme.secondaryInk)
+        }
+        Spacer()
+        if model.canCancelOwnedJob {
+          Button(model.isCancellingJob ? "Cancelling…" : "Cancel…", role: .destructive) {
+            model.cancelOwnedJob()
+          }
+          .disabled(model.isCancellingJob)
+        }
+      }
+      .padding(.horizontal, SyncySpace.lg)
+      .padding(.vertical, SyncySpace.md)
+      .background(SyncyTheme.raised)
+      .overlay {
+        RoundedRectangle(cornerRadius: 8)
+          .stroke(SyncyTheme.rule)
+      }
+      .accessibilityElement(children: .combine)
+    }
+  }
+
+  private var jobTitle: String {
+    let operation = job.operation == "deep" ? "Deep verify" : job.operation.capitalized
+    guard let activity = job.activity else { return "\(operation) is running" }
+    return "\(operation) · \(activity.unit) → \(activity.target)"
+  }
+
+  private func detail(at date: Date) -> String {
+    let elapsed = max(0, Int(date.timeIntervalSince1970 - job.startedAt / 1_000))
+    let duration = elapsed >= 3_600
+      ? "\(elapsed / 3_600)h \((elapsed % 3_600) / 60)m"
+      : "\(elapsed / 60)m \(elapsed % 60)s"
+    let phase = job.activity?.phase.replacingOccurrences(of: "-", with: " ") ?? "starting"
+    return "\(duration) elapsed · \(phase) · window may close"
   }
 }
 
@@ -143,14 +199,14 @@ private struct LedgerGrid: View {
   private var header: some View {
     HStack(spacing: 0) {
       Text("").frame(width: stateWidth)
-      HeaderCell("Unit", width: unitWidth)
+      HeaderCell("Folder", width: unitWidth)
       HeaderCell("Size", width: sizeWidth, alignment: .trailing)
       HeaderCell("Files", width: filesWidth, alignment: .trailing)
       ForEach(snapshot.targets) { target in
         HeaderCell(target.name, width: destinationWidth)
       }
     }
-    .padding(.horizontal, 16)
+    .padding(.horizontal, SyncySpace.lg)
     .frame(height: 34)
     .background(SyncyTheme.raised)
   }
@@ -179,12 +235,17 @@ private struct LedgerGrid: View {
           .frame(width: destinationWidth, alignment: .leading)
       }
     }
-    .padding(.horizontal, 16)
+    .padding(.horizontal, SyncySpace.lg)
     .frame(minHeight: 58)
-    .background(selection == unit.id ? Color.accentColor.opacity(0.09) : Color.clear)
+    .background(selection == unit.id ? SyncyTheme.selection : Color.clear)
     .contentShape(Rectangle())
     .onTapGesture { selection = unit.id }
-    .accessibilityAddTraits(selection == unit.id ? .isSelected : [])
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(unit.unit), \(unit.state.rawValue), \(unit.reason)")
+    .accessibilityAddTraits(.isButton)
+    .accessibilityAddTraits(
+      selection == unit.id ? .isSelected : AccessibilityTraits())
+    .accessibilityAction { selection = unit.id }
   }
 
   private var totalWidth: CGFloat {
@@ -258,8 +319,8 @@ struct PageHeader: View {
           .monospacedDigit()
       }
     }
-    .padding(.horizontal, 24)
-    .padding(.top, 24)
+    .padding(.horizontal, SyncySpace.xl)
+    .padding(.top, SyncySpace.xl)
     .padding(.bottom, 20)
   }
 }

@@ -36,6 +36,7 @@ final class AppModel: ObservableObject {
   @Published private(set) var snapshot: EngineSnapshot?
   @Published private(set) var isLoading = false
   @Published private(set) var errorMessage: String?
+  @Published private(set) var engineErrorMessage: String?
   @Published private(set) var isLaunchingJob = false
   @Published private(set) var doctorReport: String?
   @Published private(set) var isRunningDoctor = false
@@ -46,10 +47,13 @@ final class AppModel: ObservableObject {
   @Published private(set) var setupMessage: String?
   @Published private(set) var differences: DiffEnvelope?
   @Published private(set) var historyEntries: [HistorySnapshotEntry] = []
+  @Published private(set) var isLoadingDifferences = false
+  @Published private(set) var isLoadingHistory = false
   @Published private(set) var auxiliaryMessage: String?
   @Published private(set) var schedules: [CheckSchedule] = []
   private let client: any EngineClient
   private var attemptedInitialLoad = false
+  private var checkTask: Task<Void, Error>?
   private var syncTask: Task<Void, Never>?
   private var scheduleTask: Task<Void, Never>?
   private let scheduleDefaultsKey = "syncy.check-schedules.v1"
@@ -71,13 +75,19 @@ final class AppModel: ObservableObject {
     snapshot?.units.first { $0.id == selectedUnitID }
   }
 
+  var canCancelOwnedJob: Bool {
+    checkTask != nil || syncTask != nil || scheduleTask != nil
+  }
+
   var menuTitle: String {
     if isLaunchingJob { return "Syncy · starting work" }
     if let active = snapshot?.activeJob {
-      return "Syncy · \(active.operation)"
+      let operation = active.operation == "deep" ? "deep verify" : active.operation
+      return "Syncy · \(operation)"
     }
     if isLoading { return "Syncy · reading ledger" }
-    if errorMessage != nil { return "Syncy · engine unavailable" }
+    if engineErrorMessage != nil { return "Syncy · engine unavailable" }
+    if errorMessage != nil { return "Syncy · error" }
     return "Syncy"
   }
 
@@ -85,13 +95,23 @@ final class AppModel: ObservableObject {
     if isLaunchingJob { return "arrow.triangle.2.circlepath" }
     if snapshot?.activeJob != nil { return "arrow.triangle.2.circlepath" }
     if isLoading { return "arrow.triangle.2.circlepath" }
+    if engineErrorMessage != nil { return "questionmark.circle" }
     if errorMessage != nil { return "exclamationmark.circle" }
     guard let snapshot else { return "questionmark.circle" }
+    if snapshot.targets.contains(where: { $0.reachability != .ok }) {
+      return "questionmark.circle"
+    }
     if snapshot.units.contains(where: { $0.state == .error }) {
       return "exclamationmark.circle"
     }
     if !snapshot.units.isEmpty && snapshot.units.allSatisfy({ $0.state == .verified }) {
       return "checkmark.circle"
+    }
+    if snapshot.units.contains(where: { $0.state == .missing || $0.state == .behind }) {
+      return "arrow.up.circle"
+    }
+    if snapshot.units.contains(where: { $0.state == .unchecked }) {
+      return "questionmark.circle"
     }
     return "circle.lefthalf.filled"
   }
@@ -116,16 +136,16 @@ final class AppModel: ObservableObject {
   func refresh() async {
     guard !isLoading else { return }
     isLoading = true
-    errorMessage = nil
     defer { isLoading = false }
     do {
       let next = try await client.snapshot()
+      engineErrorMessage = nil
       snapshot = next
       if selectedUnitID == nil || !next.units.contains(where: { $0.id == selectedUnitID }) {
         selectedUnitID = next.units.first?.id
       }
     } catch {
-      errorMessage = error.localizedDescription
+      engineErrorMessage = error.localizedDescription
     }
   }
 
@@ -133,10 +153,19 @@ final class AppModel: ObservableObject {
     guard !isLaunchingJob, snapshot?.activeJob == nil else { return }
     isLaunchingJob = true
     errorMessage = nil
-    defer { isLaunchingJob = false }
+    defer {
+      isLaunchingJob = false
+      isCancellingJob = false
+      checkTask = nil
+    }
+    let worker = Task { try await client.runCheck(operation, unit: unit) }
+    checkTask = worker
     do {
-      try await client.runCheck(operation, unit: unit)
+      try await worker.value
       await refresh()
+    } catch is CancellationError {
+      await refresh()
+      errorMessage = "Check cancelled · no verification was recorded"
     } catch {
       let message = error.localizedDescription
       await refresh()
@@ -199,9 +228,15 @@ final class AppModel: ObservableObject {
   }
 
   func cancelSync() {
-    guard let syncTask else { return }
+    cancelOwnedJob()
+  }
+
+  func cancelOwnedJob() {
+    guard canCancelOwnedJob else { return }
     isCancellingJob = true
-    syncTask.cancel()
+    checkTask?.cancel()
+    syncTask?.cancel()
+    scheduleTask?.cancel()
   }
 
   func setSource(path: String) async {
@@ -247,6 +282,9 @@ final class AppModel: ObservableObject {
   }
 
   func loadDifferences(unit: String, target: String) async {
+    guard !isLoadingDifferences else { return }
+    isLoadingDifferences = true
+    defer { isLoadingDifferences = false }
     do {
       differences = try await client.differences(unit: unit, target: target)
       auxiliaryMessage = differences?.diff == nil ? "No recorded check for this destination" : nil
@@ -257,6 +295,9 @@ final class AppModel: ObservableObject {
   }
 
   func loadHistory() async {
+    guard !isLoadingHistory else { return }
+    isLoadingHistory = true
+    defer { isLoadingHistory = false }
     do {
       historyEntries = try await client.history()
       auxiliaryMessage = historyEntries.isEmpty ? "No task outcomes recorded" : nil
@@ -385,9 +426,9 @@ final class AppModel: ObservableObject {
 
   private func scheduleSummary(_ schedule: CheckSchedule) -> String {
     if schedule.operation == .sync {
-      return "Sync · \(schedule.unit ?? "no unit") → \(schedule.target ?? "no destination")"
+      return "Sync · \(schedule.unit ?? "no folder") → \(schedule.target ?? "no destination")"
     }
-    return "\(schedule.operation.rawValue.capitalized) check · \(schedule.unit ?? "all units")"
+    return "\(schedule.operation.rawValue.capitalized) check · \(schedule.unit ?? "all folders")"
   }
 }
 

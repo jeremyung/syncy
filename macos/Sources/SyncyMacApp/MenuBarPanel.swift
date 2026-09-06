@@ -14,6 +14,11 @@ struct MenuBarPanel: View {
         Text(statusWord)
           .font(.caption)
           .foregroundStyle(SyncyTheme.secondaryInk)
+        SettingsLink {
+          Image(systemName: "gearshape")
+        }
+        .buttonStyle(.borderless)
+        .help("Open Syncy settings")
       }
       .padding(.bottom, 18)
 
@@ -27,20 +32,20 @@ struct MenuBarPanel: View {
           ProgressView().controlSize(.small)
           Text("Reading ledger")
         }
+      } else if let engineError = model.engineErrorMessage {
+        StatusProblem(
+          title: "Ledger unavailable",
+          detail: engineError)
+      } else if let active = model.snapshot?.activeJob {
+        ActiveJobSummary(job: active)
+      } else if let error = model.errorMessage {
+        StatusProblem(
+          title: "Last work needs attention",
+          detail: error)
       } else if let snapshot = model.snapshot {
-        if let active = snapshot.activeJob {
-          ActiveJobSummary(job: active)
-        } else {
-          SnapshotSummary(snapshot: snapshot)
-        }
+        SnapshotSummary(snapshot: snapshot)
       } else {
-        VStack(alignment: .leading, spacing: 6) {
-          Text("Ledger unavailable").font(.headline)
-          Text(model.errorMessage ?? "The engine returned no snapshot.")
-            .font(.caption)
-            .foregroundStyle(SyncyTheme.secondaryInk)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+        StatusProblem(title: "Ledger unavailable", detail: "The engine returned no snapshot.")
       }
 
       Divider().padding(.vertical, 16)
@@ -52,11 +57,17 @@ struct MenuBarPanel: View {
         }
         .keyboardShortcut(.defaultAction)
         Spacer()
+        if model.canCancelOwnedJob {
+          Button(model.isCancellingJob ? "Cancelling…" : "Cancel…", role: .destructive) {
+            model.cancelOwnedJob()
+          }
+          .disabled(model.isCancellingJob)
+        }
         Button("Refresh") { Task { await model.refresh() } }
           .disabled(model.isLoading)
       }
     }
-    .padding(18)
+    .padding(SyncySpace.lg)
     .frame(width: 360)
     .background(SyncyTheme.paper)
     .task { await model.loadIfNeeded() }
@@ -66,8 +77,29 @@ struct MenuBarPanel: View {
     if model.isLaunchingJob { return "starting" }
     if model.snapshot?.activeJob != nil { return "running" }
     if model.isLoading { return "reading" }
-    if model.errorMessage != nil { return "unavailable" }
-    return "ledger"
+    if model.engineErrorMessage != nil { return "unavailable" }
+    if model.errorMessage != nil { return "error" }
+    guard let snapshot = model.snapshot else { return "unchecked" }
+    if snapshot.targets.contains(where: { $0.reachability != .ok }) { return "unchecked" }
+    for state in [LedgerState.error, .missing, .behind, .unchecked, .unverified, .verified] {
+      if snapshot.units.contains(where: { $0.state == state }) { return state.rawValue }
+    }
+    return "unchecked"
+  }
+}
+
+private struct StatusProblem: View {
+  let title: String
+  let detail: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: SyncySpace.sm) {
+      Text(title).font(.headline)
+      Text(detail)
+        .font(.caption)
+        .foregroundStyle(SyncyTheme.secondaryInk)
+        .fixedSize(horizontal: false, vertical: true)
+    }
   }
 }
 
@@ -88,7 +120,18 @@ private struct ActiveJobSummary: View {
             Text("\(seen.formatted()) of \(total.formatted()) files observed")
               .font(.caption.monospacedDigit())
               .foregroundStyle(SyncyTheme.secondaryInk)
+          } else if let seen = activity.filesSeen {
+            Text("\(seen.formatted()) files observed · no measured total")
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(SyncyTheme.secondaryInk)
+          } else {
+            Text("No file-level results yet · elapsed time remains authoritative")
+              .font(.caption)
+              .foregroundStyle(SyncyTheme.secondaryInk)
           }
+          Text("Last engine event \(age(since: activity.at, at: context.date))")
+            .font(.caption)
+            .foregroundStyle(SyncyTheme.quietInk)
         }
         Text(elapsed(at: context.date))
           .font(.system(.title3, design: .monospaced, weight: .semibold))
@@ -129,6 +172,13 @@ private struct ActiveJobSummary: View {
     return "\(remainder)s elapsed"
   }
 
+  private func age(since milliseconds: Double, at date: Date) -> String {
+    let seconds = max(0, Int(date.timeIntervalSince1970 - milliseconds / 1_000))
+    if seconds < 5 { return "just now" }
+    if seconds < 60 { return "\(seconds)s ago" }
+    return "\(seconds / 60)m ago"
+  }
+
   private func phaseName(_ value: String) -> String {
     value.replacingOccurrences(of: "-", with: " ").capitalized
   }
@@ -161,7 +211,7 @@ private struct SnapshotSummary: View {
   }
 
   private func unitLabel(_ count: Int, state: LedgerState) -> String {
-    "unit\(count == 1 ? "" : "s") \(state.rawValue)"
+    "folder\(count == 1 ? "" : "s") \(state.rawValue)"
   }
 }
 

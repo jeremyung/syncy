@@ -10,6 +10,7 @@ enum SyncyTheme {
   static let verified = Color(red: 0.23, green: 0.47, blue: 0.32)
   static let caution = Color(red: 0.68, green: 0.43, blue: 0.12)
   static let fault = Color(red: 0.64, green: 0.24, blue: 0.20)
+  static let selection = caution.opacity(0.10)
 
   static func color(for state: LedgerState) -> Color {
     switch state {
@@ -19,6 +20,15 @@ enum SyncyTheme {
     case .unchecked: quietInk
     }
   }
+}
+
+enum SyncySpace {
+  static let xs: CGFloat = 4
+  static let sm: CGFloat = 8
+  static let md: CGFloat = 12
+  static let lg: CGFloat = 16
+  static let xl: CGFloat = 24
+  static let xxl: CGFloat = 32
 }
 
 struct StateMark: View {

@@ -70,6 +70,7 @@ export async function buildEngineSnapshot(
       name: target.name,
       required: target.required,
       reachability: reach.get(target.name) ?? "unreachable",
+      usesSentinel: target.sentinel !== undefined,
     })),
     units,
     ...(owner === undefined

@@ -12,7 +12,7 @@ struct DifferencesView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: "Differences", detail: unit?.unit ?? "No unit selected")
+      PageHeader(title: "Differences", detail: unit?.unit ?? "No folder selected")
       if let unit {
         VStack(alignment: .leading, spacing: 0) {
           Picker("Destination", selection: $targetName) {
@@ -20,7 +20,13 @@ struct DifferencesView: View {
           }
           .frame(maxWidth: 420)
           .padding(20)
-          if let diff = model.differences?.diff {
+          if model.isLoadingDifferences {
+            HStack(spacing: SyncySpace.sm) {
+              ProgressView().controlSize(.small)
+              Text("Reading recorded differences")
+            }
+            .padding(SyncySpace.xl)
+          } else if let diff = model.differences?.diff {
             if diff.wholeFolderMissing {
               ContentUnavailableView(
                 "Whole folder missing",
@@ -31,7 +37,7 @@ struct DifferencesView: View {
             } else {
               List(diff.entries) { entry in
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                  Text(entry.kind)
+                  Text(differenceLabel(entry.kind))
                     .font(.caption.weight(.semibold))
                     .frame(width: 72, alignment: .leading)
                   Text(entry.name).textSelection(.enabled)
@@ -66,8 +72,18 @@ struct DifferencesView: View {
           if !targetName.isEmpty { await model.loadDifferences(unit: unit.unit, target: targetName) }
         }
       } else {
-        ContentUnavailableView("No unit selected", systemImage: "arrow.left.arrow.right")
+        ContentUnavailableView("No folder selected", systemImage: "arrow.left.arrow.right")
       }
+    }
+  }
+
+  private func differenceLabel(_ kind: String) -> String {
+    switch kind {
+    case "new": "not copied"
+    case "changed": "different"
+    case "metadata": "attributes"
+    case "extra": "extra"
+    default: kind
     }
   }
 }
@@ -78,7 +94,13 @@ struct HistoryView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       PageHeader(title: "History", detail: "Literal task outcomes, newest first")
-      if model.historyEntries.isEmpty {
+      if model.isLoadingHistory {
+        HStack(spacing: SyncySpace.sm) {
+          ProgressView().controlSize(.small)
+          Text("Reading task history")
+        }
+        .padding(SyncySpace.xl)
+      } else if model.historyEntries.isEmpty {
         ContentUnavailableView(
           "No task outcomes",
           systemImage: "clock.arrow.circlepath",
@@ -99,6 +121,7 @@ struct HistoryView: View {
             Spacer()
             Text(entry.outcome)
               .font(.callout.weight(.medium))
+              .foregroundStyle(outcomeColor(entry.outcome))
           }
           .padding(.vertical, 4)
         }
@@ -106,6 +129,15 @@ struct HistoryView: View {
       }
     }
     .task { await model.loadHistory() }
+  }
+
+  private func outcomeColor(_ outcome: String) -> Color {
+    switch outcome {
+    case "completed": SyncyTheme.verified
+    case "failed": SyncyTheme.fault
+    case "skipped", "missed": SyncyTheme.caution
+    default: SyncyTheme.secondaryInk
+    }
   }
 }
 
@@ -141,6 +173,13 @@ struct SchedulesView: View {
                   Text(scheduleDescription(schedule))
                     .font(.caption)
                     .foregroundStyle(SyncyTheme.secondaryInk)
+                  if schedule.operation == .sync,
+                    !schedule.isApproved(forConfigRevision: model.snapshot?.configRevision)
+                  {
+                    Label("suspended · configuration changed", systemImage: "pause.circle")
+                      .font(.caption)
+                      .foregroundStyle(SyncyTheme.caution)
+                  }
                 }
               }
               Button("Remove", role: .destructive) { model.removeSchedule(id: schedule.id) }
@@ -148,7 +187,7 @@ struct SchedulesView: View {
               if schedule.operation == .sync,
                 !schedule.isApproved(forConfigRevision: model.snapshot?.configRevision)
               {
-                Button("Review change") { model.reviewSchedule(id: schedule.id) }
+                Button("Review") { model.reviewSchedule(id: schedule.id) }
                   .buttonStyle(.link)
                   .help("Configuration changed; approve this exact source and destination setup")
               }
@@ -162,7 +201,7 @@ struct SchedulesView: View {
             Text("Sync files").tag(EngineCheckOperationValue.sync)
           }
           Picker("Scope", selection: $unit) {
-            if operation != .sync { Text("All units").tag("") }
+            if operation != .sync { Text("All folders").tag("") }
             ForEach(model.snapshot?.units ?? []) { unit in Text(unit.unit).tag(unit.unit) }
           }
           if operation == .sync {
@@ -213,7 +252,7 @@ struct SchedulesView: View {
         }
         Section {
           Text(
-            "After sleep, Syncy runs the latest missed occurrence once. A destination that is not connected is recorded as skipped, not completed."
+            "Schedules run whenever the Mac and Syncy are awake, including on battery. After sleep, Syncy runs the latest missed occurrence once. A destination that is not connected is recorded as skipped, not completed."
           )
           .foregroundStyle(SyncyTheme.secondaryInk)
         }
@@ -231,9 +270,9 @@ struct SchedulesView: View {
 
   private func scheduleTitle(_ schedule: CheckSchedule) -> String {
     if schedule.operation == .sync {
-      return "Sync · \(schedule.unit ?? "no unit") → \(schedule.target ?? "no destination")"
+      return "Sync · \(schedule.unit ?? "no folder") → \(schedule.target ?? "no destination")"
     }
-    return "\(schedule.operation.rawValue.capitalized) check · \(schedule.unit ?? "all units")"
+    return "\(schedule.operation.rawValue.capitalized) check · \(schedule.unit ?? "all folders")"
   }
 }
 
@@ -242,7 +281,7 @@ struct EvidenceView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: "Evidence", detail: unit?.unit ?? "No unit selected")
+      PageHeader(title: "Evidence", detail: unit?.unit ?? "No folder selected")
       if let unit {
         List(unit.cells) { destination in
           HStack(alignment: .top, spacing: 12) {
@@ -283,7 +322,7 @@ struct SyncConfirmationView: View {
     VStack(alignment: .leading, spacing: 0) {
       PageHeader(title: "Sync", detail: "Review the transfer before it starts")
       Form {
-        LabeledContent("Unit", value: unit?.unit ?? "No unit selected")
+        LabeledContent("Folder", value: unit?.unit ?? "No folder selected")
         Picker("Destination", selection: $targetName) {
           if eligibleTargets.isEmpty {
             Text("No destination needs syncing").tag("")
@@ -305,7 +344,7 @@ struct SyncConfirmationView: View {
           Section("Preflight") {
             ForEach(prepared.checks) { check in
               LabeledContent(check.name, value: "\(check.ok ? "passed" : "blocked") · \(check.detail)")
-                .foregroundStyle(check.ok ? .primary : Color.red)
+                .foregroundStyle(check.ok ? .primary : SyncyTheme.fault)
             }
             LabeledContent("Files to transfer", value: prepared.nChanges.formatted())
             LabeledContent(
@@ -346,6 +385,8 @@ struct SyncConfirmationView: View {
             Button("Begin sync") {
               model.startPreparedSync()
             }
+            .buttonStyle(.borderedProminent)
+            .tint(SyncyTheme.caution)
             .disabled(prepared?.ok != true || !reviewed || model.snapshot?.activeJob != nil)
             .help("Requires a fresh preflight and explicit review")
           }
@@ -394,12 +435,19 @@ struct SetupView: View {
                 Button("Remove…", role: .destructive) { destinationToRemove = target.name }
                   .buttonStyle(.link)
                   .disabled(model.isUpdatingSetup || model.snapshot?.activeJob != nil)
-                Button("Add sentinel") {
-                  Task { await model.adoptDestination(name: target.name) }
+                if target.usesSentinel {
+                  Text("sentinel recorded")
+                    .font(.caption)
+                    .foregroundStyle(SyncyTheme.secondaryInk)
+                } else {
+                  Button("Add sentinel") {
+                    Task { await model.adoptDestination(name: target.name) }
+                  }
+                  .buttonStyle(.link)
+                  .disabled(model.isUpdatingSetup || model.snapshot?.activeJob != nil)
+                  .help(
+                    "Write Syncy's identity sentinel through rsync and record it in configuration")
                 }
-                .buttonStyle(.link)
-                .disabled(model.isUpdatingSetup || model.snapshot?.activeJob != nil)
-                .help("Write Syncy's identity sentinel through rsync and record it in configuration")
               }
             }
           } else {

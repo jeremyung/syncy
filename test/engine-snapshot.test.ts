@@ -58,7 +58,9 @@ describe("engine snapshot", () => {
 
     expect(snapshot.protocolVersion).toBe(ENGINE_PROTOCOL_VERSION);
     expect(snapshot.configRevision).toHaveLength(64);
-    expect(snapshot.targets).toEqual([{ name: "archive", required: true, reachability: "ok" }]);
+    expect(snapshot.targets).toEqual([
+      { name: "archive", required: true, reachability: "ok", usesSentinel: false },
+    ]);
     expect(snapshot.units[0]).toMatchObject({
       unit: "photos-2019",
       state: "verified",
