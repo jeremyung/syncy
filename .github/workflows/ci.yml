@@ -58,6 +58,10 @@ jobs:
         run: shellcheck scripts/*.sh
       - name: Test
         run: bun test
+      - name: Test Mac app
+        if: runner.os == 'macOS'
+        working-directory: macos
+        run: swift test
 
   build:
     name: build · ${{ matrix.target }}
