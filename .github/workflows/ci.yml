@@ -58,7 +58,10 @@ jobs:
         run: shellcheck scripts/*.sh
       - name: Test
         run: bun test
-      - name: Test Mac app
+      - name: Build Mac app bundle
+        if: runner.os == 'macOS'
+        run: ./scripts/build-mac-app.sh
+      - name: Test Mac contract
         if: runner.os == 'macOS'
         working-directory: macos
         run: swift test
