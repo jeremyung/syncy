@@ -292,6 +292,10 @@ export async function checkUnit(
     fingerprint: fp,
     sentinel: observation.identity,
   } as const;
+  // Two different counts, and conflating them claimed the whole folder was
+  // pending: `-vv` itemizes every file rsync finishes with, so `filesSeen` is
+  // progress through the walk, while `nFiles` is evidence about what differs.
+  let filesSeen = 0;
   let nFiles = 0;
   let nChanges = 0;
   let nNew = 0;
@@ -313,12 +317,15 @@ export async function checkUnit(
         nChanges += 1;
         if (isNew(item)) nNew += 1;
         // Directories carry a size but transfer no file content.
-        if (item.flags[1] === "f") bytesPending += item.bytes;
+        if (item.flags[1] === "f") {
+          nFiles += 1;
+          bytesPending += item.bytes;
+        }
       }
       // Directories are not files; counting them would overshoot the total.
       if (item.flags[1] === "f") {
-        nFiles += 1;
-        opts.onFile?.(nFiles, item.name);
+        filesSeen += 1;
+        opts.onFile?.(filesSeen, item.name);
       }
     },
   });
