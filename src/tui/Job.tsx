@@ -209,7 +209,10 @@ export function Job(props: JobProps): React.ReactElement {
           ownership.lease.observe(
             r.cancelled
               ? { ...base, type: "job.cancelled", at: Date.now(), transferred: r.transferred }
-              : r.exitCode === 0
+              : // 24 is "some files vanished before they could be transferred",
+                // routine on a live archive. The same run's history record and
+                // the recheck below both count it as a completed transfer.
+                r.exitCode === 0 || r.exitCode === 24
                 ? {
                     ...base,
                     type: "job.completed",
