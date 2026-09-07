@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { Config, Target } from "./config.ts";
-import { buildDiff, saveDiff } from "./diff.ts";
+import { saveDiff } from "./diff.ts";
 import type { JobEvent, JobPhase } from "./engine-protocol.ts";
 import { type Fingerprint, fingerprint } from "./fingerprint.ts";
 import { debug } from "./log.ts";
@@ -10,6 +10,7 @@ import {
   checkUnit,
   methodOf,
   type Reachability,
+  TargetCheckError,
 } from "./scan.ts";
 import { appendHistory, estimateMs, type State, saveState, upsertScan } from "./state.ts";
 import { reachWord } from "./status.ts";
@@ -240,15 +241,7 @@ export async function runCheckQueue(
         phase: "recording-evidence",
       });
       deps.saveState(working);
-      deps.saveDiff(
-        buildDiff(job.unit, job.target.name, result.scan.method, result.items, {
-          ts: result.scan.ts,
-          wholeFolderMissing: result.scan.outcome === "missing",
-          source: result.scan.fingerprint,
-          target: result.targetFingerprint,
-          targetIdentity: result.scan.sentinel,
-        }),
-      );
+      deps.saveDiff(result.diff);
       deps.appendHistory({
         ts: result.scan.ts,
         unit: job.unit,
@@ -278,6 +271,39 @@ export async function runCheckQueue(
       if (isAborted()) {
         options.onEvent?.({ ...base, type: "job.cancelled", at: now() });
         return cancelled();
+      }
+      if (error instanceof TargetCheckError) {
+        ran -= 1;
+        if (!skipped.some((entry) => entry.target === error.targetName)) {
+          skipped.push({ target: error.targetName, why: error.reachability });
+        }
+        const reason = reachWord(error.reachability);
+        debug("check.skipped", {
+          unit: job.unit,
+          target: error.targetName,
+          reach: error.reachability,
+          fresh: true,
+        });
+        options.onEvent?.({
+          ...base,
+          type: "job.skipped",
+          at: now(),
+          reachability: error.reachability,
+          reason,
+        });
+        deps.appendHistory({
+          ts: now(),
+          unit: job.unit,
+          target: error.targetName,
+          argv: [],
+          exitCode: null,
+          operation: mode,
+          outcome: "skipped",
+          detail: reason,
+        });
+        done += 1;
+        bytesDone += job.bytes;
+        continue;
       }
       const message = error instanceof Error ? error.message : String(error);
       debug("check.failed", {

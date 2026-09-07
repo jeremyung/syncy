@@ -28,26 +28,55 @@ function nativeTarget(): Target {
   return target;
 }
 
-function build(target: Target, outfile: string): void {
-  const result = Bun.spawnSync(
-    [
-      "bun",
-      "build",
-      "--compile",
-      "--minify",
-      `--target=${target}`,
-      "src/cli.ts",
-      `--outfile=${outfile}`,
-    ],
-    { stdout: "inherit", stderr: "inherit" },
-  );
-  if (result.exitCode !== 0) process.exit(result.exitCode ?? 1);
+/**
+ * Ink keeps its optional DevTools integration behind `DEV=true`, but Bun's
+ * bundler cannot prove that a runtime environment variable is false. The
+ * resulting production executable used to carry the DevTools client (and its
+ * optional react-devtools-core import) even though syncy never enables it.
+ * Patch both upstream development guards in the build graph (DevTools and
+ * development renderer metadata); node_modules itself is never modified, and
+ * development-only behavior cannot enter the release bundle.
+ */
+const noInkDevtools: Bun.BunPlugin = {
+  name: "syncy-production-ink",
+  setup(build) {
+    build.onLoad({ filter: /reconciler/ }, async (args) => {
+      if (!/[\\/]ink[\\/]build[\\/]reconciler\.js$/.test(args.path)) return;
+      const source = await Bun.file(args.path).text();
+      const guard = "if (process.env['DEV'] === 'true') {";
+      const guardCount = source.split(guard).length - 1;
+      if (guardCount !== 2) {
+        throw new Error(`expected two Ink development guards in ${args.path}; found ${guardCount}`);
+      }
+      return { contents: source.replaceAll(guard, "if (false) {"), loader: "js" };
+    });
+  },
+};
+
+async function build(target: Target, outfile: string): Promise<void> {
+  const result = await Bun.build({
+    entrypoints: ["src/cli.ts"],
+    target: "bun",
+    minify: true,
+    // React's development reconciler is several hundred kilobytes and
+    // carries diagnostics useful only while developing. Defining the
+    // condition explicitly selects React's lean runtime even if a developer
+    // has NODE_ENV set differently in their shell.
+    define: { "process.env.NODE_ENV": JSON.stringify("production") },
+    external: ["react-devtools-core"],
+    plugins: [noInkDevtools],
+    compile: { target, outfile },
+  });
+  if (!result.success) {
+    for (const log of result.logs) console.error(log);
+    process.exit(1);
+  }
 }
 
 const args = process.argv.slice(2);
 
 if (args.includes("--all")) {
-  for (const target of TARGETS) build(target, `syncy-${target}`);
+  for (const target of TARGETS) await build(target, `syncy-${target}`);
 } else {
   const flag = args.find((a) => a.startsWith("--target="));
   if (flag !== undefined) {
@@ -55,8 +84,8 @@ if (args.includes("--all")) {
     if (!(TARGETS as readonly string[]).includes(target)) {
       throw new Error(`unknown target ${target}; expected one of ${TARGETS.join(", ")}`);
     }
-    build(target, `syncy-${target}`);
+    await build(target, `syncy-${target}`);
   } else {
-    build(nativeTarget(), "syncy");
+    await build(nativeTarget(), "syncy");
   }
 }
