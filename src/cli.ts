@@ -267,13 +267,18 @@ async function cmdEngine(
     const path = resolve(detail);
     const invalid = validateTargetPath(path, config);
     if (invalid !== null) fail(`destination not added: ${invalid}`);
-    const next = await withSetupOwnership(async () => {
+    // `fail` exits the process, which skips the `finally` that releases the
+    // lease — leaving a fresh ownership record that refuses every command for
+    // the next staleness window. Report the refusal outward and exit after.
+    const outcome = await withSetupOwnership(async () => {
       const result = await resolveTarget(path, extra);
-      if (!result.ok) fail(`destination not added: ${result.reason}`);
+      if (!result.ok) return { refused: result.reason } as const;
       const next = withTarget(config, result.target);
       saveConfig(next, configFile());
-      return next;
+      return { config: next } as const;
     });
+    if ("refused" in outcome) fail(`destination not added: ${outcome.refused}`);
+    const next = outcome.config;
     process.stdout.write(serializeEngineMessage(await buildEngineSnapshot(next, loadState())));
     return;
   }
