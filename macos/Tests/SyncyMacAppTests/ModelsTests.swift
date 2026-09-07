@@ -150,12 +150,28 @@ final class ModelsTests: XCTestCase {
     calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
     let now = try XCTUnwrap(
       calendar.date(from: DateComponents(year: 2026, month: 9, day: 5, hour: 12)))
+    let yesterday = try XCTUnwrap(
+      calendar.date(from: DateComponents(year: 2026, month: 9, day: 4, hour: 12)))
     var schedule = CheckSchedule(
-      operation: .quick, unit: nil, cadence: .daily, hour: 10, minute: 30)
+      operation: .quick, unit: nil, cadence: .daily, hour: 10, minute: 30,
+      lastAttemptAt: yesterday)
 
     XCTAssertTrue(schedule.isDue(at: now, calendar: calendar))
     schedule.lastAttemptAt = now
     XCTAssertFalse(schedule.isDue(at: now, calendar: calendar))
+  }
+
+  /// Every due date is in the past, so a schedule with no attempt behind it
+  /// would fire on creation — a weekly sync added on Wednesday transferring
+  /// immediately instead of on Sunday. Creation counts as the first attempt.
+  func testNewScheduleWaitsForItsNextOccurrence() throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+    let schedule = CheckSchedule(
+      operation: .sync, unit: "photos", target: "Archive", cadence: .weekly, weekday: 1,
+      hour: 2, minute: 0)
+
+    XCTAssertFalse(schedule.isDue(at: Date(), calendar: calendar))
   }
 
   func testWeeklyScheduleFindsTheLatestRequestedWeekday() throws {

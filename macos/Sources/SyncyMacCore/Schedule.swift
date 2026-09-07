@@ -28,7 +28,11 @@ public struct CheckSchedule: Codable, Identifiable, Sendable {
     hour: Int,
     minute: Int,
     enabled: Bool = true,
-    lastAttemptAt: Date? = nil,
+    // Every due date is in the past, so a schedule with no attempt behind it
+    // is due the moment it exists: adding "weekly, Sunday 02:00" on a
+    // Wednesday started that work immediately rather than on Sunday. Counting
+    // creation as the first attempt means the next occurrence is the first one.
+    lastAttemptAt: Date? = Date(),
     approvedConfigRevision: String? = nil
   ) {
     self.id = id
