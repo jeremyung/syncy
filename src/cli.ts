@@ -5,7 +5,7 @@ import { type Config, ConfigError, loadConfig } from "./config.ts";
 import { EMPTY_CONFIG, saveConfig, withoutTarget, withTarget } from "./configio.ts";
 import { loadDiff } from "./diff.ts";
 import { loadHistorySnapshot } from "./engine-history.ts";
-import { buildEngineSnapshot } from "./engine-snapshot.ts";
+import { buildEngineActivity, buildEngineSnapshot } from "./engine-snapshot.ts";
 import { fingerprint } from "./fingerprint.ts";
 import { bytes } from "./format.ts";
 import { preflight } from "./guards.ts";
@@ -36,7 +36,8 @@ const USAGE = `syncy — replication ledger
   syncy check [unit]        quick check (size and date) against every target
   syncy verify [unit]       deep verify (checksum) against every target
   syncy doctor              check the rsync build and target reachability
-  syncy engine snapshot     print one versioned JSON snapshot for native clients
+  syncy engine snapshot     print one versioned ledger snapshot for native clients
+  syncy engine activity     print lightweight live-work status for native clients
   syncy engine check [unit] stream a quick check as versioned JSON lines
   syncy engine verify [unit] stream a deep verify as versioned JSON lines
   syncy engine preflight <unit> <destination>  prepare a guarded sync
@@ -224,6 +225,10 @@ async function cmdEngine(
   more: string | undefined,
   last: string | undefined,
 ): Promise<void> {
+  if (action === "activity") {
+    process.stdout.write(serializeEngineMessage(buildEngineActivity()));
+    return;
+  }
   if (action === "snapshot") {
     const snapshot = await buildEngineSnapshot(config, loadState());
     process.stdout.write(serializeEngineMessage(snapshot));
@@ -382,7 +387,7 @@ async function cmdEngine(
   }
 
   const mode = action === "check" ? "quick" : action === "verify" ? "deep" : undefined;
-  if (mode === undefined) fail("usage: syncy engine snapshot|check [unit]|verify [unit]");
+  if (mode === undefined) fail("usage: syncy engine snapshot|activity|check [unit]|verify [unit]");
   const build = await checkBuild(DEFAULT_RSYNC);
   if (!build.ok) fail(`rsync: ${build.detail}`);
   const units = listUnits(config.source)

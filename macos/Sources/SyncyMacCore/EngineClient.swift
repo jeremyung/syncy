@@ -7,6 +7,8 @@ private final class ProcessBox: @unchecked Sendable {
 
 public protocol EngineClient: Sendable {
   func snapshot() async throws -> EngineSnapshot
+  /** Lightweight live-work observation; never rebuilds the ledger. */
+  func activity() async throws -> ActiveJobSnapshot?
   func runCheck(
     _ operation: EngineCheckOperation, unit: String?, actor: EngineActor,
     onEvent: @escaping JobEventHandler
@@ -498,6 +500,13 @@ public struct ActiveJobActivity: Decodable, Sendable {
   }
 }
 
+private struct ActivityEnvelope: Decodable {
+  let protocolVersion: Int
+  let type: String
+  let generatedAt: Double
+  let activeJob: ActiveJobSnapshot?
+}
+
 public struct EngineSnapshot: Decodable, Sendable {
   public let protocolVersion: Int
   public let type: String
@@ -591,7 +600,7 @@ public enum EngineClientError: LocalizedError, Sendable {
         ? "Syncy engine exited with status \(status)"
         : "Syncy engine exited with status \(status) · \(detail)"
     case .emptyOutput:
-      "Syncy engine returned no snapshot"
+      "Syncy engine returned no response"
     case .protocolFailure(let detail):
       "Syncy engine protocol error · \(detail)"
     }
@@ -622,6 +631,48 @@ public struct ProcessEngineClient: EngineClient {
     let executableURL = executableURL
     return try await Task.detached(priority: .userInitiated) {
       try await Self.loadSnapshot(executableURL: executableURL, arguments: ["engine", "snapshot"])
+    }.value
+  }
+
+  public func activity() async throws -> ActiveJobSnapshot? {
+    let executableURL = executableURL
+    return try await Task.detached(priority: .utility) {
+      let text = try await Self.runText(
+        executableURL: executableURL, arguments: ["engine", "activity"])
+      do {
+        let envelope = try JSONDecoder().decode(ActivityEnvelope.self, from: Data(text.utf8))
+        guard envelope.protocolVersion == 1, envelope.type == "activity",
+          envelope.generatedAt.isFinite
+        else {
+          throw EngineClientError.protocolFailure("invalid activity envelope")
+        }
+        if let active = envelope.activeJob {
+          guard active.startedAt.isFinite, active.heartbeatAt.isFinite,
+            active.estimatedDurationMs.map({ $0.isFinite && $0 >= 0 }) ?? true,
+            (active.batchPosition == nil) == (active.batchTotal == nil)
+          else {
+            throw EngineClientError.protocolFailure("activity contains an invalid job")
+          }
+          if let position = active.batchPosition, let total = active.batchTotal {
+            guard position > 0, total > 0, position <= total else {
+              throw EngineClientError.protocolFailure("activity contains an invalid batch position")
+            }
+          }
+          if let activity = active.activity {
+            let counts = [
+              activity.filesSeen, activity.filesTotal, activity.bytesDone, activity.bytesTotal,
+            ]
+            guard activity.at.isFinite, counts.allSatisfy({ $0.map { $0 >= 0 } ?? true }) else {
+              throw EngineClientError.protocolFailure("activity contains an invalid observation")
+            }
+          }
+        }
+        return envelope.activeJob
+      } catch let error as EngineClientError {
+        throw error
+      } catch {
+        throw EngineClientError.protocolFailure(error.localizedDescription)
+      }
     }.value
   }
 
@@ -899,6 +950,10 @@ public struct DisconnectedEngineClient: EngineClient {
   public init() {}
 
   public func snapshot() async throws -> EngineSnapshot {
+    throw EngineClientError.engineNotFound
+  }
+
+  public func activity() async throws -> ActiveJobSnapshot? {
     throw EngineClientError.engineNotFound
   }
 

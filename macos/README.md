@@ -7,7 +7,10 @@ syncs.
 
 At runtime the app launches Syncy's `engine snapshot` command and strictly
 decodes protocol version 1. It does not substitute sample evidence when the
-engine is missing or returns invalid output.
+engine is missing or returns invalid output. Between full ledger reads it polls
+`engine activity`, which reads only live job ownership and never walks the
+source or destinations. A full snapshot runs when the app opens, after work
+completes, or when someone explicitly refreshes.
 
 ## Run
 

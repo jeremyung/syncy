@@ -53,10 +53,12 @@ final class AppModel: ObservableObject {
   @Published private(set) var differencesErrorMessage: String?
   @Published private(set) var historyErrorMessage: String?
   @Published private(set) var liveActiveJob: ActiveJobSnapshot?
+  @Published private(set) var observedActiveJob: ActiveJobSnapshot?
   @Published private(set) var jobOutcomeMessage: String?
   @Published private(set) var schedules: [CheckSchedule] = []
   private let client: any EngineClient
   private var attemptedInitialLoad = false
+  private var lastFullRefreshAt: Date?
   private var snapshotRefreshInFlight = false
   private var checkTask: Task<Void, Error>?
   private var syncTask: Task<Void, Never>?
@@ -85,7 +87,7 @@ final class AppModel: ObservableObject {
   }
 
   var activeJob: ActiveJobSnapshot? {
-    liveActiveJob ?? (suppressSnapshotJob ? nil : snapshot?.activeJob)
+    liveActiveJob ?? (suppressSnapshotJob ? nil : observedActiveJob)
   }
 
   var canCancelOwnedJob: Bool {
@@ -127,7 +129,12 @@ final class AppModel: ObservableObject {
   }
 
   func loadIfNeeded() async {
-    guard !attemptedInitialLoad else { return }
+    if attemptedInitialLoad,
+      let lastFullRefreshAt,
+      Date().timeIntervalSince(lastFullRefreshAt) < 5
+    {
+      return
+    }
     attemptedInitialLoad = true
     await refresh()
   }
@@ -138,31 +145,50 @@ final class AppModel: ObservableObject {
     while !Task.isCancelled {
       try? await Task.sleep(for: .seconds(3))
       if Task.isCancelled { return }
-      await refresh(showActivity: false)
+      await pollActivity()
       startDueScheduleIfNeeded()
     }
   }
 
-  func refresh(showActivity: Bool = true) async {
+  func refresh() async {
     guard !snapshotRefreshInFlight else { return }
     snapshotRefreshInFlight = true
     isRefreshing = true
-    if showActivity { isLoading = true }
+    isLoading = true
     defer {
       snapshotRefreshInFlight = false
       isRefreshing = false
-      if showActivity { isLoading = false }
+      isLoading = false
     }
     do {
       let next = try await client.snapshot()
       engineErrorMessage = nil
       snapshot = next
+      lastFullRefreshAt = Date()
+      observedActiveJob = next.activeJob
       if next.activeJob == nil { suppressSnapshotJob = false }
       if selectedUnitID == nil || !next.units.contains(where: { $0.id == selectedUnitID }) {
         selectedUnitID = next.units.first?.id
       }
     } catch {
       engineErrorMessage = error.localizedDescription
+    }
+  }
+
+  private func pollActivity() async {
+    do {
+      let previouslyActive = observedActiveJob != nil
+      observedActiveJob = try await client.activity()
+      if observedActiveJob == nil {
+        suppressSnapshotJob = false
+        // External CLI/TUI work records evidence outside this process. Refresh
+        // once when it ends so the ledger catches up, never once per poll.
+        if previouslyActive { await refresh() }
+      }
+    } catch {
+      // Preserve the last complete ledger. A lightweight observation failure
+      // must not turn already-established evidence into an unavailable screen;
+      // an explicit refresh still reports engine errors in full.
     }
   }
 

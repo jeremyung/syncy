@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  type ActivityMessage,
   type DiffMessage,
   ENGINE_PROTOCOL_VERSION,
   type JobEvent,
@@ -61,6 +62,13 @@ const snapshot: SnapshotMessage = {
       ],
     },
   ],
+};
+
+const activity: ActivityMessage = {
+  protocolVersion: ENGINE_PROTOCOL_VERSION,
+  type: "activity",
+  generatedAt: 1_750_000_000_000,
+  activeJob: snapshot.activeJob!,
 };
 
 const started: JobEvent = {
@@ -129,6 +137,20 @@ describe("engine JSON Lines protocol", () => {
     expect(line.endsWith("\n")).toBe(true);
     expect(line.split("\n")).toHaveLength(2);
     expect(parseEngineMessage(line)).toEqual(snapshot);
+  });
+
+  test("round-trips lightweight activity without carrying the ledger", () => {
+    expect(parseEngineMessage(serializeEngineMessage(activity))).toEqual(activity);
+    expect(activity).not.toHaveProperty("units");
+    expect(activity).not.toHaveProperty("targets");
+  });
+
+  test("rejects malformed lightweight job activity", () => {
+    const invalid = {
+      ...activity,
+      activeJob: { ...activity.activeJob, batchPosition: 2, batchTotal: undefined },
+    };
+    expect(() => parseEngineMessage(JSON.stringify(invalid))).toThrow(/batch position and total/);
   });
 
   test("round-trips job events without turning estimates into measurements", () => {

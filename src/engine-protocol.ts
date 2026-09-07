@@ -117,6 +117,15 @@ export interface SnapshotMessage {
   readonly activeJob?: ActiveJobSnapshot;
 }
 
+/** Lightweight observation used by native clients between full ledger reads. */
+export interface ActivityMessage {
+  readonly protocolVersion: EngineProtocolVersion;
+  readonly type: "activity";
+  readonly generatedAt: number;
+  /** Present only while a live process owns executable work. */
+  readonly activeJob?: ActiveJobSnapshot;
+}
+
 export interface SyncPreflightMessage {
   readonly protocolVersion: EngineProtocolVersion;
   readonly type: "sync.preflight";
@@ -274,6 +283,7 @@ export type JobEvent =
 
 export type EngineMessage =
   | SnapshotMessage
+  | ActivityMessage
   | SyncPreflightMessage
   | DiffMessage
   | HistoryMessage

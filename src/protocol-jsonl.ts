@@ -14,6 +14,7 @@ export class ProtocolError extends Error {
 
 const MESSAGE_TYPES = new Set([
   "snapshot",
+  "activity",
   "sync.preflight",
   "diff",
   "history",
@@ -149,6 +150,50 @@ function validateFingerprint(value: unknown, where: string): void {
   optionalBool(fp["complete"], `${where}.complete`);
 }
 
+function validateActiveJob(value: unknown, where: string): void {
+  const active = record(value, where);
+  member(active["actor"], ACTORS, `${where}.actor`);
+  member(active["operation"], OPERATIONS, `${where}.operation`);
+  finite(active["startedAt"], `${where}.startedAt`);
+  finite(active["heartbeatAt"], `${where}.heartbeatAt`);
+  optionalCount(active["estimatedDurationMs"], `${where}.estimatedDurationMs`);
+  optionalCount(active["batchPosition"], `${where}.batchPosition`);
+  optionalCount(active["batchTotal"], `${where}.batchTotal`);
+  const batchPosition = active["batchPosition"];
+  const batchTotal = active["batchTotal"];
+  if ((batchPosition === undefined) !== (batchTotal === undefined)) {
+    throw new ProtocolError(`${where} batch position and total must appear together`);
+  }
+  if (
+    typeof batchPosition === "number" &&
+    typeof batchTotal === "number" &&
+    (batchPosition < 1 || batchPosition > batchTotal)
+  ) {
+    throw new ProtocolError(`${where}.batchPosition must be between 1 and total`);
+  }
+  if (active["activity"] !== undefined) {
+    const activity = record(active["activity"], `${where}.activity`);
+    string(activity["unit"], `${where}.activity.unit`);
+    string(activity["target"], `${where}.activity.target`);
+    member(activity["phase"], ACTIVE_PHASES, `${where}.activity.phase`);
+    finite(activity["at"], `${where}.activity.at`);
+    optionalCount(activity["filesSeen"], `${where}.activity.filesSeen`);
+    optionalCount(activity["filesTotal"], `${where}.activity.filesTotal`);
+    optionalCount(activity["bytesDone"], `${where}.activity.bytesDone`);
+    optionalCount(activity["bytesTotal"], `${where}.activity.bytesTotal`);
+    if (activity["lastItem"] !== undefined) {
+      string(activity["lastItem"], `${where}.activity.lastItem`);
+    }
+  }
+}
+
+function validateActivity(message: RecordValue): void {
+  finite(message["generatedAt"], "activity.generatedAt");
+  if (message["activeJob"] !== undefined) {
+    validateActiveJob(message["activeJob"], "activity.activeJob");
+  }
+}
+
 function validateSnapshot(message: RecordValue): void {
   finite(message["generatedAt"], "snapshot.generatedAt");
   string(message["source"], "snapshot.source");
@@ -175,40 +220,7 @@ function validateSnapshot(message: RecordValue): void {
     });
   });
   if (message["activeJob"] !== undefined) {
-    const active = record(message["activeJob"], "snapshot.activeJob");
-    member(active["actor"], ACTORS, "snapshot.activeJob.actor");
-    member(active["operation"], OPERATIONS, "snapshot.activeJob.operation");
-    finite(active["startedAt"], "snapshot.activeJob.startedAt");
-    finite(active["heartbeatAt"], "snapshot.activeJob.heartbeatAt");
-    optionalCount(active["estimatedDurationMs"], "snapshot.activeJob.estimatedDurationMs");
-    optionalCount(active["batchPosition"], "snapshot.activeJob.batchPosition");
-    optionalCount(active["batchTotal"], "snapshot.activeJob.batchTotal");
-    const batchPosition = active["batchPosition"];
-    const batchTotal = active["batchTotal"];
-    if ((batchPosition === undefined) !== (batchTotal === undefined)) {
-      throw new ProtocolError("snapshot.activeJob batch position and total must appear together");
-    }
-    if (
-      typeof batchPosition === "number" &&
-      typeof batchTotal === "number" &&
-      (batchPosition < 1 || batchPosition > batchTotal)
-    ) {
-      throw new ProtocolError("snapshot.activeJob.batchPosition must be between 1 and total");
-    }
-    if (active["activity"] !== undefined) {
-      const activity = record(active["activity"], "snapshot.activeJob.activity");
-      string(activity["unit"], "snapshot.activeJob.activity.unit");
-      string(activity["target"], "snapshot.activeJob.activity.target");
-      member(activity["phase"], ACTIVE_PHASES, "snapshot.activeJob.activity.phase");
-      finite(activity["at"], "snapshot.activeJob.activity.at");
-      optionalCount(activity["filesSeen"], "snapshot.activeJob.activity.filesSeen");
-      optionalCount(activity["filesTotal"], "snapshot.activeJob.activity.filesTotal");
-      optionalCount(activity["bytesDone"], "snapshot.activeJob.activity.bytesDone");
-      optionalCount(activity["bytesTotal"], "snapshot.activeJob.activity.bytesTotal");
-      if (activity["lastItem"] !== undefined) {
-        string(activity["lastItem"], "snapshot.activeJob.activity.lastItem");
-      }
-    }
+    validateActiveJob(message["activeJob"], "snapshot.activeJob");
   }
 }
 
@@ -404,6 +416,7 @@ export function assertEngineMessage(value: unknown): asserts value is EngineMess
   }
   member(message["type"], MESSAGE_TYPES, "message.type");
   if (message["type"] === "snapshot") validateSnapshot(message);
+  else if (message["type"] === "activity") validateActivity(message);
   else if (message["type"] === "sync.preflight") validateSyncPreflight(message);
   else if (message["type"] === "diff") validateDiff(message);
   else if (message["type"] === "history") validateHistory(message);

@@ -56,6 +56,14 @@ describeRsync("structured engine command", () => {
       targets: [],
     });
 
+    const activity = await runEngine(["activity"], configHome, stateHome);
+    expect(activity.exitCode).toBe(0);
+    expect(parseEngineMessage(activity.stdout)).toEqual({
+      protocolVersion: 1,
+      type: "activity",
+      generatedAt: expect.any(Number),
+    });
+
     const added = await runEngine(
       ["add-destination", destination, "second"],
       configHome,

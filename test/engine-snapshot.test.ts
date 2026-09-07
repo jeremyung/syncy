@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config.ts";
 import { ENGINE_PROTOCOL_VERSION } from "../src/engine-protocol.ts";
-import { buildEngineSnapshot, type SnapshotIo } from "../src/engine-snapshot.ts";
+import {
+  buildEngineActivity,
+  buildEngineSnapshot,
+  type SnapshotIo,
+} from "../src/engine-snapshot.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import { EMPTY_STATE, type State } from "../src/state.ts";
 
@@ -36,6 +40,28 @@ function io(reachability: "ok" | "unreachable" = "ok"): SnapshotIo {
 }
 
 describe("engine snapshot", () => {
+  test("polls live work without source or destination tree dependencies", () => {
+    const activity = buildEngineActivity(1_750_000_001_000, {
+      pidAlive: () => true,
+      owner: () => ({
+        version: 1,
+        token: "private-owner-token",
+        pid: 321,
+        actor: "cli",
+        operation: "quick",
+        startedAt: 1_750_000_000_000,
+        heartbeatAt: 1_750_000_000_500,
+      }),
+    });
+
+    expect(activity).toMatchObject({
+      type: "activity",
+      generatedAt: 1_750_000_001_000,
+      activeJob: { actor: "cli", operation: "quick" },
+    });
+    expect(JSON.stringify(activity)).not.toContain("private-owner-token");
+  });
+
   test("carries the same evaluated evidence a UI is allowed to render", async () => {
     const state: State = {
       version: 1,

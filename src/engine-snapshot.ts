@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
-import { ENGINE_PROTOCOL_VERSION, type SnapshotMessage } from "./engine-protocol.ts";
+import {
+  type ActivityMessage,
+  ENGINE_PROTOCOL_VERSION,
+  type SnapshotMessage,
+} from "./engine-protocol.ts";
 import { type Fingerprint, fingerprint } from "./fingerprint.ts";
 import type { JobOwnerRecord } from "./job-owner.ts";
 import { isJobOwnerActive, readJobOwner } from "./job-owner.ts";
@@ -27,12 +31,15 @@ function evidenceSnapshot(scan: Scan) {
  * Read-side dependencies are injectable so the protocol boundary can be
  * verified without asking a test machine about its real disks or shares.
  */
-export interface SnapshotIo {
+export interface ActivityIo {
+  readonly owner?: () => JobOwnerRecord | undefined;
+  readonly pidAlive?: (pid: number) => boolean;
+}
+
+export interface SnapshotIo extends ActivityIo {
   readonly listUnits: (source: string) => readonly string[];
   readonly fingerprint: (root: string, exclude: readonly string[]) => Fingerprint;
   readonly reachability: (config: Config) => Promise<ReadonlyMap<string, Reachability>>;
-  readonly owner?: () => JobOwnerRecord | undefined;
-  readonly pidAlive?: (pid: number) => boolean;
   /** Read after scanning, so a snapshot timestamp means the read is complete. */
   readonly completedAt?: () => number;
 }
@@ -44,6 +51,39 @@ const REAL_IO: SnapshotIo = {
   owner: readJobOwner,
   completedAt: Date.now,
 };
+
+/** Read only the live ownership record; this never walks source or destination trees. */
+export function buildEngineActivity(
+  now: number = Date.now(),
+  io: ActivityIo = { owner: readJobOwner },
+): ActivityMessage {
+  const candidate = io.owner?.();
+  const owner =
+    candidate !== undefined && isJobOwnerActive(candidate, now, 30_000, io.pidAlive)
+      ? candidate
+      : undefined;
+  return {
+    protocolVersion: ENGINE_PROTOCOL_VERSION,
+    type: "activity" as const,
+    generatedAt: now,
+    ...(owner === undefined
+      ? {}
+      : {
+          activeJob: {
+            actor: owner.actor,
+            operation: owner.operation,
+            startedAt: owner.startedAt,
+            heartbeatAt: owner.heartbeatAt,
+            ...(owner.estimatedDurationMs === undefined
+              ? {}
+              : { estimatedDurationMs: owner.estimatedDurationMs }),
+            ...(owner.batchPosition === undefined ? {} : { batchPosition: owner.batchPosition }),
+            ...(owner.batchTotal === undefined ? {} : { batchTotal: owner.batchTotal }),
+            ...(owner.activity === undefined ? {} : { activity: owner.activity }),
+          },
+        }),
+  };
+}
 
 /**
  * Build the authoritative, presentation-neutral ledger sent to another UI.
@@ -95,11 +135,7 @@ export async function buildEngineSnapshot(
   // A lease is a live-work signal, not durable history. A crashed owner can
   // remain on disk until the next contender archives it, so publishing it as
   // active would leave a native UI claiming work is still happening forever.
-  const candidate = io.owner?.();
-  const owner =
-    candidate !== undefined && isJobOwnerActive(candidate, now, 30_000, io.pidAlive)
-      ? candidate
-      : undefined;
+  const activity = buildEngineActivity(now, io);
 
   return {
     protocolVersion: ENGINE_PROTOCOL_VERSION,
@@ -115,21 +151,10 @@ export async function buildEngineSnapshot(
       usesSentinel: target.sentinel !== undefined,
     })),
     units,
-    ...(owner === undefined
+    ...(activity.activeJob === undefined
       ? {}
       : {
-          activeJob: {
-            actor: owner.actor,
-            operation: owner.operation,
-            startedAt: owner.startedAt,
-            heartbeatAt: owner.heartbeatAt,
-            ...(owner.estimatedDurationMs === undefined
-              ? {}
-              : { estimatedDurationMs: owner.estimatedDurationMs }),
-            ...(owner.batchPosition === undefined ? {} : { batchPosition: owner.batchPosition }),
-            ...(owner.batchTotal === undefined ? {} : { batchTotal: owner.batchTotal }),
-            ...(owner.activity === undefined ? {} : { activity: owner.activity }),
-          },
+          activeJob: activity.activeJob,
         }),
   };
 }
