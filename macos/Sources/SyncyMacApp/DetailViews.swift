@@ -93,7 +93,7 @@ struct DifferencesView: View {
                       Text("\(group.count.formatted()) \(group.label)")
                     }
                     Spacer()
-                    if envelope.truncated == 0, let files = envelope.presentation?.copyableFiles {
+                    if diff.truncated == 0, let files = envelope.presentation?.copyableFiles {
                       Text("\(files.formatted()) files to copy")
                     }
                   }
