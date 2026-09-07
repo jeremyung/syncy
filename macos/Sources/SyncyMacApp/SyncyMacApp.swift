@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 import SyncyMacCore
-import UserNotifications
+@preconcurrency import UserNotifications
 
 @main
 struct SyncyMacApp: App {
