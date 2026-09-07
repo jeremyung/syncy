@@ -240,7 +240,7 @@ describe("the commands shown are the commands that run", () => {
     const text = planText(config, "u");
     expect(text).toContain("# quick check — writes nothing");
     expect(text).toContain("# sync — WRITES to the destination");
-    expect(text).toContain("# target: ext");
+    expect(text).toContain("# destination: ext");
   });
 });
 
@@ -302,7 +302,9 @@ describe("the plan fits the window", () => {
 
   test("the copyable text still carries every destination", () => {
     const text = planText(many, "u");
-    for (const n of ["a", "b", "c", "d", "e", "f"]) expect(text).toContain(`# target: ${n}`);
+    for (const n of ["a", "b", "c", "d", "e", "f"]) {
+      expect(text).toContain(`# destination: ${n}`);
+    }
   });
 });
 

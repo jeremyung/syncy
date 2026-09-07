@@ -92,7 +92,7 @@ export function planText(
 ): string {
   const lines: string[] = [`# syncy — commands for ${unit}`, ""];
   for (const t of config.targets) {
-    lines.push(`# target: ${t.name}`);
+    lines.push(`# destination: ${t.name}`);
     for (const m of MODES) {
       const opts = m.mode === "sync" && checksumFor(t, needsChecksum) ? { checksum: true } : {};
       const argv = argvFor(config, unit, t, m.mode, opts);

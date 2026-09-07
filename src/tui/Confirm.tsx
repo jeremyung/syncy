@@ -265,7 +265,7 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
       {row(
         "will not delete",
         props.nExtra > 0
-          ? `${count(props.nExtra)} extra files at the target remain untouched`
+          ? `${count(props.nExtra)} extra files at the destination remain untouched`
           : "nothing — this command carries no --delete",
       )}
       {row("destination", truncatePath(join(target.path, unit), 50))}
