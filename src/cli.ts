@@ -318,7 +318,7 @@ async function cmdEngine(
     }
     const diff = loadDiff(detail, extra);
     const target = config.targets.find((candidate) => candidate.name === extra)!;
-    const presentation = diff === null ? undefined : presentDiffSummary(diff);
+    const presentation = presentDiffSummary(diff);
     const reachability = (await allReachability(config)).get(extra) ?? "unreachable";
     const configuredIdentity = target.identity ?? target.sentinel ?? "";
     const identityMatches = diff?.targetIdentity === configuredIdentity;
@@ -330,14 +330,13 @@ async function cmdEngine(
         unit: detail,
         target: extra,
         diff,
-        ...(presentation === undefined
-          ? {}
-          : {
-              presentation: {
-                parts: presentation.parts,
-                copyableFiles: presentation.copyableFiles,
-              },
-            }),
+        presentation: {
+          state: presentation.state,
+          ...(presentation.title === undefined ? {} : { title: presentation.title }),
+          ...(presentation.detail === undefined ? {} : { detail: presentation.detail }),
+          parts: presentation.parts,
+          copyableFiles: presentation.copyableFiles,
+        },
         ...(diff?.targetIdentity === undefined
           ? {}
           : {

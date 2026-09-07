@@ -28,6 +28,7 @@
     "targetHolds": { "nfiles": 10, "bytes": 2048, "maxMtimeNs": "1788681400000000000" }
   },
   "presentation": {
+    "state": "differences",
     "parts": [{ "kind": "new", "count": 3, "label": "not at destination" }],
     "copyableFiles": 2
   },

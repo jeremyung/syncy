@@ -291,7 +291,17 @@ public struct DiffPresentationPart: Decodable, Identifiable, Sendable {
   public let label: String
 }
 
+public enum DiffPresentationState: String, Decodable, Equatable, Sendable {
+  case differences
+  case clean
+  case noRecord = "no-record"
+  case wholeFolderMissing = "whole-folder-missing"
+}
+
 public struct DiffPresentationSnapshot: Decodable, Sendable {
+  public let state: DiffPresentationState?
+  public let title: String?
+  public let detail: String?
   public let parts: [DiffPresentationPart]
   public let copyableFiles: Int64
 }

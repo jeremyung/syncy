@@ -160,6 +160,10 @@ export interface DiffMessage {
   readonly diff: Diff | null;
   /** Shared difference labels/counts, so native clients need not duplicate them. */
   readonly presentation?: {
+    /** Explicitly distinguishes an absent record from an empty recorded check. */
+    readonly state?: "differences" | "clean" | "no-record" | "whole-folder-missing";
+    readonly title?: string;
+    readonly detail?: string;
     readonly parts: readonly {
       readonly kind: string;
       readonly count: number;

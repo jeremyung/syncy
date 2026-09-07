@@ -58,20 +58,31 @@ struct MenuBarPanel: View {
       Divider().padding(.vertical, 16)
 
       HStack {
-        Button("Open Syncy") {
+        Menu("Check") {
+          Button("Quick check · all folders") {
+            Task { await model.runCheck(.quick) }
+          }
+          Button("Deep verify · all folders") {
+            Task { await model.runCheck(.deep) }
+          }
+        }
+        .disabled(model.isLaunchingJob || model.activeJob != nil || model.snapshot == nil)
+        Spacer()
+        Button(model.activeJob == nil ? "Open Syncy" : "View activity") {
+          if model.activeJob != nil {
+            model.closeFolderRecord()
+            model.selection = .activity
+          }
           openWindow(id: "ledger")
           NSApp.activate(ignoringOtherApps: true)
         }
         .keyboardShortcut(.defaultAction)
-        Spacer()
         if model.canCancelOwnedJob {
           Button(model.isCancellingJob ? "Cancelling…" : "Cancel…", role: .destructive) {
             model.cancelOwnedJob()
           }
           .disabled(model.isCancellingJob)
         }
-        Button("Refresh") { Task { await model.refresh() } }
-          .disabled(model.isRefreshing)
       }
     }
     .padding(SyncySpace.lg)

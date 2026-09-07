@@ -170,6 +170,26 @@ describe("engine JSON Lines protocol", () => {
     );
   });
 
+  test("preserves the explicit meaning of an empty difference response", () => {
+    const noRecord: DiffMessage = {
+      protocolVersion: ENGINE_PROTOCOL_VERSION,
+      type: "diff",
+      generatedAt: 1_750_000_000_000,
+      unit: "photos-2019",
+      target: "archive",
+      diff: null,
+      presentation: {
+        state: "no-record",
+        title: "No check recorded",
+        detail: "No recorded check for this destination. Run a check to record differences.",
+        parts: [],
+        copyableFiles: 0,
+      },
+    };
+
+    expect(parseEngineMessage(serializeEngineMessage(noRecord))).toEqual(noRecord);
+  });
+
   test("a successful preflight cannot omit its confirmation", () => {
     const invalid = { ...preflight, confirmationToken: undefined };
     expect(() => parseEngineMessage(JSON.stringify(invalid))).toThrow(/confirmationToken/);

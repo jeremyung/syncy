@@ -114,6 +114,12 @@ export function presentEvidence(
 }
 
 export interface DiffSummary {
+  /** Why the listing is empty, or whether it contains recorded differences. */
+  readonly state: "differences" | "clean" | "no-record" | "whole-folder-missing";
+  /** Canonical empty-state heading. Populated listings use the screen title. */
+  readonly title?: string;
+  /** Canonical evidence statement supporting an empty-state heading. */
+  readonly detail?: string;
   readonly counts: Readonly<Record<DiffKind, number>>;
   readonly parts: readonly {
     readonly kind: DiffKind;
@@ -142,7 +148,18 @@ export const DIFFERENCE_SHORT_LABEL: Readonly<Record<DiffKind, string>> = {
 };
 
 /** A file total for sync progress; directories never inflate it. */
-export function presentDiffSummary(diff: Diff): DiffSummary {
+export function presentDiffSummary(diff: Diff | null): DiffSummary {
+  if (diff === null) {
+    return {
+      state: "no-record",
+      title: "No check recorded",
+      detail: "No recorded check for this destination. Run a check to record differences.",
+      counts: { new: 0, changed: 0, metadata: 0, extra: 0 },
+      parts: [],
+      copyableFiles: 0,
+      hasDifferences: false,
+    };
+  }
   const counts =
     diff.totals ??
     (() => {
@@ -153,7 +170,22 @@ export function presentDiffSummary(diff: Diff): DiffSummary {
   const copyableFiles = diff.entries.filter(
     (entry) => (entry.kind === "new" || entry.kind === "changed") && !entry.dir,
   ).length;
+  const hasDifferences = Object.values(counts).some((count) => count > 0);
+  const emptyState = diff.wholeFolderMissing
+    ? {
+        state: "whole-folder-missing" as const,
+        title: "Whole folder missing",
+        detail: "The source holds the files; nothing was itemized at this destination.",
+      }
+    : !hasDifferences
+      ? {
+          state: "clean" as const,
+          title: "No differences",
+          detail: "The recorded check found no differences.",
+        }
+      : { state: "differences" as const };
   return {
+    ...emptyState,
     counts,
     parts: DIFFERENCE_KIND_ORDER.filter((kind) => counts[kind] > 0).map((kind) => ({
       kind,
@@ -161,7 +193,7 @@ export function presentDiffSummary(diff: Diff): DiffSummary {
       label: DIFFERENCE_LABEL[kind],
     })),
     copyableFiles,
-    hasDifferences: Object.values(counts).some((count) => count > 0),
+    hasDifferences,
   };
 }
 

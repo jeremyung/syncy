@@ -270,6 +270,28 @@ function validateDiff(message: RecordValue): void {
   finite(message["generatedAt"], "diff.generatedAt");
   string(message["unit"], "diff.unit");
   string(message["target"], "diff.target");
+  if (message["presentation"] !== undefined) {
+    const presentation = record(message["presentation"], "diff.presentation");
+    if (presentation["state"] !== undefined) {
+      member(
+        presentation["state"],
+        new Set(["differences", "clean", "no-record", "whole-folder-missing"]),
+        "diff.presentation.state",
+      );
+    }
+    if (presentation["title"] !== undefined)
+      string(presentation["title"], "diff.presentation.title");
+    if (presentation["detail"] !== undefined)
+      string(presentation["detail"], "diff.presentation.detail");
+    array(presentation["parts"], "diff.presentation.parts");
+    presentation["parts"].forEach((part, index) => {
+      const item = record(part, `diff.presentation.parts[${index}]`);
+      member(item["kind"], DIFF_KINDS, `diff.presentation.parts[${index}].kind`);
+      count(item["count"], `diff.presentation.parts[${index}].count`);
+      string(item["label"], `diff.presentation.parts[${index}].label`);
+    });
+    count(presentation["copyableFiles"], "diff.presentation.copyableFiles");
+  }
   if (message["diff"] === null) return;
   const diff = record(message["diff"], "diff.diff");
   if (diff["version"] !== 1) throw new ProtocolError("diff.diff.version must be 1");
@@ -283,17 +305,6 @@ function validateDiff(message: RecordValue): void {
     bool(provenance["identityMatches"], "diff.provenance.identityMatches");
     member(provenance["reachability"], REACHABILITY, "diff.provenance.reachability");
     bool(provenance["current"], "diff.provenance.current");
-  }
-  if (message["presentation"] !== undefined) {
-    const presentation = record(message["presentation"], "diff.presentation");
-    array(presentation["parts"], "diff.presentation.parts");
-    presentation["parts"].forEach((part, index) => {
-      const item = record(part, `diff.presentation.parts[${index}]`);
-      member(item["kind"], DIFF_KINDS, `diff.presentation.parts[${index}].kind`);
-      count(item["count"], `diff.presentation.parts[${index}].count`);
-      string(item["label"], `diff.presentation.parts[${index}].label`);
-    });
-    count(presentation["copyableFiles"], "diff.presentation.copyableFiles");
   }
   finite(diff["ts"], "diff.diff.ts");
   string(diff["method"], "diff.diff.method");

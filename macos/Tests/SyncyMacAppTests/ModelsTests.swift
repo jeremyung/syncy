@@ -106,6 +106,18 @@ final class ModelsTests: XCTestCase {
     XCTAssertEqual(envelope.provenance?.reachability, .mismatch)
     XCTAssertEqual(envelope.presentation?.parts.first?.label, "not at destination")
     XCTAssertEqual(envelope.presentation?.copyableFiles, 2)
+    XCTAssertEqual(envelope.presentation?.state, .differences)
+  }
+
+  func testDifferenceProtocolDistinguishesNoRecordFromARecordedEmptyCheck() throws {
+    let json =
+      #"{"protocolVersion":1,"type":"diff","generatedAt":1,"unit":"photos","target":"Archive","diff":null,"presentation":{"state":"no-record","title":"No check recorded","detail":"No recorded check for this destination. Run a check to record differences.","parts":[],"copyableFiles":0}}"#
+
+    let envelope = try JSONDecoder().decode(DiffEnvelope.self, from: Data(json.utf8))
+
+    XCTAssertNil(envelope.diff)
+    XCTAssertEqual(envelope.presentation?.state, .noRecord)
+    XCTAssertEqual(envelope.presentation?.title, "No check recorded")
   }
 
   func testSharedJobFixturePreservesMeasuredProgress() throws {

@@ -34,6 +34,7 @@ describe("cross-platform UI contract", () => {
     expect(message.provenance?.current).toBe(false);
     expect(message.provenance).toMatchObject({ identityMatches: false, reachability: "mismatch" });
     expect(message.presentation?.parts[0]?.label).toBe("not at destination");
+    expect(message.presentation?.state).toBe("differences");
   });
 
   test("job events preserve measured and silent progress semantics", () => {

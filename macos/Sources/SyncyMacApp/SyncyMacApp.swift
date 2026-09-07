@@ -23,8 +23,8 @@ struct SyncyMacApp: App {
     .defaultSize(width: 1040, height: 700)
 
     Settings {
-      SettingsView()
-        .frame(width: 560, height: 420)
+      AppSettingsView(model: model)
+        .frame(width: 820, height: 600)
     }
   }
 }
@@ -33,6 +33,7 @@ struct SyncyMacApp: App {
 final class AppModel: ObservableObject {
   @Published var selection: SidebarItem? = .ledger
   @Published var selectedUnitID: UnitSnapshot.ID?
+  @Published private(set) var presentedUnitID: UnitSnapshot.ID?
   @Published private(set) var snapshot: EngineSnapshot?
   @Published private(set) var isLoading = false
   @Published private(set) var isRefreshing = false
@@ -84,6 +85,19 @@ final class AppModel: ObservableObject {
 
   var selectedUnit: UnitSnapshot? {
     snapshot?.units.first { $0.id == selectedUnitID }
+  }
+
+  var presentedUnit: UnitSnapshot? {
+    snapshot?.units.first { $0.id == presentedUnitID }
+  }
+
+  func openFolderRecord(_ id: UnitSnapshot.ID) {
+    selectedUnitID = id
+    presentedUnitID = id
+  }
+
+  func closeFolderRecord() {
+    presentedUnitID = nil
   }
 
   var activeJob: ActiveJobSnapshot? {
@@ -169,6 +183,9 @@ final class AppModel: ObservableObject {
       if next.activeJob == nil { suppressSnapshotJob = false }
       if selectedUnitID == nil || !next.units.contains(where: { $0.id == selectedUnitID }) {
         selectedUnitID = next.units.first?.id
+      }
+      if let presentedUnitID, !next.units.contains(where: { $0.id == presentedUnitID }) {
+        self.presentedUnitID = nil
       }
     } catch {
       engineErrorMessage = error.localizedDescription
@@ -346,6 +363,9 @@ final class AppModel: ObservableObject {
       setupMessage = "Saved"
       if selectedUnitID == nil || !next.units.contains(where: { $0.id == selectedUnitID }) {
         selectedUnitID = next.units.first?.id
+      }
+      if let presentedUnitID, !next.units.contains(where: { $0.id == presentedUnitID }) {
+        self.presentedUnitID = nil
       }
     } catch {
       setupMessage = "Not saved · \(error.localizedDescription)"
@@ -612,26 +632,16 @@ private enum ScheduleRunError: LocalizedError {
 
 enum SidebarItem: String, CaseIterable, Identifiable {
   case ledger = "Ledger"
-  case differences = "Differences"
-  case evidence = "Evidence"
-  case sync = "Sync"
-  case schedules = "Schedules"
-  case history = "History"
-  case setup = "Setup"
-  case diagnostics = "Diagnostics"
+  case activity = "Activity"
+  case settings = "Settings"
 
   var id: String { rawValue }
 
   var symbol: String {
     switch self {
     case .ledger: "list.bullet.rectangle"
-    case .differences: "arrow.left.arrow.right"
-    case .evidence: "doc.text.magnifyingglass"
-    case .sync: "arrow.triangle.2.circlepath"
-    case .schedules: "calendar.badge.clock"
-    case .history: "clock.arrow.circlepath"
-    case .setup: "externaldrive"
-    case .diagnostics: "stethoscope"
+    case .activity: "clock.arrow.circlepath"
+    case .settings: "gearshape"
     }
   }
 }

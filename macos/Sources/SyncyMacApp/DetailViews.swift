@@ -12,6 +12,7 @@ private struct DifferenceGroup: Identifiable {
 
 struct DifferencesView: View {
   @ObservedObject var model: AppModel
+  var showsHeader = true
   @State private var targetName = ""
   @State private var targetUnit = ""
 
@@ -20,7 +21,9 @@ struct DifferencesView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: "Differences", detail: unit?.unit ?? "No folder selected")
+      if showsHeader {
+        PageHeader(title: "Differences", detail: unit?.unit ?? "No folder selected")
+      }
       if let unit {
         VStack(alignment: .leading, spacing: 0) {
           Picker("Destination", selection: $targetName) {
@@ -43,26 +46,30 @@ struct DifferencesView: View {
             envelope.unit == unit.unit, envelope.target == targetName,
             let diff = envelope.diff
           {
-            let reachability = envelope.provenance?.reachability
+            let reachability =
+              envelope.provenance?.reachability
               ?? model.snapshot?.targets.first(where: { $0.name == targetName })?.reachability
             if envelope.provenance?.identityMatches == false || reachability == .mismatch {
               ContentUnavailableView(
                 "Destination identity changed",
                 systemImage: "externaldrive.badge.questionmark",
                 description: Text(
-                  "This listing was recorded against a different volume. Current status is unchecked."))
+                  "This listing was recorded against a different volume. Current status is unchecked."
+                ))
             } else if let reachability, reachability != .ok {
               ContentUnavailableView(
                 "Destination unavailable",
                 systemImage: "externaldrive.badge.questionmark",
                 description: Text(
-                  "\(targetName) is \(reachability.ledgerPhrase). The recorded listing is historical; no current verification is implied."))
+                  "\(targetName) is \(reachability.ledgerPhrase). The recorded listing is historical; no current verification is implied."
+                ))
             } else if envelope.provenance == nil {
               ContentUnavailableView(
                 "Recorded listing has no destination identity",
                 systemImage: "externaldrive.badge.questionmark",
                 description: Text(
-                  "Run a check to establish whether this listing applies to the destination available now."))
+                  "Run a check to establish whether this listing applies to the destination available now."
+                ))
             } else if envelope.provenance?.current == false {
               ContentUnavailableView(
                 "Recorded listing is not current",
@@ -73,17 +80,21 @@ struct DifferencesView: View {
                 "Evidence is stale",
                 systemImage: "clock.badge.exclamationmark",
                 description: Text(
-                  "The source changed after this listing was recorded. Current status is \(unit.cell(for: targetName)?.state.rawValue ?? "unverified")."))
+                  "The source changed after this listing was recorded. Current status is \(unit.cell(for: targetName)?.state.rawValue ?? "unverified")."
+                ))
             } else if diff.wholeFolderMissing {
               ContentUnavailableView(
-                "Whole folder missing",
+                envelope.presentation?.title ?? "Whole folder missing",
                 systemImage: "folder.badge.minus",
-                description: Text("The source holds the files; nothing was itemized at this destination."))
+                description: Text(
+                  envelope.presentation?.detail
+                    ?? "The source holds the files; nothing was itemized at this destination."))
             } else if diff.entries.isEmpty {
               ContentUnavailableView(
-                "No differences",
+                envelope.presentation?.title ?? "No differences",
                 systemImage: "equal.circle",
-                description: Text(cleanDifferenceDescription(diff)))
+                description: Text(
+                  envelope.presentation?.detail ?? cleanDifferenceDescription(diff)))
             } else {
               let groups = differenceGroups(envelope: envelope, diff: diff)
               List {
@@ -109,9 +120,11 @@ struct DifferencesView: View {
                         if entry.sized {
                           Text(
                             ByteCountFormatter.string(
-                              fromByteCount: entry.bytes, countStyle: .file).lowercased())
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(SyncyTheme.secondaryInk)
+                              fromByteCount: entry.bytes, countStyle: .file
+                            ).lowercased()
+                          )
+                          .font(.caption.monospacedDigit())
+                          .foregroundStyle(SyncyTheme.secondaryInk)
                         }
                       }
                       .padding(.vertical, 4)
@@ -127,12 +140,20 @@ struct DifferencesView: View {
                 }
               }
             }
+          } else if let envelope = model.differences,
+            envelope.unit == unit.unit, envelope.target == targetName
+          {
+            ContentUnavailableView(
+              envelope.presentation?.title ?? "No check recorded",
+              systemImage: "arrow.left.arrow.right",
+              description: Text(
+                envelope.presentation?.detail
+                  ?? "No recorded check for this destination. Run a check to record differences."))
           } else {
             ContentUnavailableView(
               "No check recorded",
               systemImage: "arrow.left.arrow.right",
-              description: Text(
-                "No recorded check for \(targetName). Run a check to record differences."))
+              description: Text("No recorded check for this destination."))
           }
         }
         .task(id: query) {
@@ -144,7 +165,9 @@ struct DifferencesView: View {
             targetName = preferredDestination(in: unit) ?? ""
             return
           }
-          if !targetName.isEmpty { await model.loadDifferences(unit: unit.unit, target: targetName) }
+          if !targetName.isEmpty {
+            await model.loadDifferences(unit: unit.unit, target: targetName)
+          }
         }
       } else {
         ContentUnavailableView("No folder selected", systemImage: "arrow.left.arrow.right")
@@ -189,7 +212,9 @@ struct DifferencesView: View {
     for state in needsWork {
       if let match = unit.cells.first(where: {
         $0.state == state && required.contains($0.target)
-      }) { return match.target }
+      }) {
+        return match.target
+      }
     }
     for state in needsWork {
       if let match = unit.cells.first(where: { $0.state == state }) { return match.target }
@@ -229,10 +254,13 @@ struct DifferencesView: View {
 
 struct HistoryView: View {
   @ObservedObject var model: AppModel
+  var showsHeader = true
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: "History", detail: "Literal task outcomes, newest first")
+      if showsHeader {
+        PageHeader(title: "History", detail: "Literal task outcomes, newest first")
+      }
       if model.isLoadingHistory {
         HStack(spacing: SyncySpace.sm) {
           ProgressView().controlSize(.small)
@@ -252,9 +280,12 @@ struct HistoryView: View {
       } else {
         List(model.historyEntries) { entry in
           HStack(alignment: .firstTextBaseline, spacing: 14) {
-            Text(Date(timeIntervalSince1970: entry.ts / 1_000).formatted(date: .abbreviated, time: .shortened))
-              .font(.caption.monospacedDigit())
-              .frame(width: 135, alignment: .leading)
+            Text(
+              Date(timeIntervalSince1970: entry.ts / 1_000).formatted(
+                date: .abbreviated, time: .shortened)
+            )
+            .font(.caption.monospacedDigit())
+            .frame(width: 135, alignment: .leading)
             Text(operationTitle(entry.operation)).frame(width: 92, alignment: .leading)
             VStack(alignment: .leading, spacing: 3) {
               Text("\(entry.unit) → \(entry.target)")
@@ -296,6 +327,7 @@ struct HistoryView: View {
 
 struct SchedulesView: View {
   @ObservedObject var model: AppModel
+  var showsHeader = true
   @State private var operation: EngineCheckOperationValue = .quick
   @State private var unit = ""
   @State private var target = ""
@@ -306,7 +338,9 @@ struct SchedulesView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: "Schedules", detail: "Work runs while Syncy lives in the menu bar")
+      if showsHeader {
+        PageHeader(title: "Schedules", detail: "Work runs while Syncy lives in the menu bar")
+      }
       Form {
         Section("Existing schedules") {
           if model.schedules.isEmpty {
@@ -399,9 +433,9 @@ struct SchedulesView: View {
                 approvedConfigRevision: operation == .sync ? model.snapshot?.configRevision : nil))
           }
           .disabled(
-            model.snapshot == nil ||
-              (operation == .sync &&
-                (unit.isEmpty || target.isEmpty || !acceptsScheduledWrites)))
+            model.snapshot == nil
+              || (operation == .sync && (unit.isEmpty || target.isEmpty || !acceptsScheduledWrites))
+          )
         }
         Section {
           Text(
@@ -431,10 +465,13 @@ struct SchedulesView: View {
 
 struct EvidenceView: View {
   let unit: UnitSnapshot?
+  var showsHeader = true
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: "Evidence", detail: unit?.unit ?? "No folder selected")
+      if showsHeader {
+        PageHeader(title: "Evidence", detail: unit?.unit ?? "No folder selected")
+      }
       if let unit {
         List(unit.cells) { destination in
           Section(destination.target) {
@@ -461,7 +498,9 @@ struct EvidenceView: View {
                 value: checkDescription(check))
               LabeledContent(
                 "Result",
-                value: "\(check.nChanges.formatted()) changes · \(formatBytes(check.bytesPending)) pending")
+                value:
+                  "\(check.nChanges.formatted()) changes · \(formatBytes(check.bytesPending)) pending"
+              )
               if let deep = destination.evidence?.deepCheck, deep.at != check.at {
                 LabeledContent("Last deep verify", value: checkDescription(deep))
               }
@@ -510,11 +549,9 @@ struct SyncConfirmationView: View {
   private var unit: UnitSnapshot? { model.selectedUnit }
   private var eligibleTargets: [String] {
     guard let unit else { return [] }
-    let required = Set(
-      (model.snapshot?.targets ?? []).filter(\.required).map(\.name))
-    let eligible = unit.cells.filter { $0.state == .behind || $0.state == .missing }
-    return eligible.filter { required.contains($0.target) }.map(\.target)
-      + eligible.filter { !required.contains($0.target) }.map(\.target)
+    return unit.cells
+      .filter { $0.state == .behind || $0.state == .missing }
+      .map(\.target)
   }
   private var prepared: SyncPreflight? {
     guard model.syncPreflight?.unit == unit?.unit, model.syncPreflight?.target == targetName else {
@@ -548,8 +585,10 @@ struct SyncConfirmationView: View {
         } else if let prepared {
           Section("Preflight") {
             ForEach(prepared.checks) { check in
-              LabeledContent(check.name, value: "\(check.ok ? "passed" : "blocked") · \(check.detail)")
-                .foregroundStyle(check.ok ? .primary : SyncyTheme.fault)
+              LabeledContent(
+                check.name, value: "\(check.ok ? "passed" : "blocked") · \(check.detail)"
+              )
+              .foregroundStyle(check.ok ? .primary : SyncyTheme.fault)
             }
             LabeledContent(
               prepared.nFiles == nil ? "Changes to transfer" : "Files to transfer",
@@ -557,7 +596,8 @@ struct SyncConfirmationView: View {
             LabeledContent(
               "Bytes to transfer",
               value: ByteCountFormatter.string(
-                fromByteCount: prepared.bytesPending, countStyle: .file).lowercased())
+                fromByteCount: prepared.bytesPending, countStyle: .file
+              ).lowercased())
             LabeledContent("Extra at destination", value: "\(prepared.nExtra) · left unchanged")
           }
           Section("Command") {
@@ -611,6 +651,7 @@ struct SyncConfirmationView: View {
 
 struct SetupView: View {
   @ObservedObject var model: AppModel
+  var showsHeader = true
   @State private var pendingDestination: URL?
   @State private var destinationName = ""
   @State private var destinationToRemove: String?
@@ -619,7 +660,9 @@ struct SetupView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: "Setup", detail: "Source and destinations")
+      if showsHeader {
+        PageHeader(title: "Source & destinations", detail: "Identity and availability")
+      }
       Form {
         Section("Source") {
           LabeledContent("Folder", value: snapshot?.source ?? "Not reported")
@@ -726,7 +769,9 @@ struct SetupView: View {
       }
       Button("Cancel", role: .cancel) { destinationToRemove = nil }
     } message: {
-      Text("No files are deleted. Existing evidence for this destination stops contributing to the ledger.")
+      Text(
+        "No files are deleted. Existing evidence for this destination stops contributing to the ledger."
+      )
     }
   }
 
@@ -750,7 +795,8 @@ struct SettingsView: View {
   var body: some View {
     Form {
       Section("Background") {
-        LabeledContent("Open Syncy at login", value: loginStatus == .enabled ? "Enabled" : "Disabled")
+        LabeledContent(
+          "Open Syncy at login", value: loginStatus == .enabled ? "Enabled" : "Disabled")
         Button(loginStatus == .enabled ? "Disable opening at login" : "Enable opening at login") {
           Task { await changeLoginRegistration() }
         }
@@ -774,7 +820,8 @@ struct SettingsView: View {
         try SMAppService.mainApp.register()
       }
       loginStatus = SMAppService.mainApp.status
-      loginMessage = loginStatus == .enabled ? "Syncy will remain available after login." : "Disabled."
+      loginMessage =
+        loginStatus == .enabled ? "Syncy will remain available after login." : "Disabled."
     } catch {
       loginStatus = SMAppService.mainApp.status
       loginMessage = "Could not change login setting · \(error.localizedDescription)"
@@ -784,10 +831,13 @@ struct SettingsView: View {
 
 struct DiagnosticsView: View {
   @ObservedObject var model: AppModel
+  var showsHeader = true
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: "Diagnostics", detail: "rsync, source, and destination identity")
+      if showsHeader {
+        PageHeader(title: "Diagnostics", detail: "rsync, source, and destination identity")
+      }
       VStack(alignment: .leading, spacing: 16) {
         if model.isRunningDoctor {
           HStack(spacing: 9) {
@@ -813,6 +863,429 @@ struct DiagnosticsView: View {
       .padding(24)
       Spacer()
     }
+  }
+}
+
+private enum FolderRecordSection: String, CaseIterable, Identifiable {
+  case summary = "Summary"
+  case differences = "Differences"
+  case evidence = "Evidence"
+
+  var id: String { rawValue }
+}
+
+struct FolderRecordView: View {
+  @ObservedObject var model: AppModel
+  @State private var section: FolderRecordSection = .summary
+  @State private var showsSyncReview = false
+
+  private var unit: UnitSnapshot? { model.presentedUnit }
+  private var canReviewSync: Bool {
+    unit?.cells.contains { $0.state == .behind || $0.state == .missing } == true
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      if let unit {
+        recordHeader(unit)
+        Divider()
+        Group {
+          switch section {
+          case .summary:
+            FolderSummaryView(unit: unit)
+          case .differences:
+            DifferencesView(model: model, showsHeader: false)
+          case .evidence:
+            EvidenceView(unit: unit, showsHeader: false)
+          }
+        }
+      } else {
+        ContentUnavailableView(
+          "Folder unavailable",
+          systemImage: "folder.badge.questionmark",
+          description: Text("The folder is not present in the current ledger snapshot."))
+      }
+    }
+    .sheet(isPresented: $showsSyncReview) {
+      SyncConfirmationView(model: model)
+        .frame(minWidth: 620, minHeight: 560)
+    }
+  }
+
+  private func recordHeader(_ unit: UnitSnapshot) -> some View {
+    VStack(alignment: .leading, spacing: SyncySpace.lg) {
+      Button {
+        model.closeFolderRecord()
+      } label: {
+        Label("Ledger", systemImage: "chevron.left")
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(SyncyTheme.secondaryInk)
+
+      HStack(alignment: .bottom, spacing: SyncySpace.xl) {
+        VStack(alignment: .leading, spacing: SyncySpace.xs) {
+          Text(unit.unit)
+            .font(.system(.largeTitle, design: .serif, weight: .semibold))
+          Text("\(unit.state.rawValue) · \(unit.reason)")
+            .font(.callout)
+            .foregroundStyle(SyncyTheme.color(for: unit.state))
+            .lineLimit(2)
+        }
+        Spacer()
+        Menu("Check", systemImage: "bolt") {
+          Button("Quick check") {
+            Task { await model.runCheck(.quick, unit: unit.unit) }
+          }
+          Button("Deep verify") {
+            Task { await model.runCheck(.deep, unit: unit.unit) }
+          }
+        }
+        .disabled(model.isLaunchingJob || model.activeJob != nil)
+        if canReviewSync {
+          Button("Review sync…") { showsSyncReview = true }
+            .buttonStyle(.borderedProminent)
+            .tint(SyncyTheme.caution)
+        }
+      }
+
+      Picker("Folder record", selection: $section) {
+        ForEach(FolderRecordSection.allCases) { item in
+          Text(item.rawValue).tag(item)
+        }
+      }
+      .labelsHidden()
+      .pickerStyle(.segmented)
+      .frame(maxWidth: 340)
+    }
+    .padding(.horizontal, SyncySpace.xl)
+    .padding(.top, SyncySpace.lg)
+    .padding(.bottom, SyncySpace.md)
+  }
+}
+
+private struct FolderSummaryView: View {
+  let unit: UnitSnapshot
+
+  var body: some View {
+    Form {
+      Section("Source") {
+        LabeledContent("Files", value: unit.fingerprint.nfiles.formatted())
+        LabeledContent("Size", value: bytes(unit.fingerprint.bytes))
+      }
+      Section("Destinations") {
+        ForEach(unit.cells) { destination in
+          HStack(alignment: .top, spacing: SyncySpace.md) {
+            StateMark(state: destination.state)
+            VStack(alignment: .leading, spacing: SyncySpace.xs) {
+              HStack(alignment: .firstTextBaseline) {
+                Text(destination.target).fontWeight(.medium)
+                Spacer()
+                Text(destination.state.rawValue)
+                  .foregroundStyle(SyncyTheme.color(for: destination.state))
+              }
+              Text(destination.differenceSummary ?? destination.reason)
+                .font(.caption)
+                .foregroundStyle(SyncyTheme.secondaryInk)
+              if destination.nExtra > 0 {
+                Text("\(destination.nExtra.formatted()) only at destination · left unchanged")
+                  .font(.caption)
+                  .foregroundStyle(SyncyTheme.secondaryInk)
+              }
+            }
+          }
+          .padding(.vertical, SyncySpace.xs)
+        }
+      }
+    }
+    .formStyle(.grouped)
+  }
+
+  private func bytes(_ value: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
+  }
+}
+
+private enum ActivitySection: String, CaseIterable, Identifiable {
+  case running = "Running"
+  case schedules = "Schedules"
+  case history = "History"
+
+  var id: String { rawValue }
+}
+
+struct ActivityView: View {
+  @ObservedObject var model: AppModel
+  @State private var section: ActivitySection = .running
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(alignment: .bottom, spacing: SyncySpace.xl) {
+        VStack(alignment: .leading, spacing: SyncySpace.xs) {
+          Text("Activity")
+            .font(.system(.largeTitle, design: .serif, weight: .semibold))
+          Text("Engine work and its recorded outcomes")
+            .font(.callout)
+            .foregroundStyle(SyncyTheme.secondaryInk)
+        }
+        Spacer()
+        Picker("Activity", selection: $section) {
+          ForEach(ActivitySection.allCases) { item in
+            Text(item.rawValue).tag(item)
+          }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 300)
+      }
+      .padding(SyncySpace.xl)
+
+      Divider()
+      switch section {
+      case .running:
+        RunningActivityView(model: model)
+      case .schedules:
+        SchedulesView(model: model, showsHeader: false)
+      case .history:
+        HistoryView(model: model, showsHeader: false)
+      }
+    }
+  }
+}
+
+private struct RunningActivityView: View {
+  @ObservedObject var model: AppModel
+
+  var body: some View {
+    if let job = model.activeJob {
+      ScrollView {
+        ActiveTaskView(job: job, model: model)
+          .padding(SyncySpace.xl)
+      }
+    } else if model.isLaunchingJob {
+      HStack(spacing: SyncySpace.sm) {
+        ProgressView().controlSize(.small)
+        Text("Starting engine work")
+      }
+      .padding(SyncySpace.xl)
+    } else {
+      ContentUnavailableView(
+        "No work running",
+        systemImage: "clock",
+        description: Text("Scheduled and completed work remain available in this view."))
+    }
+  }
+}
+
+private struct ActiveTaskView: View {
+  let job: ActiveJobSnapshot
+  @ObservedObject var model: AppModel
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      VStack(alignment: .leading, spacing: SyncySpace.lg) {
+        HStack(alignment: .top, spacing: SyncySpace.lg) {
+          VStack(alignment: .leading, spacing: SyncySpace.xs) {
+            Text(title).font(.headline)
+            if let activity = job.activity {
+              Text("\(activity.unit) → \(activity.target)")
+                .foregroundStyle(SyncyTheme.secondaryInk)
+            }
+          }
+          Spacer()
+          if model.canCancelOwnedJob {
+            Button(model.isCancellingJob ? "Cancelling…" : "Cancel…", role: .destructive) {
+              model.cancelOwnedJob()
+            }
+            .disabled(model.isCancellingJob)
+          }
+        }
+
+        Text(elapsed(at: context.date))
+          .font(.system(.title, design: .monospaced, weight: .semibold))
+          .monospacedDigit()
+
+        if let activity = job.activity {
+          if let seen = activity.filesSeen, let total = activity.filesTotal, total > 0 {
+            ProgressView(value: Double(seen), total: Double(total))
+            Text("\(seen.formatted()) of \(total.formatted()) files observed")
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(SyncyTheme.secondaryInk)
+          } else if let done = activity.bytesDone, let total = activity.bytesTotal, total > 0 {
+            ProgressView(value: Double(done), total: Double(total))
+            Text("\(bytes(done)) of \(bytes(total)) observed · rsync measured")
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(SyncyTheme.secondaryInk)
+          } else {
+            Text("\(phase(activity.phase)) · engine work is running · no measured percentage")
+              .font(.caption.monospacedDigit())
+              .foregroundStyle(SyncyTheme.secondaryInk)
+          }
+          Text("Last engine event \(age(since: activity.at, at: context.date))")
+            .font(.caption)
+            .foregroundStyle(SyncyTheme.quietInk)
+          if let item = activity.lastItem, !item.isEmpty {
+            Text(item)
+              .font(.caption.monospaced())
+              .foregroundStyle(SyncyTheme.quietInk)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
+        } else {
+          Text("Waiting for the first engine event · no measured percentage")
+            .font(.caption)
+            .foregroundStyle(SyncyTheme.secondaryInk)
+        }
+      }
+      .frame(maxWidth: 680, alignment: .leading)
+    }
+  }
+
+  private var title: String {
+    let operation =
+      switch job.operation {
+      case "deep": "Deep verify"
+      case "quick": "Quick check"
+      case "sync": "Sync"
+      case "setup": "Setup"
+      default: job.operation
+      }
+    if let position = job.batchPosition, let total = job.batchTotal, total > 1 {
+      return "\(operation) · folder \(position.formatted()) of \(total.formatted())"
+    }
+    return operation
+  }
+
+  private func elapsed(at date: Date) -> String {
+    let seconds = max(0, Int(date.timeIntervalSince1970 - job.startedAt / 1_000))
+    if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m elapsed" }
+    if seconds >= 60 { return "\(seconds / 60)m \(seconds % 60)s elapsed" }
+    return "\(seconds)s elapsed"
+  }
+
+  private func age(since milliseconds: Double, at date: Date) -> String {
+    let seconds = max(0, Int(date.timeIntervalSince1970 - milliseconds / 1_000))
+    if seconds < 5 { return "just now" }
+    if seconds < 60 { return "\(seconds)s ago" }
+    return "\(seconds / 60)m ago"
+  }
+
+  private func phase(_ value: String) -> String {
+    value.replacingOccurrences(of: "-", with: " ")
+  }
+
+  private func bytes(_ value: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
+  }
+}
+
+private enum AppSettingsSection: String, CaseIterable, Identifiable {
+  case storage = "Source & destinations"
+  case general = "General"
+  case notifications = "Notifications"
+  case diagnostics = "Diagnostics"
+
+  var id: String { rawValue }
+
+  var symbol: String {
+    switch self {
+    case .storage: "externaldrive"
+    case .general: "gearshape"
+    case .notifications: "bell"
+    case .diagnostics: "stethoscope"
+    }
+  }
+}
+
+struct AppSettingsView: View {
+  @ObservedObject var model: AppModel
+  @State private var section: AppSettingsSection? = .storage
+
+  var body: some View {
+    HStack(spacing: 0) {
+      List(AppSettingsSection.allCases, selection: $section) { item in
+        Label(item.rawValue, systemImage: item.symbol).tag(item)
+      }
+      .listStyle(.sidebar)
+      .frame(minWidth: 190, idealWidth: 210, maxWidth: 230)
+
+      Divider()
+      VStack(alignment: .leading, spacing: 0) {
+        PageHeader(title: selectedSection.rawValue, detail: sectionDetail)
+        switch selectedSection {
+        case .storage:
+          SetupView(model: model, showsHeader: false)
+        case .general:
+          GeneralSettingsPane()
+        case .notifications:
+          NotificationSettingsPane()
+        case .diagnostics:
+          DiagnosticsView(model: model, showsHeader: false)
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+  }
+
+  private var selectedSection: AppSettingsSection { section ?? .storage }
+
+  private var sectionDetail: String {
+    switch selectedSection {
+    case .storage: "Identity and availability"
+    case .general: "Background availability"
+    case .notifications: "Recorded task outcomes"
+    case .diagnostics: "rsync, source, and destination identity"
+    }
+  }
+}
+
+private struct GeneralSettingsPane: View {
+  @State private var loginStatus = SMAppService.mainApp.status
+  @State private var loginMessage: String?
+
+  var body: some View {
+    Form {
+      Section("Background") {
+        LabeledContent("Open at login", value: loginStatus == .enabled ? "Enabled" : "Disabled")
+        Button(loginStatus == .enabled ? "Disable" : "Enable") {
+          Task { await changeLoginRegistration() }
+        }
+        if let loginMessage {
+          Text(loginMessage).font(.caption).foregroundStyle(SyncyTheme.secondaryInk)
+        }
+      }
+    }
+    .formStyle(.grouped)
+  }
+
+  private func changeLoginRegistration() async {
+    do {
+      if SMAppService.mainApp.status == .enabled {
+        try await SMAppService.mainApp.unregister()
+      } else {
+        try SMAppService.mainApp.register()
+      }
+      loginStatus = SMAppService.mainApp.status
+      loginMessage =
+        loginStatus == .enabled ? "Syncy will remain available after login." : "Disabled."
+    } catch {
+      loginStatus = SMAppService.mainApp.status
+      loginMessage = "Could not change login setting · \(error.localizedDescription)"
+    }
+  }
+}
+
+private struct NotificationSettingsPane: View {
+  @AppStorage("notify-problems") private var notifyProblems = true
+  @AppStorage("notify-success") private var notifySuccess = false
+
+  var body: some View {
+    Form {
+      Section("Notify after") {
+        Toggle("Failed and skipped tasks", isOn: $notifyProblems)
+        Toggle("Completed tasks", isOn: $notifySuccess)
+      }
+    }
+    .formStyle(.grouped)
   }
 }
 

@@ -6,24 +6,21 @@ struct LedgerWindow: View {
 
   var body: some View {
     NavigationSplitView {
-      List(SidebarItem.allCases, selection: $model.selection) { item in
+      List(SidebarItem.allCases, selection: sidebarSelection) { item in
         Label(item.rawValue, systemImage: item.symbol)
           .tag(item)
       }
       .navigationSplitViewColumnWidth(min: 176, ideal: 196)
     } detail: {
       Group {
-        switch model.selection ?? .ledger {
-        case .ledger: LedgerView(model: model)
-        case .differences: DifferencesView(model: model)
-        case .evidence: EvidenceView(unit: model.selectedUnit)
-        case .sync:
-          SyncConfirmationView(model: model)
-        case .schedules: SchedulesView(model: model)
-        case .history: HistoryView(model: model)
-        case .setup: SetupView(model: model)
-        case .diagnostics:
-          DiagnosticsView(model: model)
+        if model.presentedUnit != nil {
+          FolderRecordView(model: model)
+        } else {
+          switch model.selection ?? .ledger {
+          case .ledger: LedgerView(model: model)
+          case .activity: ActivityView(model: model)
+          case .settings: AppSettingsView(model: model)
+          }
         }
       }
       .background(SyncyTheme.paper)
@@ -40,12 +37,23 @@ struct LedgerWindow: View {
     .task { await model.loadIfNeeded() }
   }
 
+  private var sidebarSelection: Binding<SidebarItem?> {
+    Binding(
+      get: { model.selection },
+      set: { next in
+        model.closeFolderRecord()
+        model.selection = next
+      })
+  }
+
   private var footerText: String {
     if model.activeJob != nil { return "Engine work is running" }
     if model.isLaunchingJob { return "Starting engine job" }
     if model.isLoading, model.snapshot == nil { return "Reading engine snapshot" }
     if let error = model.engineErrorMessage ?? model.errorMessage { return error }
-    return model.snapshot == nil ? "No snapshot loaded" : "Engine snapshot loaded"
+    guard let snapshot = model.snapshot else { return "No snapshot loaded" }
+    let verified = snapshot.units.filter { $0.state == .verified }.count
+    return "\(verified) of \(snapshot.units.count) folders verified"
   }
 
   private func formatted(date milliseconds: Double) -> String {
@@ -73,7 +81,8 @@ private struct LedgerView: View {
       } else if let snapshot = model.snapshot {
         LedgerGrid(
           snapshot: snapshot,
-          selection: $model.selectedUnitID
+          selection: model.selectedUnitID,
+          open: model.openFolderRecord
         )
         if let activeJob = model.activeJob {
           LedgerJobStrip(job: activeJob, model: model)
@@ -90,26 +99,34 @@ private struct LedgerView: View {
     }
     .toolbar {
       ToolbarItemGroup {
-        Button("Refresh", systemImage: "arrow.clockwise") {
-          Task { await model.refresh() }
-        }
-        .disabled(model.isRefreshing)
-        Menu("Quick check", systemImage: "bolt") {
-          Button("Selected folder") {
-            Task { await model.runCheck(.quick, unit: model.selectedUnit?.unit) }
+        Menu("Check", systemImage: "checkmark.circle") {
+          Menu("Selected folder") {
+            Button("Quick check") {
+              Task { await model.runCheck(.quick, unit: model.selectedUnit?.unit) }
+            }
+            Button("Deep verify") {
+              Task { await model.runCheck(.deep, unit: model.selectedUnit?.unit) }
+            }
           }
           .disabled(model.selectedUnit == nil)
-          Button("All folders") { Task { await model.runCheck(.quick) } }
-        }
-        .disabled(model.isLaunchingJob || model.activeJob != nil || model.snapshot == nil)
-        Menu("Deep verify", systemImage: "checkmark.seal") {
-          Button("Selected folder") {
-            Task { await model.runCheck(.deep, unit: model.selectedUnit?.unit) }
+
+          Menu("All folders") {
+            Button("Quick check") { Task { await model.runCheck(.quick) } }
+            Button("Deep verify") { Task { await model.runCheck(.deep) } }
           }
-          .disabled(model.selectedUnit == nil)
-          Button("All folders") { Task { await model.runCheck(.deep) } }
         }
         .disabled(model.isLaunchingJob || model.activeJob != nil || model.snapshot == nil)
+
+        Menu {
+          Button("Refresh snapshot", systemImage: "arrow.clockwise") {
+            Task { await model.refresh() }
+          }
+          .disabled(model.isRefreshing)
+        } label: {
+          Label("More actions", systemImage: "ellipsis.circle")
+            .labelStyle(.iconOnly)
+        }
+        .accessibilityLabel("More actions")
       }
     }
   }
@@ -139,11 +156,9 @@ private struct LedgerJobStrip: View {
             .foregroundStyle(SyncyTheme.secondaryInk)
         }
         Spacer()
-        if model.canCancelOwnedJob {
-          Button(model.isCancellingJob ? "Cancelling…" : "Cancel…", role: .destructive) {
-            model.cancelOwnedJob()
-          }
-          .disabled(model.isCancellingJob)
+        Button("View") {
+          model.closeFolderRecord()
+          model.selection = .activity
         }
       }
       .padding(.horizontal, SyncySpace.lg)
@@ -190,13 +205,12 @@ private struct LedgerJobStrip: View {
 
 private struct LedgerGrid: View {
   let snapshot: EngineSnapshot
-  @Binding var selection: UnitSnapshot.ID?
+  let selection: UnitSnapshot.ID?
+  let open: (UnitSnapshot.ID) -> Void
 
   private let stateWidth: CGFloat = 32
-  private let unitWidth: CGFloat = 220
-  private let sizeWidth: CGFloat = 84
-  private let filesWidth: CGFloat = 84
-  private let destinationWidth: CGFloat = 220
+  private let unitWidth: CGFloat = 270
+  private let destinationWidth: CGFloat = 230
 
   var body: some View {
     ScrollView([.horizontal, .vertical]) {
@@ -216,8 +230,6 @@ private struct LedgerGrid: View {
     HStack(spacing: 0) {
       Text("").frame(width: stateWidth)
       HeaderCell("Folder", width: unitWidth)
-      HeaderCell("Size", width: sizeWidth, alignment: .trailing)
-      HeaderCell("Files", width: filesWidth, alignment: .trailing)
       ForEach(snapshot.targets) { target in
         HeaderCell(target.name, width: destinationWidth, leadingInset: 20)
       }
@@ -232,20 +244,12 @@ private struct LedgerGrid: View {
       StateMark(state: unit.state).frame(width: stateWidth)
       VStack(alignment: .leading, spacing: 3) {
         Text(unit.unit).fontWeight(.medium).lineLimit(1)
-        Text(unit.reason).font(.caption).foregroundStyle(SyncyTheme.secondaryInk).lineLimit(1)
+        Text(folderFacts(unit))
+          .font(.caption.monospacedDigit())
+          .foregroundStyle(SyncyTheme.secondaryInk)
+          .lineLimit(1)
       }
       .frame(width: unitWidth, alignment: .leading)
-      Text(
-        ByteCountFormatter.string(fromByteCount: unit.fingerprint.bytes, countStyle: .file)
-          .lowercased()
-      )
-      .monospacedDigit()
-      .foregroundStyle(SyncyTheme.secondaryInk)
-      .frame(width: sizeWidth, alignment: .trailing)
-      Text(unit.fingerprint.nfiles.formatted())
-        .monospacedDigit()
-        .foregroundStyle(SyncyTheme.secondaryInk)
-        .frame(width: filesWidth, alignment: .trailing)
       ForEach(snapshot.targets) { target in
         DestinationCell(destination: unit.cell(for: target.name))
           .frame(width: destinationWidth, alignment: .leading)
@@ -255,18 +259,24 @@ private struct LedgerGrid: View {
     .frame(minHeight: 58)
     .background(selection == unit.id ? SyncyTheme.selection : Color.clear)
     .contentShape(Rectangle())
-    .onTapGesture { selection = unit.id }
+    .onTapGesture { open(unit.id) }
     .accessibilityElement(children: .combine)
     .accessibilityLabel("\(unit.unit), \(unit.state.rawValue), \(unit.reason)")
     .accessibilityAddTraits(.isButton)
     .accessibilityAddTraits(
       selection == unit.id ? .isSelected : AccessibilityTraits())
-    .accessibilityAction { selection = unit.id }
+    .accessibilityAction { open(unit.id) }
+  }
+
+  private func folderFacts(_ unit: UnitSnapshot) -> String {
+    let size = ByteCountFormatter.string(
+      fromByteCount: unit.fingerprint.bytes, countStyle: .file
+    ).lowercased()
+    return "\(size) · \(unit.fingerprint.nfiles.formatted()) files"
   }
 
   private var totalWidth: CGFloat {
-    stateWidth + unitWidth + sizeWidth + filesWidth
-      + CGFloat(snapshot.targets.count) * destinationWidth + 32
+    stateWidth + unitWidth + CGFloat(snapshot.targets.count) * destinationWidth + 32
   }
 }
 
