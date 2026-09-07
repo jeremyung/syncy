@@ -220,9 +220,13 @@ final class AppModel: ObservableObject {
         ? "Check cancelled · no verification was recorded"
         : jobOutcomeProblems.joined(separator: " · ")
     } catch {
+      // The engine exits non-zero when a destination failed, but the reason
+      // already arrived on the event stream. Reporting only the exit status
+      // would replace "photos → archive failed · <rsync said>" with a number.
       let message = error.localizedDescription
       await refresh()
-      errorMessage = message
+      errorMessage =
+        jobOutcomeProblems.isEmpty ? message : jobOutcomeProblems.joined(separator: " · ")
     }
   }
 
@@ -282,7 +286,12 @@ final class AppModel: ObservableObject {
           ? "Sync cancelled · no verification was recorded"
           : self.jobOutcomeProblems.joined(separator: " · ")
       } catch {
-        outcomeMessage = error.localizedDescription
+        // Same as the cancellation case above: what the engine reported about
+        // the transfer outranks the exit status it happened to leave with.
+        outcomeMessage =
+          self.jobOutcomeProblems.isEmpty
+          ? error.localizedDescription
+          : self.jobOutcomeProblems.joined(separator: " · ")
       }
       await self.refresh()
       if let outcomeMessage { self.errorMessage = outcomeMessage }
