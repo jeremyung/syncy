@@ -30,18 +30,15 @@ struct DifferencesView: View {
             ForEach(unit.cells) { cell in Text(cell.target).tag(cell.target) }
           }
           .frame(maxWidth: 420)
-          .padding(20)
+          .padding(.horizontal, SyncySpace.gutter)
+          .padding(.vertical, SyncySpace.lg)
           if model.isLoadingDifferences {
-            HStack(spacing: SyncySpace.sm) {
-              ProgressView().controlSize(.small)
-              Text("Reading recorded differences")
-            }
-            .padding(SyncySpace.xl)
+            PaneNotice(title: "Reading recorded differences", isWorking: true)
           } else if let error = model.differencesErrorMessage {
-            ContentUnavailableView(
-              "Differences unavailable",
-              systemImage: "exclamationmark.triangle",
-              description: Text(error))
+            PaneNotice(
+              title: "Differences unavailable",
+              detail: error,
+              symbol: "exclamationmark.triangle")
           } else if let envelope = model.differences,
             envelope.unit == unit.unit, envelope.target == targetName,
             let diff = envelope.diff
@@ -50,51 +47,45 @@ struct DifferencesView: View {
               envelope.provenance?.reachability
               ?? model.snapshot?.targets.first(where: { $0.name == targetName })?.reachability
             if envelope.provenance?.identityMatches == false || reachability == .mismatch {
-              ContentUnavailableView(
-                "Destination identity changed",
-                systemImage: "externaldrive.badge.questionmark",
-                description: Text(
-                  "This listing was recorded against a different volume. Current status is unchecked."
-                ))
+              PaneNotice(
+                title: "Destination identity changed",
+                detail:
+                  "This listing was recorded against a different volume. Current status is unchecked.",
+                symbol: "externaldrive.badge.questionmark")
             } else if let reachability, reachability != .ok {
-              ContentUnavailableView(
-                "Destination unavailable",
-                systemImage: "externaldrive.badge.questionmark",
-                description: Text(
-                  "\(targetName) is \(reachability.ledgerPhrase). The recorded listing is historical; no current verification is implied."
-                ))
+              PaneNotice(
+                title: "Destination unavailable",
+                detail:
+                  "\(targetName) is \(reachability.ledgerPhrase). The recorded listing is historical; no current verification is implied.",
+                symbol: "externaldrive.badge.questionmark")
             } else if envelope.provenance == nil {
-              ContentUnavailableView(
-                "Recorded listing has no destination identity",
-                systemImage: "externaldrive.badge.questionmark",
-                description: Text(
-                  "Run a check to establish whether this listing applies to the destination available now."
-                ))
+              PaneNotice(
+                title: "Recorded listing has no destination identity",
+                detail:
+                  "Run a check to establish whether this listing applies to the destination available now.",
+                symbol: "externaldrive.badge.questionmark")
             } else if envelope.provenance?.current == false {
-              ContentUnavailableView(
-                "Recorded listing is not current",
-                systemImage: "clock.badge.exclamationmark",
-                description: Text("No current verification is implied."))
+              PaneNotice(
+                title: "Recorded listing is not current",
+                detail: "No current verification is implied.",
+                symbol: "clock.badge.exclamationmark")
             } else if sourceChanged(since: diff, current: unit.fingerprint) {
-              ContentUnavailableView(
-                "Evidence is stale",
-                systemImage: "clock.badge.exclamationmark",
-                description: Text(
-                  "The source changed after this listing was recorded. Current status is \(unit.cell(for: targetName)?.state.rawValue ?? "unverified")."
-                ))
+              PaneNotice(
+                title: "Evidence is stale",
+                detail:
+                  "The source changed after this listing was recorded. Current status is \(unit.cell(for: targetName)?.state.rawValue ?? "unverified").",
+                symbol: "clock.badge.exclamationmark")
             } else if diff.wholeFolderMissing {
-              ContentUnavailableView(
-                envelope.presentation?.title ?? "Whole folder missing",
-                systemImage: "folder.badge.minus",
-                description: Text(
-                  envelope.presentation?.detail
-                    ?? "The source holds the files; nothing was itemized at this destination."))
+              PaneNotice(
+                title: envelope.presentation?.title ?? "Whole folder missing",
+                detail: envelope.presentation?.detail
+                  ?? "The source holds the files; nothing was itemized at this destination.",
+                symbol: "folder.badge.minus")
             } else if diff.entries.isEmpty {
-              ContentUnavailableView(
-                envelope.presentation?.title ?? "No differences",
-                systemImage: "equal.circle",
-                description: Text(
-                  envelope.presentation?.detail ?? cleanDifferenceDescription(diff)))
+              PaneNotice(
+                title: envelope.presentation?.title ?? "No differences",
+                detail: envelope.presentation?.detail ?? cleanDifferenceDescription(diff),
+                symbol: "equal.circle")
             } else {
               let groups = differenceGroups(envelope: envelope, diff: diff)
               List {
@@ -114,7 +105,7 @@ struct DifferencesView: View {
                 ForEach(groups) { group in
                   Section("\(group.label) · \(group.count.formatted())") {
                     ForEach(diff.entries.filter { $0.kind == group.kind }) { entry in
-                      HStack(alignment: .firstTextBaseline, spacing: 12) {
+                      HStack(alignment: .firstTextBaseline, spacing: SyncySpace.md) {
                         Text(entry.name).textSelection(.enabled)
                         Spacer()
                         if entry.sized {
@@ -127,33 +118,37 @@ struct DifferencesView: View {
                           .foregroundStyle(SyncyTheme.secondaryInk)
                         }
                       }
-                      .padding(.vertical, 4)
+                      .padding(.vertical, SyncySpace.xs)
                     }
                   }
                 }
               }
-              .overlay(alignment: .bottomTrailing) {
+              .listStyle(.inset)
+              .overlay(alignment: .bottom) {
                 if diff.truncated > 0 {
                   Text("\(diff.truncated) more not stored · counts remain exact")
                     .font(.caption)
-                    .padding(10)
+                    .foregroundStyle(SyncyTheme.secondaryInk)
+                    .padding(.horizontal, SyncySpace.md)
+                    .padding(.vertical, SyncySpace.sm)
+                    .background(.bar, in: Capsule())
+                    .padding(.bottom, SyncySpace.md)
                 }
               }
             }
           } else if let envelope = model.differences,
             envelope.unit == unit.unit, envelope.target == targetName
           {
-            ContentUnavailableView(
-              envelope.presentation?.title ?? "No check recorded",
-              systemImage: "arrow.left.arrow.right",
-              description: Text(
-                envelope.presentation?.detail
-                  ?? "No recorded check for this destination. Run a check to record differences."))
+            PaneNotice(
+              title: envelope.presentation?.title ?? "No check recorded",
+              detail: envelope.presentation?.detail
+                ?? "No recorded check for this destination. Run a check to record differences.",
+              symbol: "arrow.left.arrow.right")
           } else {
-            ContentUnavailableView(
-              "No check recorded",
-              systemImage: "arrow.left.arrow.right",
-              description: Text("No recorded check for this destination."))
+            PaneNotice(
+              title: "No check recorded",
+              detail: "No recorded check for this destination.",
+              symbol: "arrow.left.arrow.right")
           }
         }
         .task(id: query) {
@@ -170,7 +165,10 @@ struct DifferencesView: View {
           }
         }
       } else {
-        ContentUnavailableView("No folder selected", systemImage: "arrow.left.arrow.right")
+        PaneNotice(
+          title: "No folder selected",
+          detail: "Choose a folder in the ledger to read its recorded differences.",
+          symbol: "arrow.left.arrow.right")
       }
     }
   }
@@ -262,24 +260,18 @@ struct HistoryView: View {
         PageHeader(title: "History", detail: "Literal task outcomes, newest first")
       }
       if model.isLoadingHistory {
-        HStack(spacing: SyncySpace.sm) {
-          ProgressView().controlSize(.small)
-          Text("Reading task history")
-        }
-        .padding(SyncySpace.xl)
+        PaneNotice(title: "Reading task history", isWorking: true)
       } else if let error = model.historyErrorMessage {
-        ContentUnavailableView(
-          "History unavailable",
-          systemImage: "exclamationmark.triangle",
-          description: Text(error))
+        PaneNotice(
+          title: "History unavailable", detail: error, symbol: "exclamationmark.triangle")
       } else if model.historyEntries.isEmpty {
-        ContentUnavailableView(
-          "No task outcomes",
-          systemImage: "clock.arrow.circlepath",
-          description: Text("Nothing has run yet."))
+        PaneNotice(
+          title: "No task outcomes",
+          detail: "Nothing has run yet.",
+          symbol: "clock.arrow.circlepath")
       } else {
         List(model.historyEntries) { entry in
-          HStack(alignment: .firstTextBaseline, spacing: 14) {
+          HStack(alignment: .firstTextBaseline, spacing: SyncySpace.lg) {
             Text(
               Date(timeIntervalSince1970: entry.ts / 1_000).formatted(
                 date: .abbreviated, time: .shortened)
@@ -287,7 +279,7 @@ struct HistoryView: View {
             .font(.caption.monospacedDigit())
             .frame(width: 135, alignment: .leading)
             Text(operationTitle(entry.operation)).frame(width: 92, alignment: .leading)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: SyncySpace.xs) {
               Text("\(entry.unit) → \(entry.target)")
               if let detail = entry.detail {
                 Text(detail).font(.caption).foregroundStyle(SyncyTheme.secondaryInk)
@@ -298,8 +290,9 @@ struct HistoryView: View {
               .font(.callout.weight(.medium))
               .foregroundStyle(outcomeColor(entry.outcome))
           }
-          .padding(.vertical, 4)
+          .padding(.vertical, SyncySpace.xs)
         }
+        .listStyle(.inset)
         .refreshable { await model.loadHistory() }
       }
     }
@@ -355,7 +348,7 @@ struct SchedulesView: View {
                   set: { model.setScheduleEnabled(id: schedule.id, enabled: $0) }
                 )
               ) {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: SyncySpace.xs) {
                   Text(scheduleTitle(schedule))
                   Text(scheduleDescription(schedule))
                     .font(.caption)
@@ -369,8 +362,7 @@ struct SchedulesView: View {
                   }
                 }
               }
-              Button("Remove", role: .destructive) { model.removeSchedule(id: schedule.id) }
-                .buttonStyle(.link)
+              Spacer(minLength: SyncySpace.lg)
               if schedule.operation == .sync,
                 !schedule.isApproved(forConfigRevision: model.snapshot?.configRevision)
               {
@@ -378,10 +370,12 @@ struct SchedulesView: View {
                   .buttonStyle(.link)
                   .help("Configuration changed; approve this exact source and destination setup")
               }
+              Button("Remove", role: .destructive) { model.removeSchedule(id: schedule.id) }
+                .buttonStyle(.link)
             }
           }
         }
-        Section("New schedule") {
+        Section {
           Picker("Work", selection: $operation) {
             Text("Quick check").tag(EngineCheckOperationValue.quick)
             Text("Deep verify").tag(EngineCheckOperationValue.deep)
@@ -406,6 +400,7 @@ struct SchedulesView: View {
             )
             .font(.caption)
             .foregroundStyle(SyncyTheme.secondaryInk)
+            .fixedSize(horizontal: false, vertical: true)
           }
           Picker("Cadence", selection: $cadence) {
             Text("Daily").tag(ScheduleCadence.daily)
@@ -436,12 +431,12 @@ struct SchedulesView: View {
             model.snapshot == nil
               || (operation == .sync && (unit.isEmpty || target.isEmpty || !acceptsScheduledWrites))
           )
-        }
-        Section {
+        } header: {
+          Text("New schedule")
+        } footer: {
           Text(
             "Schedules run whenever the Mac and Syncy are awake, including on battery. After sleep, Syncy runs the latest missed occurrence once. A destination that is not connected is recorded as skipped, not completed."
           )
-          .foregroundStyle(SyncyTheme.secondaryInk)
         }
       }
       .formStyle(.grouped)
@@ -475,9 +470,9 @@ struct EvidenceView: View {
       if let unit {
         List(unit.cells) { destination in
           Section(destination.target) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: SyncySpace.md) {
               StateMark(state: destination.state)
-              VStack(alignment: .leading, spacing: 7) {
+              VStack(alignment: .leading, spacing: SyncySpace.sm) {
                 Text(destination.state.rawValue)
                   .font(.headline)
                   .foregroundStyle(SyncyTheme.color(for: destination.state))
@@ -578,10 +573,7 @@ struct SyncConfirmationView: View {
         }
 
         if model.isPreparingSync {
-          HStack(spacing: 9) {
-            ProgressView().controlSize(.small)
-            Text("Checking identity, free space, and command")
-          }
+          WorkingNotice(text: "Checking identity, free space, and command")
         } else if let prepared {
           Section("Preflight") {
             ForEach(prepared.checks) { check in
@@ -633,7 +625,6 @@ struct SyncConfirmationView: View {
               model.startPreparedSync()
             }
             .buttonStyle(.borderedProminent)
-            .tint(SyncyTheme.caution)
             .disabled(prepared?.ok != true || !reviewed || model.activeJob != nil)
             .help("Requires a fresh preflight and explicit review")
           }
@@ -646,6 +637,46 @@ struct SyncConfirmationView: View {
       reviewed = false
       model.clearSyncPreflight()
     }
+  }
+}
+
+/// Name and status stack on the leading edge so the actions stay flush right no
+/// matter how long a reachability phrase runs. The sentinel is a fact about the
+/// destination, so it is reported on the status line; only the missing case is
+/// something to act on.
+private struct DestinationRow: View {
+  let target: TargetSnapshot
+  let isBusy: Bool
+  let adopt: () -> Void
+  let remove: () -> Void
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: SyncySpace.lg) {
+      VStack(alignment: .leading, spacing: SyncySpace.xs) {
+        Text(target.name)
+        Text(status)
+          .font(.caption)
+          .foregroundStyle(SyncyTheme.secondaryInk)
+      }
+      Spacer(minLength: SyncySpace.lg)
+      if !target.usesSentinel {
+        Button("Add sentinel", action: adopt)
+          .buttonStyle(.link)
+          .disabled(isBusy)
+          .help("Write Syncy's identity sentinel through rsync and record it in configuration")
+      }
+      Button("Remove…", role: .destructive, action: remove)
+        .buttonStyle(.link)
+        .disabled(isBusy)
+    }
+    .padding(.vertical, SyncySpace.xs)
+  }
+
+  private var status: String {
+    let reachability = target.reachabilityPhrase ?? target.reachability.ledgerPhrase
+    let requirement = target.required ? "required" : "optional"
+    let sentinel = target.usesSentinel ? "sentinel recorded" : "no sentinel"
+    return "\(reachability) · \(requirement) · \(sentinel)"
   }
 }
 
@@ -673,35 +704,18 @@ struct SetupView: View {
           }
           .disabled(model.isUpdatingSetup || model.activeJob != nil)
         }
-        Section("Destinations") {
+        Section {
           if let targets = snapshot?.targets, !targets.isEmpty {
             ForEach(targets) { target in
-              HStack {
-                LabeledContent(
-                  target.name,
-                  value:
-                    "\(target.reachabilityPhrase ?? target.reachability.ledgerPhrase) · \(target.required ? "required" : "optional")"
-                )
-                Button("Remove…", role: .destructive) { destinationToRemove = target.name }
-                  .buttonStyle(.link)
-                  .disabled(model.isUpdatingSetup || model.activeJob != nil)
-                if target.usesSentinel {
-                  Text("sentinel recorded")
-                    .font(.caption)
-                    .foregroundStyle(SyncyTheme.secondaryInk)
-                } else {
-                  Button("Add sentinel") {
-                    Task { await model.adoptDestination(name: target.name) }
-                  }
-                  .buttonStyle(.link)
-                  .disabled(model.isUpdatingSetup || model.activeJob != nil)
-                  .help(
-                    "Write Syncy's identity sentinel through rsync and record it in configuration")
-                }
-              }
+              DestinationRow(
+                target: target,
+                isBusy: model.isUpdatingSetup || model.activeJob != nil,
+                adopt: { Task { await model.adoptDestination(name: target.name) } },
+                remove: { destinationToRemove = target.name })
             }
           } else {
             Text("No destinations reported")
+              .foregroundStyle(SyncyTheme.secondaryInk)
           }
           Button("Choose destination folder…") {
             guard let url = chooseFolder(prompt: "Choose a mounted destination") else { return }
@@ -711,6 +725,12 @@ struct SetupView: View {
           .disabled(
             snapshot?.source.isEmpty != false || model.isUpdatingSetup
               || model.activeJob != nil)
+        } header: {
+          Text("Destinations")
+        } footer: {
+          Text(
+            "Volume identity and filesystem capability probes are performed by the Syncy engine. This interface does not write to a source or destination."
+          )
         }
         if let pendingDestination {
           Section("Add destination") {
@@ -737,17 +757,12 @@ struct SetupView: View {
             }
           }
         }
-        Section {
-          Text(
-            "Volume identity and filesystem capability probes are performed by the Syncy engine. This interface does not write to a source or destination."
-          )
-          .foregroundStyle(SyncyTheme.secondaryInk)
-        }
         if let message = model.setupMessage {
-          Section {
-            HStack(spacing: 9) {
-              if model.isUpdatingSetup { ProgressView().controlSize(.small) }
-              Text(message)
+          Section("Last configuration change") {
+            if model.isUpdatingSetup {
+              WorkingNotice(text: message)
+            } else {
+              Text(message).foregroundStyle(SyncyTheme.secondaryInk)
             }
           }
         }
@@ -786,49 +801,6 @@ struct SetupView: View {
   }
 }
 
-struct SettingsView: View {
-  @State private var loginStatus = SMAppService.mainApp.status
-  @State private var loginMessage: String?
-  @AppStorage("notify-problems") private var notifyProblems = true
-  @AppStorage("notify-success") private var notifySuccess = false
-
-  var body: some View {
-    Form {
-      Section("Background") {
-        LabeledContent(
-          "Open Syncy at login", value: loginStatus == .enabled ? "Enabled" : "Disabled")
-        Button(loginStatus == .enabled ? "Disable opening at login" : "Enable opening at login") {
-          Task { await changeLoginRegistration() }
-        }
-        if let loginMessage {
-          Text(loginMessage).font(.caption).foregroundStyle(SyncyTheme.secondaryInk)
-        }
-      }
-      Section("Notifications") {
-        Toggle("Failed and skipped tasks", isOn: $notifyProblems)
-        Toggle("Completed tasks", isOn: $notifySuccess)
-      }
-    }
-    .formStyle(.grouped)
-  }
-
-  private func changeLoginRegistration() async {
-    do {
-      if SMAppService.mainApp.status == .enabled {
-        try await SMAppService.mainApp.unregister()
-      } else {
-        try SMAppService.mainApp.register()
-      }
-      loginStatus = SMAppService.mainApp.status
-      loginMessage =
-        loginStatus == .enabled ? "Syncy will remain available after login." : "Disabled."
-    } catch {
-      loginStatus = SMAppService.mainApp.status
-      loginMessage = "Could not change login setting · \(error.localizedDescription)"
-    }
-  }
-}
-
 struct DiagnosticsView: View {
   @ObservedObject var model: AppModel
   var showsHeader = true
@@ -838,30 +810,33 @@ struct DiagnosticsView: View {
       if showsHeader {
         PageHeader(title: "Diagnostics", detail: "rsync, source, and destination identity")
       }
-      VStack(alignment: .leading, spacing: 16) {
-        if model.isRunningDoctor {
-          HStack(spacing: 9) {
-            ProgressView().controlSize(.small)
-            Text("Running doctor")
-          }
-        } else if let report = model.doctorReport {
-          ScrollView {
-            Text(report)
-              .font(.system(.callout, design: .monospaced))
-              .textSelection(.enabled)
-              .frame(maxWidth: .infinity, alignment: .topLeading)
-          }
-        } else {
-          Text("Doctor has not run in this app session.")
-            .foregroundStyle(SyncyTheme.secondaryInk)
+      if model.isRunningDoctor {
+        PaneNotice(title: "Running doctor", isWorking: true)
+      } else if let report = model.doctorReport {
+        ScrollView {
+          Text(report)
+            .font(.system(.callout, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.horizontal, SyncySpace.gutter)
+            .padding(.vertical, SyncySpace.lg)
         }
+      } else {
+        PaneNotice(
+          title: "Doctor has not run",
+          detail: "Nothing has been probed in this app session.",
+          symbol: "stethoscope")
+      }
+      Divider()
+      HStack {
+        Spacer()
         Button(model.doctorReport == nil ? "Run doctor" : "Run doctor again") {
           Task { await model.runDoctor() }
         }
         .disabled(model.isRunningDoctor)
       }
-      .padding(24)
-      Spacer()
+      .padding(.horizontal, SyncySpace.gutter)
+      .padding(.vertical, SyncySpace.md)
     }
   }
 }
@@ -887,79 +862,67 @@ struct FolderRecordView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       if let unit {
-        recordHeader(unit)
-        Divider()
-        Group {
-          switch section {
-          case .summary:
-            FolderSummaryView(unit: unit)
-          case .differences:
-            DifferencesView(model: model, showsHeader: false)
-          case .evidence:
-            EvidenceView(unit: unit, showsHeader: false)
+        PageHeader(
+          title: unit.unit,
+          detail: "\(unit.state.rawValue) · \(unit.reason)",
+          detailColor: SyncyTheme.color(for: unit.state)
+        ) {
+          Picker("Folder record", selection: $section) {
+            ForEach(FolderRecordSection.allCases) { item in
+              Text(item.rawValue).tag(item)
+            }
           }
+          .labelsHidden()
+          .pickerStyle(.segmented)
+          .frame(width: 300)
+        }
+
+        switch section {
+        case .summary:
+          FolderSummaryView(unit: unit)
+        case .differences:
+          DifferencesView(model: model, showsHeader: false)
+        case .evidence:
+          EvidenceView(unit: unit, showsHeader: false)
         }
       } else {
-        ContentUnavailableView(
-          "Folder unavailable",
-          systemImage: "folder.badge.questionmark",
-          description: Text("The folder is not present in the current ledger snapshot."))
+        PaneNotice(
+          title: "Folder unavailable",
+          detail: "The folder is not present in the current ledger snapshot.",
+          symbol: "folder.badge.questionmark")
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .toolbar {
+      ToolbarItem(placement: .navigation) {
+        Button {
+          model.closeFolderRecord()
+        } label: {
+          Label("Ledger", systemImage: "chevron.left")
+        }
+        .help("Back to the ledger")
+      }
+      ToolbarItemGroup {
+        if let unit {
+          Menu("Check", systemImage: "checkmark.circle") {
+            Button("Quick check") {
+              Task { await model.runCheck(.quick, unit: unit.unit) }
+            }
+            Button("Deep verify") {
+              Task { await model.runCheck(.deep, unit: unit.unit) }
+            }
+          }
+          .disabled(model.isLaunchingJob || model.activeJob != nil)
+        }
+        if canReviewSync {
+          Button("Review sync…") { showsSyncReview = true }
+        }
       }
     }
     .sheet(isPresented: $showsSyncReview) {
       SyncConfirmationView(model: model)
         .frame(minWidth: 620, minHeight: 560)
     }
-  }
-
-  private func recordHeader(_ unit: UnitSnapshot) -> some View {
-    VStack(alignment: .leading, spacing: SyncySpace.lg) {
-      Button {
-        model.closeFolderRecord()
-      } label: {
-        Label("Ledger", systemImage: "chevron.left")
-      }
-      .buttonStyle(.plain)
-      .foregroundStyle(SyncyTheme.secondaryInk)
-
-      HStack(alignment: .bottom, spacing: SyncySpace.xl) {
-        VStack(alignment: .leading, spacing: SyncySpace.xs) {
-          Text(unit.unit)
-            .font(.system(.largeTitle, design: .serif, weight: .semibold))
-          Text("\(unit.state.rawValue) · \(unit.reason)")
-            .font(.callout)
-            .foregroundStyle(SyncyTheme.color(for: unit.state))
-            .lineLimit(2)
-        }
-        Spacer()
-        Menu("Check", systemImage: "bolt") {
-          Button("Quick check") {
-            Task { await model.runCheck(.quick, unit: unit.unit) }
-          }
-          Button("Deep verify") {
-            Task { await model.runCheck(.deep, unit: unit.unit) }
-          }
-        }
-        .disabled(model.isLaunchingJob || model.activeJob != nil)
-        if canReviewSync {
-          Button("Review sync…") { showsSyncReview = true }
-            .buttonStyle(.borderedProminent)
-            .tint(SyncyTheme.caution)
-        }
-      }
-
-      Picker("Folder record", selection: $section) {
-        ForEach(FolderRecordSection.allCases) { item in
-          Text(item.rawValue).tag(item)
-        }
-      }
-      .labelsHidden()
-      .pickerStyle(.segmented)
-      .frame(maxWidth: 340)
-    }
-    .padding(.horizontal, SyncySpace.xl)
-    .padding(.top, SyncySpace.lg)
-    .padding(.bottom, SyncySpace.md)
   }
 }
 
@@ -1019,15 +982,7 @@ struct ActivityView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      HStack(alignment: .bottom, spacing: SyncySpace.xl) {
-        VStack(alignment: .leading, spacing: SyncySpace.xs) {
-          Text("Activity")
-            .font(.system(.largeTitle, design: .serif, weight: .semibold))
-          Text("Engine work and its recorded outcomes")
-            .font(.callout)
-            .foregroundStyle(SyncyTheme.secondaryInk)
-        }
-        Spacer()
+      PageHeader(title: "Activity", detail: "Engine work and its recorded outcomes") {
         Picker("Activity", selection: $section) {
           ForEach(ActivitySection.allCases) { item in
             Text(item.rawValue).tag(item)
@@ -1035,11 +990,9 @@ struct ActivityView: View {
         }
         .labelsHidden()
         .pickerStyle(.segmented)
-        .frame(width: 300)
+        .frame(width: 280)
       }
-      .padding(SyncySpace.xl)
 
-      Divider()
       switch section {
       case .running:
         RunningActivityView(model: model)
@@ -1049,6 +1002,7 @@ struct ActivityView: View {
         HistoryView(model: model, showsHeader: false)
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 }
 
@@ -1059,19 +1013,17 @@ private struct RunningActivityView: View {
     if let job = model.activeJob {
       ScrollView {
         ActiveTaskView(job: job, model: model)
-          .padding(SyncySpace.xl)
+          .padding(.horizontal, SyncySpace.gutter)
+          .padding(.vertical, SyncySpace.xl)
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     } else if model.isLaunchingJob {
-      HStack(spacing: SyncySpace.sm) {
-        ProgressView().controlSize(.small)
-        Text("Starting engine work")
-      }
-      .padding(SyncySpace.xl)
+      PaneNotice(title: "Starting engine work", isWorking: true)
     } else {
-      ContentUnavailableView(
-        "No work running",
-        systemImage: "clock",
-        description: Text("Scheduled and completed work remain available in this view."))
+      PaneNotice(
+        title: "No work running",
+        detail: "Scheduled and completed work remain available in this view.",
+        symbol: "clock")
     }
   }
 }
@@ -1206,6 +1158,12 @@ struct AppSettingsView: View {
         Label(item.rawValue, systemImage: item.symbol).tag(item)
       }
       .listStyle(.sidebar)
+      // The system's sidebar material is a cool grey, and it is the one surface
+      // in the app syncy was not painting itself — so it sat against the warm
+      // paper beside it looking like a different program. Hiding the scroll
+      // background lets the window's own ground show through both columns; the
+      // sidebar list style is kept for its selection shape.
+      .scrollContentBackground(.hidden)
       .frame(minWidth: 190, idealWidth: 210, maxWidth: 230)
 
       Divider()
@@ -1224,6 +1182,7 @@ struct AppSettingsView: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
+    .background(SyncyTheme.paper)
   }
 
   private var selectedSection: AppSettingsSection { section ?? .storage }
@@ -1286,28 +1245,5 @@ private struct NotificationSettingsPane: View {
       }
     }
     .formStyle(.grouped)
-  }
-}
-
-struct PlaceholderView: View {
-  let title: String
-  let detail: String
-  let note: String
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: title, detail: detail)
-      VStack(alignment: .leading, spacing: 10) {
-        Text(note)
-          .font(.body)
-          .foregroundStyle(SyncyTheme.secondaryInk)
-          .frame(maxWidth: 560, alignment: .leading)
-        Text("Interface seam only · no engine result is implied")
-          .font(.caption)
-          .foregroundStyle(SyncyTheme.quietInk)
-      }
-      .padding(.horizontal, 24)
-      Spacer()
-    }
   }
 }

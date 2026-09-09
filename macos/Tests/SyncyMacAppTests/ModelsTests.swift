@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 
@@ -44,6 +45,78 @@ final class ModelsTests: XCTestCase {
       [
         "verified", "unverified", "behind", "missing", "unchecked", "error",
       ])
+  }
+
+  /// Pins the Swift copy to the engine's `PRECEDENCE` in `src/status.ts`, which
+  /// is the only authority on which of six words leads. The two must be read
+  /// side by side: a snapshot arrives with the unit state already rolled up, so
+  /// a client that ranks the words differently will contradict the very ledger
+  /// it is summarising — the tally once read `2 unchecked · 8 unverified` while
+  /// the engine had already ruled the eight to be the worse news.
+  func testPrecedenceMatchesTheEngineRollup() {
+    XCTAssertEqual(
+      LedgerState.precedence,
+      [.error, .missing, .behind, .unverified, .unchecked, .verified])
+    XCTAssertEqual(Set(LedgerState.precedence), Set(LedgerState.allCases))
+    // `verified` is the engine's fallthrough rather than a listed rank, so it
+    // is last here and appears in no other position.
+    XCTAssertEqual(LedgerState.precedence.last, .verified)
+  }
+
+  /// A glyph that does not exist draws nothing at all — no error, no fallback,
+  /// just an empty badge where a state should be. `unverified` shipped as
+  /// `tilde`, which is the TUI's `~` but is not an SF Symbol, so every
+  /// unverified row in the ledger showed a blank circle.
+  func testEveryStateGlyphResolves() throws {
+    for state in LedgerState.allCases {
+      XCTAssertNotNil(
+        NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil),
+        "\(state.rawValue) draws nothing: \"\(state.symbol)\" is not an SF Symbol")
+    }
+  }
+
+  func testArchiveReportsItsWeakestFolder() throws {
+    let json = """
+      {"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source",\
+      "configRevision":"r","targets":[],"units":[\
+      {"unit":"a","state":"verified","reason":"deep verified","fingerprint":\
+      {"nfiles":1,"bytes":10,"maxMtimeNs":"0"},"cells":[]},\
+      {"unit":"b","state":"behind","reason":"17 files short","fingerprint":\
+      {"nfiles":1,"bytes":20,"maxMtimeNs":"0"},"cells":[]},\
+      {"unit":"c","state":"unverified","reason":"bytes unread","fingerprint":\
+      {"nfiles":1,"bytes":30,"maxMtimeNs":"0"},"cells":[]}]}
+      """
+    let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
+
+    XCTAssertEqual(snapshot.archiveState, .behind)
+  }
+
+  /// No folders is an absence, not a state. Reporting it as `unchecked` would
+  /// claim we looked at something.
+  func testEmptyArchiveHasNoState() throws {
+    let json =
+      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[]}"#
+    let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
+
+    XCTAssertNil(snapshot.archiveState)
+    XCTAssertNil(snapshot.newestEvidenceAt)
+  }
+
+  /// The panel dates itself by when evidence was taken, never by when the
+  /// snapshot was read — `generatedAt` is this second on every refresh and
+  /// would make a month-old ledger look current.
+  func testNewestEvidenceIsTheLatestRecordedCheck() throws {
+    let snapshot = try JSONDecoder().decode(
+      EngineSnapshot.self, from: contractFixture("snapshot.json"))
+    let recorded = snapshot.units
+      .flatMap(\.cells)
+      .compactMap(\.evidence)
+      .flatMap { [$0.lastCheck?.at, $0.deepCheck?.at] }
+      .compactMap { $0 }
+
+    XCTAssertFalse(recorded.isEmpty, "fixture carries no check evidence to date the panel by")
+    XCTAssertEqual(snapshot.newestEvidenceAt, recorded.max())
+    XCTAssertNotEqual(snapshot.newestEvidenceAt, snapshot.generatedAt)
   }
 
   func testReachabilityUsesCanonicalLedgerLanguage() {

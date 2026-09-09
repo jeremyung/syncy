@@ -8,10 +8,30 @@ public enum LedgerState: String, CaseIterable, Codable, Sendable {
   case unchecked
   case error
 
+  /// Worst first. This is the engine's own `PRECEDENCE` (`src/status.ts`) with
+  /// `verified` restored on the end, where `rollUp` leaves it as the
+  /// fallthrough. Every caller that has to pick *the one state to report* walks
+  /// this order, so the tray glyph, the panel headline and the tally cannot
+  /// disagree with each other — or, more importantly, with the ledger they are
+  /// summarising.
+  ///
+  /// `unverified` outranking `unchecked` reads backwards until you take the
+  /// engine's reasoning: "we checked and it is not replicated" is more
+  /// informative than "we could not check", so a definite finding outranks a
+  /// missing one. An unchecked destination still outranks `verified`, because
+  /// no conclusion can be drawn from evidence that was never taken.
+  public static let precedence: [LedgerState] = [
+    .error, .missing, .behind, .unverified, .unchecked, .verified,
+  ]
+
   public var symbol: String {
     switch self {
     case .verified: "checkmark"
-    case .unverified: "tilde"
+    // A footnote mark: this entry carries a caveat. The TUI sets `~` for the
+    // same state, but there is no tilde in SF Symbols — asking for one drew
+    // nothing at all, so every `unverified` row in the ledger showed an empty
+    // circle where its glyph should have been.
+    case .unverified: "asterisk"
     case .behind: "arrow.up"
     case .missing: "minus"
     case .unchecked: "questionmark"

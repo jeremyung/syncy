@@ -10,6 +10,11 @@ struct LedgerWindow: View {
         Label(item.rawValue, systemImage: item.symbol)
           .tag(item)
       }
+      // Paper on both sides of the split, for the reason given in
+      // `AppSettingsView`: the sidebar was the one surface still showing the
+      // system's cool grey against syncy's warm ground.
+      .scrollContentBackground(.hidden)
+      .background(SyncyTheme.paper)
       .navigationSplitViewColumnWidth(min: 176, ideal: 196)
     } detail: {
       Group {
@@ -30,7 +35,7 @@ struct LedgerWindow: View {
         text: footerText,
         trailing: model.snapshot.map { "snapshot · \(formatted(date: $0.generatedAt))" }
       )
-      .padding(.horizontal, SyncySpace.lg)
+      .padding(.horizontal, SyncySpace.gutter)
       .frame(height: 34)
       .background(.bar)
     }
@@ -74,10 +79,7 @@ private struct LedgerView: View {
       )
 
       if model.isLoading, model.snapshot == nil {
-        ContentUnavailableView {
-          ProgressView().controlSize(.small)
-          Text("Reading ledger").font(.headline)
-        }
+        PaneNotice(title: "Reading ledger", isWorking: true)
       } else if let snapshot = model.snapshot {
         LedgerGrid(
           snapshot: snapshot,
@@ -86,15 +88,14 @@ private struct LedgerView: View {
         )
         if let activeJob = model.activeJob {
           LedgerJobStrip(job: activeJob, model: model)
-            .padding(.horizontal, SyncySpace.xl)
-            .padding(.vertical, SyncySpace.md)
+            .padding(.horizontal, SyncySpace.gutter)
+            .padding(.bottom, SyncySpace.md)
         }
       } else {
-        ContentUnavailableView(
-          "Ledger unavailable",
-          systemImage: "externaldrive.badge.exclamationmark",
-          description: Text(model.engineErrorMessage ?? "The engine returned no snapshot.")
-        )
+        PaneNotice(
+          title: "Ledger unavailable",
+          detail: model.engineErrorMessage ?? "The engine returned no snapshot.",
+          symbol: "externaldrive.badge.exclamationmark")
       }
     }
     .toolbar {
@@ -234,7 +235,7 @@ private struct LedgerGrid: View {
         HeaderCell(target.name, width: destinationWidth, leadingInset: 20)
       }
     }
-    .padding(.horizontal, SyncySpace.lg)
+    .padding(.horizontal, SyncySpace.gutter)
     .frame(height: 34)
     .background(SyncyTheme.raised)
   }
@@ -242,7 +243,7 @@ private struct LedgerGrid: View {
   private func row(_ unit: UnitSnapshot) -> some View {
     HStack(spacing: 0) {
       StateMark(state: unit.state).frame(width: stateWidth)
-      VStack(alignment: .leading, spacing: 3) {
+      VStack(alignment: .leading, spacing: SyncySpace.xs) {
         Text(unit.unit).fontWeight(.medium).lineLimit(1)
         Text(folderFacts(unit))
           .font(.caption.monospacedDigit())
@@ -255,7 +256,7 @@ private struct LedgerGrid: View {
           .frame(width: destinationWidth, alignment: .leading)
       }
     }
-    .padding(.horizontal, SyncySpace.lg)
+    .padding(.horizontal, SyncySpace.gutter)
     .frame(minHeight: 58)
     .background(selection == unit.id ? SyncyTheme.selection : Color.clear)
     .contentShape(Rectangle())
@@ -311,7 +312,7 @@ private struct DestinationCell: View {
   let destination: CellSnapshot?
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 3) {
+    VStack(alignment: .leading, spacing: SyncySpace.xs) {
       if let destination {
         Text(destination.state.rawValue)
           .font(.callout.weight(.medium))
@@ -326,35 +327,7 @@ private struct DestinationCell: View {
           .foregroundStyle(SyncyTheme.quietInk)
       }
     }
-    .padding(.leading, 20)
-    .padding(.vertical, 5)
-  }
-}
-
-struct PageHeader: View {
-  let title: String
-  let detail: String
-  var trailing: String? = nil
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline) {
-      VStack(alignment: .leading, spacing: 5) {
-        Text(title)
-          .font(.system(.largeTitle, design: .serif, weight: .semibold))
-        Text(detail)
-          .font(.callout)
-          .foregroundStyle(SyncyTheme.secondaryInk)
-      }
-      Spacer()
-      if let trailing {
-        Text(trailing)
-          .font(.system(.callout, design: .monospaced))
-          .foregroundStyle(SyncyTheme.secondaryInk)
-          .monospacedDigit()
-      }
-    }
-    .padding(.horizontal, SyncySpace.xl)
-    .padding(.top, SyncySpace.xl)
-    .padding(.bottom, 20)
+    .padding(.leading, SyncySpace.gutter)
+    .padding(.vertical, SyncySpace.xs)
   }
 }

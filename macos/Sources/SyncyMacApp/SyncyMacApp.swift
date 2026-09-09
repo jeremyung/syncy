@@ -3,20 +3,68 @@ import SwiftUI
 import SyncyMacCore
 @preconcurrency import UserNotifications
 
+/// `LSUIElement` hides the app from the Dock, which is right for something that
+/// lives in the menu bar — and wrong the moment it opens a 1040×700 window with
+/// a sidebar. Held as a permanent accessory, the ledger opened with no Dock
+/// tile and no app menu: ⌘-Tab could not reach it, ⌘-W had nothing to close,
+/// and the window read as though the click had done nothing at all.
+///
+/// So the Dock presence follows the windows. Regular while a real one is up,
+/// accessory again once the last closes — the menu bar panel itself never
+/// counts, because it cannot become main.
+@MainActor
+final class DockPresence: NSObject, NSApplicationDelegate {
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    for name in [NSWindow.didBecomeMainNotification, NSWindow.willCloseNotification] {
+      NotificationCenter.default.addObserver(
+        forName: name, object: nil, queue: .main
+      ) { _ in
+        MainActor.assumeIsolated { Self.sync() }
+      }
+    }
+  }
+
+  static func sync() {
+    // `willClose` posts while the window is still listed, so settle on the next
+    // turn of the run loop and count what is actually left standing.
+    DispatchQueue.main.async {
+      // Panels are excluded outright. The menu bar readout is a window too, and
+      // counting it would flash a Dock tile every time the tray is opened.
+      let hasWindow = NSApp.windows.contains {
+        $0.isVisible && $0.canBecomeMain && !($0 is NSPanel)
+      }
+      let wanted: NSApplication.ActivationPolicy = hasWindow ? .regular : .accessory
+      guard NSApp.activationPolicy() != wanted else { return }
+      NSApp.setActivationPolicy(wanted)
+    }
+  }
+}
+
 @main
 struct SyncyMacApp: App {
+  @NSApplicationDelegateAdaptor(DockPresence.self) private var dockPresence
   @StateObject private var model = AppModel()
 
   var body: some Scene {
     MenuBarExtra {
       MenuBarPanel(model: model)
     } label: {
+      // The glyph alone. The menu bar is shared real estate, and "Syncy ·
+      // reading ledger" widening and narrowing as jobs come and go shoves every
+      // other item along with it. The wording survives as the accessibility
+      // label, where it is read rather than measured.
       Label(model.menuTitle, systemImage: model.menuSymbol)
+        .labelStyle(.iconOnly)
+        .accessibilityLabel(model.menuTitle)
         .task { await model.monitor() }
     }
     .menuBarExtraStyle(.window)
 
-    WindowGroup("Syncy", id: "ledger") {
+    // `Window`, not `WindowGroup`: there is one ledger, so there is one window
+    // onto it. A group opens a fresh copy on every `openWindow` call, so a few
+    // trips through the tray left a stack of identical ledgers cascading down
+    // the screen. A single window is raised instead of duplicated.
+    Window("Syncy", id: "ledger") {
       LedgerWindow(model: model)
         .frame(minWidth: 860, minHeight: 560)
     }
@@ -110,36 +158,41 @@ final class AppModel: ObservableObject {
 
   var menuTitle: String {
     if let active = activeJob {
-      let operation = active.operation == "deep" ? "deep verify" : active.operation
+      // The same words the panel's headline uses. The tray reading "Syncy ·
+      // quick" above a panel reading "quick check" is one job named twice.
+      let operation =
+        switch active.operation {
+        case "deep": "deep verify"
+        case "quick": "quick check"
+        default: active.operation
+        }
       return "Syncy · \(operation)"
     }
     if isLaunchingJob { return "Syncy · starting work" }
     if isLoading, snapshot == nil { return "Syncy · reading ledger" }
     if engineErrorMessage != nil { return "Syncy · engine unavailable" }
     if errorMessage != nil { return "Syncy · error" }
+    if let state = snapshot?.archiveState { return "Syncy · \(state.rawValue)" }
     return "Syncy"
   }
 
+  /// The glyph reports the archive's weakest state, read through the same
+  /// `precedence` order the panel headline and the tally use. Keeping one
+  /// ordering is what stops the tray from showing a checkmark while the panel
+  /// below it reads `behind`.
   var menuSymbol: String {
-    if activeJob != nil { return "arrow.triangle.2.circlepath" }
-    if isLaunchingJob { return "arrow.triangle.2.circlepath" }
+    if activeJob != nil || isLaunchingJob { return "arrow.triangle.2.circlepath" }
     if isLoading, snapshot == nil { return "arrow.triangle.2.circlepath" }
     if engineErrorMessage != nil { return "questionmark.circle" }
     if errorMessage != nil { return "exclamationmark.circle" }
-    guard let snapshot else { return "questionmark.circle" }
-    if snapshot.units.contains(where: { $0.state == .error }) {
-      return "exclamationmark.circle"
+    guard let state = snapshot?.archiveState else { return "questionmark.circle" }
+    switch state {
+    case .error: return "exclamationmark.circle"
+    case .missing, .behind: return "arrow.up.circle"
+    case .unchecked: return "questionmark.circle"
+    case .unverified: return "circle.lefthalf.filled"
+    case .verified: return "checkmark.circle"
     }
-    if snapshot.units.contains(where: { $0.state == .missing || $0.state == .behind }) {
-      return "arrow.up.circle"
-    }
-    if snapshot.units.contains(where: { $0.state == .unchecked }) {
-      return "questionmark.circle"
-    }
-    if !snapshot.units.isEmpty && snapshot.units.allSatisfy({ $0.state == .verified }) {
-      return "checkmark.circle"
-    }
-    return "circle.lefthalf.filled"
   }
 
   func loadIfNeeded() async {

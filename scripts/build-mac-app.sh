@@ -16,7 +16,12 @@ bun run scripts/build.ts
 cp "$repo_dir/syncy" "$binary_dir/syncy-engine"
 cp "$repo_dir/macos/Info.plist" "$contents_dir/Info.plist"
 
-swiftc -swift-version 6 -sdk "$sdk_path" \
+# Regenerated from source every build so the tile can never drift from the
+# palette the app actually ships.
+swift "$repo_dir/scripts/make-app-icon.swift" "$build_dir/Syncy.iconset" >/dev/null
+iconutil -c icns "$build_dir/Syncy.iconset" -o "$resources_dir/Syncy.icns"
+
+swiftc -swift-version 6 -sdk "$sdk_path" -target arm64-apple-macosx14.0 \
   -module-cache-path "$build_dir/cache" \
   -parse-as-library -emit-library -static -emit-module \
   -emit-module-path "$build_dir/SyncyMacCore.swiftmodule" \
@@ -24,7 +29,7 @@ swiftc -swift-version 6 -sdk "$sdk_path" \
   "$repo_dir"/macos/Sources/SyncyMacCore/*.swift \
   -o "$build_dir/libSyncyMacCore.a"
 
-swiftc -swift-version 6 -sdk "$sdk_path" \
+swiftc -swift-version 6 -sdk "$sdk_path" -target arm64-apple-macosx14.0 \
   -module-cache-path "$build_dir/cache" \
   -I "$build_dir" -L "$build_dir" -lSyncyMacCore \
   -module-name SyncyMacApp \

@@ -587,6 +587,27 @@ public struct EngineSnapshot: Decodable, Sendable {
     }
   }
 
+  /// The archive read as one folder would be: the weakest state present. `nil`
+  /// only when no folder is tracked at all, which is an absence rather than a
+  /// state and is reported as one.
+  public var archiveState: LedgerState? {
+    LedgerState.precedence.first { state in units.contains { $0.state == state } }
+  }
+
+  /// The most recent moment any check was recorded, quick or deep. It is the
+  /// newest of the set, so everything else in the ledger is at least this old —
+  /// which is the honest thing for a glance surface to date itself by. The
+  /// snapshot's own `generatedAt` is when we *read* the ledger, not when
+  /// anything was measured, and the two are never the same claim.
+  public var newestEvidenceAt: Double? {
+    units
+      .flatMap(\.cells)
+      .compactMap(\.evidence)
+      .flatMap { [$0.lastCheck?.at, $0.deepCheck?.at] }
+      .compactMap { $0 }
+      .max()
+  }
+
   private enum CodingKeys: String, CodingKey {
     case protocolVersion, type, generatedAt, source, configRevision, targets, units, activeJob
   }
