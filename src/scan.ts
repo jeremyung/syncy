@@ -64,10 +64,13 @@ export type Reachability = SentinelStatus | "unreachable";
  */
 export async function targetReachability(target: Target): Promise<Reachability> {
   if (target.identity !== undefined && target.identity !== "") {
+    // Existence first, for the reason spelled out in `observeTargetSync`: an
+    // absent path resolves to the volume owning its mount point, so asking
+    // "is this the right volume?" of a share that is not mounted answers
+    // "wrong drive" when the truth is "no drive".
+    if (!existsSync(target.path)) return "unreachable";
     const v = await checkVolume(target.path, target.identity);
     if (v !== "ok") return v === "unreachable" ? "unreachable" : "mismatch";
-    // The volume is right; the directory still has to exist on it.
-    if (!existsSync(target.path)) return "unreachable";
     if (identityIsProof(target) || target.sentinel === undefined) return "ok";
     return checkSentinel(target.path, target.sentinel);
   }
@@ -119,8 +122,16 @@ export function observeTargetSync(target: Target): TargetObservation {
   if (target.identity !== undefined && target.identity !== "") {
     const found = identifySync(target.path);
     if (found === null) return { reachability: "unreachable", identity: "" };
-    if (found.id !== target.identity) return { reachability: "mismatch", identity: found.id };
+    // Existence before identity. An unmounted destination resolves to whatever
+    // volume owns its mount point — usually the boot disk — so comparing
+    // identities first reported *wrong drive* for what is really *no drive*.
+    // Both answers refuse the check, so nothing unsafe slipped through; but the
+    // reader was told the destination was "different volume · re-add it in
+    // setup" when the configuration was right all along and the share was
+    // simply not mounted. `missing` and `unknown` must never look alike (§5),
+    // and neither must these two.
     if (!existsSync(target.path)) return { reachability: "unreachable", identity: found.id };
+    if (found.id !== target.identity) return { reachability: "mismatch", identity: found.id };
     if (identityIsProof(target) || target.sentinel === undefined) {
       return { reachability: "ok", identity: found.id };
     }
