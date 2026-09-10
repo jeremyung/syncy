@@ -85,6 +85,12 @@ export interface UnitSnapshot {
 
 export interface ActiveJobSnapshot {
   readonly actor: "cli" | "mac" | "scheduler";
+  /**
+   * The owning process. A client that did not start the work has no task to
+   * cancel, so this is the only handle it has on it: the engine treats SIGTERM
+   * as a graceful cancel, releasing the lease and recording the outcome.
+   */
+  readonly pid: number;
   readonly operation: JobOperation;
   readonly startedAt: number;
   readonly heartbeatAt: number;

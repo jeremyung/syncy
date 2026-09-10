@@ -87,16 +87,16 @@ struct MenuBarPanel: View {
       .accessibilityLabel("Settings")
 
       if model.activeJob != nil || model.isLaunchingJob {
-        if model.canCancelOwnedJob {
+        if model.canCancelActiveJob {
           Button(model.isCancellingJob ? "Cancelling…" : "Cancel…", role: .destructive) {
-            model.cancelOwnedJob()
+            model.cancelActiveJob()
           }
           .disabled(model.isCancellingJob)
         }
         Spacer()
         Button("View activity") {
           model.closeFolderRecord()
-          model.selection = .activity
+          model.activityDrawer = .running
           openLedger()
         }
         .keyboardShortcut(.defaultAction)
@@ -322,7 +322,6 @@ private struct TallyLine: View {
           .font(.callout.monospacedDigit().weight(.semibold))
         + Text(verbatim: " \(entry.element.state.rawValue)")
           .font(.callout)
-          .foregroundStyle(SyncyTheme.color(for: entry.element.state))
     }
   }
 
@@ -510,7 +509,7 @@ private struct RunningReport: View {
           if let silence = silence(at: context.date) {
             Text(silence)
               .font(.caption.monospacedDigit())
-              .foregroundStyle(SyncyTheme.caution)
+              .foregroundStyle(SyncyTheme.secondaryInk)
           }
         }
         .padding(.top, SyncySpace.md)

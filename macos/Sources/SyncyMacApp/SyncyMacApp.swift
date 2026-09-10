@@ -14,6 +14,44 @@ import SyncyMacCore
 /// counts, because it cannot become main.
 @MainActor
 final class DockPresence: NSObject, NSApplicationDelegate {
+  /// The delegate is built by `NSApplicationDelegateAdaptor`, which cannot pass
+  /// it anything, so the app hands the model over once it exists.
+  static weak var model: AppModel?
+
+  /// A check outlives the app on purpose — the engine owns the work, and a
+  /// half-hour checksum pass should not be discarded because a window closed.
+  /// What was missing was being told: quitting mid-verify left rsync running
+  /// with nothing on screen saying so, discoverable only through `ps`.
+  func applicationShouldTerminate(
+    _ sender: NSApplication
+  ) -> NSApplication.TerminateReply {
+    guard let model = Self.model, let job = model.activeJob else { return .terminateNow }
+
+    let operation = job.operation == "deep" ? "Deep verify" : job.operation.capitalized
+    let alert = NSAlert()
+    alert.messageText = "\(operation) is still running"
+    alert.informativeText =
+      job.activity.map { "\($0.unit) \u{2192} \($0.target). " } ?? ""
+    alert.informativeText +=
+      "The engine keeps running after Syncy quits and records what it establishes. "
+      + "Stopping it now records no verification for the folders not yet reached."
+    alert.addButton(withTitle: "Quit and Keep Running")
+    alert.addButton(withTitle: "Stop and Quit")
+    alert.addButton(withTitle: "Don\u{2019}t Quit")
+
+    switch alert.runModal() {
+    case .alertFirstButtonReturn:
+      return .terminateNow
+    case .alertSecondButtonReturn:
+      model.cancelActiveJob()
+      // The engine releases its lease on SIGTERM; leaving is safe once it is
+      // sent, and waiting for the outcome would hold a modal over a quit.
+      return .terminateNow
+    default:
+      return .terminateCancel
+    }
+  }
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     for name in [NSWindow.didBecomeMainNotification, NSWindow.willCloseNotification] {
       NotificationCenter.default.addObserver(
@@ -56,7 +94,10 @@ struct SyncyMacApp: App {
       Label(model.menuTitle, systemImage: model.menuSymbol)
         .labelStyle(.iconOnly)
         .accessibilityLabel(model.menuTitle)
-        .task { await model.monitor() }
+        .task {
+          DockPresence.model = model
+          await model.monitor()
+        }
     }
     .menuBarExtraStyle(.window)
 
@@ -69,6 +110,16 @@ struct SyncyMacApp: App {
         .frame(minWidth: 860, minHeight: 560)
     }
     .defaultSize(width: 1040, height: 700)
+    // Refreshing left the toolbar, so it needs a menu to live in: a keyboard
+    // shortcut nobody can find is not a command, and the toolbar is for the two
+    // things this window does to the ledger.
+    .commands {
+      CommandGroup(after: .toolbar) {
+        Button("Refresh Ledger") { Task { await model.refresh() } }
+          .keyboardShortcut("r", modifiers: .command)
+          .disabled(model.isRefreshing)
+      }
+    }
 
     Settings {
       AppSettingsView(model: model)
@@ -79,7 +130,9 @@ struct SyncyMacApp: App {
 
 @MainActor
 final class AppModel: ObservableObject {
-  @Published var selection: SidebarItem? = .ledger
+  /// Which activity tab the drawer is showing, or `nil` while it is shut.
+  /// The tray opens it too, so the state cannot live in the window.
+  @Published var activityDrawer: ActivityDrawerTab?
   @Published var selectedUnitID: UnitSnapshot.ID?
   @Published private(set) var presentedUnitID: UnitSnapshot.ID?
   @Published private(set) var snapshot: EngineSnapshot?
@@ -154,6 +207,33 @@ final class AppModel: ObservableObject {
 
   var canCancelOwnedJob: Bool {
     checkTask != nil || syncTask != nil || scheduleTask != nil
+  }
+
+  /// A job this process did not start still belongs to someone: the lease names
+  /// the owning pid, and the engine takes SIGTERM as a graceful cancel, which
+  /// releases the lease and records the outcome. Without this, quitting the app
+  /// mid-verify left work no interface could stop.
+  private var observedJobPID: pid_t? {
+    guard !canCancelOwnedJob, let pid = activeJob?.pid, pid > 1 else { return nil }
+    return pid_t(pid)
+  }
+
+  var canCancelActiveJob: Bool { canCancelOwnedJob || observedJobPID != nil }
+
+  func cancelActiveJob() {
+    guard !isCancellingJob else { return }
+    if canCancelOwnedJob {
+      cancelOwnedJob()
+      return
+    }
+    guard let pid = observedJobPID else { return }
+    isCancellingJob = true
+    // Not `SIGKILL`: the engine's handler is what releases the lease and writes
+    // the cancelled outcome. Killing it outright would leave a lease to expire.
+    if kill(pid, SIGTERM) != 0 {
+      isCancellingJob = false
+      errorMessage = "Could not signal the engine process (pid \(pid))"
+    }
   }
 
   var menuTitle: String {
@@ -251,6 +331,7 @@ final class AppModel: ObservableObject {
       observedActiveJob = try await client.activity()
       if observedActiveJob == nil {
         suppressSnapshotJob = false
+        if !canCancelOwnedJob { isCancellingJob = false }
         // External CLI/TUI work records evidence outside this process. Refresh
         // once when it ends so the ledger catches up, never once per poll.
         if previouslyActive { await refresh() }
@@ -380,33 +461,42 @@ final class AppModel: ObservableObject {
     scheduleTask?.cancel()
   }
 
-  func setSource(path: String) async {
+  @discardableResult
+  func setSource(path: String) async -> Bool {
     await updateSetup("Saving source") { try await client.setSource(path: path) }
   }
 
-  func addDestination(path: String, name: String) async {
+  @discardableResult
+  func addDestination(path: String, name: String) async -> Bool {
     await updateSetup("Identifying and probing \(name)") {
       try await client.addDestination(path: path, name: name)
     }
   }
 
-  func adoptDestination(name: String) async {
+  @discardableResult
+  func adoptDestination(name: String) async -> Bool {
     await updateSetup("Writing and recording sentinel for \(name)") {
       try await client.adoptDestination(name: name)
     }
   }
 
-  func removeDestination(name: String) async {
+  @discardableResult
+  func removeDestination(name: String) async -> Bool {
     await updateSetup("Removing \(name) from configuration") {
       try await client.removeDestination(name: name)
     }
   }
 
+  /// Reports whether the change was written, so a caller can act on the outcome
+  /// without reading `setupMessage`. That string is display copy: a screen was
+  /// comparing it to `"Saved"` to decide whether to dismiss its form, which made
+  /// rewording a sentence enough to break the form.
+  @discardableResult
   private func updateSetup(
     _ progress: String,
     operation: () async throws -> EngineSnapshot
-  ) async {
-    guard !isUpdatingSetup, activeJob == nil else { return }
+  ) async -> Bool {
+    guard !isUpdatingSetup, activeJob == nil else { return false }
     isUpdatingSetup = true
     setupMessage = progress
     defer { isUpdatingSetup = false }
@@ -420,8 +510,10 @@ final class AppModel: ObservableObject {
       if let presentedUnitID, !next.units.contains(where: { $0.id == presentedUnitID }) {
         self.presentedUnitID = nil
       }
+      return true
     } catch {
       setupMessage = "Not saved · \(error.localizedDescription)"
+      return false
     }
   }
 
@@ -683,18 +775,13 @@ private enum ScheduleRunError: LocalizedError {
   }
 }
 
-enum SidebarItem: String, CaseIterable, Identifiable {
-  case ledger = "Ledger"
-  case activity = "Activity"
-  case settings = "Settings"
+/// What the activity drawer shows when it is open. This replaced a sidebar
+/// whose three destinations were a ledger, this, and a Settings item that
+/// duplicated the `Settings` scene the app already declares — leaving one
+/// permanent column to switch between two things.
+enum ActivityDrawerTab: String, CaseIterable, Identifiable {
+  case running = "Running"
+  case history = "History"
 
   var id: String { rawValue }
-
-  var symbol: String {
-    switch self {
-    case .ledger: "list.bullet.rectangle"
-    case .activity: "clock.arrow.circlepath"
-    case .settings: "gearshape"
-    }
-  }
 }

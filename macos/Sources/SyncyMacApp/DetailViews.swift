@@ -126,7 +126,7 @@ struct DifferencesView: View {
               .listStyle(.inset)
               .overlay(alignment: .bottom) {
                 if diff.truncated > 0 {
-                  Text("\(diff.truncated) more not stored · counts remain exact")
+                  Text("\(diff.truncated.formatted()) more not stored · counts remain exact")
                     .font(.caption)
                     .foregroundStyle(SyncyTheme.secondaryInk)
                     .padding(.horizontal, SyncySpace.md)
@@ -288,7 +288,6 @@ struct HistoryView: View {
             Spacer()
             Text(entry.outcome)
               .font(.callout.weight(.medium))
-              .foregroundStyle(outcomeColor(entry.outcome))
           }
           .padding(.vertical, SyncySpace.xs)
         }
@@ -297,15 +296,6 @@ struct HistoryView: View {
       }
     }
     .task { await model.loadHistory() }
-  }
-
-  private func outcomeColor(_ outcome: String) -> Color {
-    switch outcome {
-    case "completed": SyncyTheme.verified
-    case "failed": SyncyTheme.fault
-    case "skipped", "missed": SyncyTheme.caution
-    default: SyncyTheme.secondaryInk
-    }
   }
 
   private func operationTitle(_ operation: String) -> String {
@@ -356,9 +346,14 @@ struct SchedulesView: View {
                   if schedule.operation == .sync,
                     !schedule.isApproved(forConfigRevision: model.snapshot?.configRevision)
                   {
-                    Label("suspended · configuration changed", systemImage: "pause.circle")
-                      .font(.caption)
-                      .foregroundStyle(SyncyTheme.caution)
+                    Label {
+                      Text("suspended · configuration changed")
+                    } icon: {
+                      Image(systemName: "pause.circle")
+                        .foregroundStyle(SyncyTheme.caution)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(SyncyTheme.secondaryInk)
                   }
                 }
               }
@@ -475,14 +470,13 @@ struct EvidenceView: View {
               VStack(alignment: .leading, spacing: SyncySpace.sm) {
                 Text(destination.state.rawValue)
                   .font(.headline)
-                  .foregroundStyle(SyncyTheme.color(for: destination.state))
                 Text(destination.differenceSummary ?? destination.reason)
                   .font(.callout)
                   .foregroundStyle(SyncyTheme.secondaryInk)
                 if destination.evidence?.currentTarget == false {
                   Text("Recorded evidence does not establish the destination available now.")
                     .font(.caption)
-                    .foregroundStyle(SyncyTheme.caution)
+                    .foregroundStyle(SyncyTheme.secondaryInk)
                 }
               }
               Spacer()
@@ -590,7 +584,12 @@ struct SyncConfirmationView: View {
               value: ByteCountFormatter.string(
                 fromByteCount: prepared.bytesPending, countStyle: .file
               ).lowercased())
-            LabeledContent("Extra at destination", value: "\(prepared.nExtra) · left unchanged")
+            // "Only at destination" everywhere: the evidence inspector and the
+            // folder summary already name this fact that way, and a count that
+            // skips `formatted()` loses its separator at four digits.
+            LabeledContent(
+              "Only at destination",
+              value: "\(prepared.nExtra.formatted()) · left unchanged")
           }
           Section("Command") {
             Text(prepared.argv.joined(separator: " "))
@@ -696,7 +695,7 @@ struct SetupView: View {
       }
       Form {
         Section("Source") {
-          LabeledContent("Folder", value: snapshot?.source ?? "Not reported")
+          LabeledContent("Folder", value: snapshot?.source ?? "not reported")
           Button("Choose source folder…") {
             guard let url = chooseFolder(prompt: "Choose the folder whose subfolders Syncy tracks")
             else { return }
@@ -714,7 +713,7 @@ struct SetupView: View {
                 remove: { destinationToRemove = target.name })
             }
           } else {
-            Text("No destinations reported")
+            Text("not reported")
               .foregroundStyle(SyncyTheme.secondaryInk)
           }
           Button("Choose destination folder…") {
@@ -728,9 +727,10 @@ struct SetupView: View {
         } header: {
           Text("Destinations")
         } footer: {
-          Text(
-            "Volume identity and filesystem capability probes are performed by the Syncy engine. This interface does not write to a source or destination."
-          )
+          // Was two sentences and 143 characters, the first of which reported
+          // which component runs the probe — true, and no concern of the person
+          // reading it. What is left is the half that is about them.
+          Text("Syncy never writes to a source or destination from this screen.")
         }
         if let pendingDestination {
           Section("Add destination") {
@@ -746,8 +746,9 @@ struct SetupView: View {
                 let path = pendingDestination.path
                 let name = destinationName.trimmingCharacters(in: .whitespacesAndNewlines)
                 Task {
-                  await model.addDestination(path: path, name: name)
-                  if model.setupMessage == "Saved" {
+                  // The model reports whether it wrote; the sentence it shows
+                  // the reader is not a return value.
+                  if await model.addDestination(path: path, name: name) {
                     self.pendingDestination = nil
                     destinationName = ""
                   }
@@ -824,7 +825,7 @@ struct DiagnosticsView: View {
       } else {
         PaneNotice(
           title: "Doctor has not run",
-          detail: "Nothing has been probed in this app session.",
+          detail: "Nothing has been probed since Syncy started.",
           symbol: "stethoscope")
       }
       Divider()
@@ -864,8 +865,7 @@ struct FolderRecordView: View {
       if let unit {
         PageHeader(
           title: unit.unit,
-          detail: "\(unit.state.rawValue) · \(unit.reason)",
-          detailColor: SyncyTheme.color(for: unit.state)
+          detail: "\(unit.state.rawValue) · \(unit.reason)"
         ) {
           Picker("Folder record", selection: $section) {
             ForEach(FolderRecordSection.allCases) { item in
@@ -944,7 +944,6 @@ private struct FolderSummaryView: View {
                 Text(destination.target).fontWeight(.medium)
                 Spacer()
                 Text(destination.state.rawValue)
-                  .foregroundStyle(SyncyTheme.color(for: destination.state))
               }
               Text(destination.differenceSummary ?? destination.reason)
                 .font(.caption)
@@ -968,45 +967,7 @@ private struct FolderSummaryView: View {
   }
 }
 
-private enum ActivitySection: String, CaseIterable, Identifiable {
-  case running = "Running"
-  case schedules = "Schedules"
-  case history = "History"
-
-  var id: String { rawValue }
-}
-
-struct ActivityView: View {
-  @ObservedObject var model: AppModel
-  @State private var section: ActivitySection = .running
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      PageHeader(title: "Activity", detail: "Engine work and its recorded outcomes") {
-        Picker("Activity", selection: $section) {
-          ForEach(ActivitySection.allCases) { item in
-            Text(item.rawValue).tag(item)
-          }
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-        .frame(width: 280)
-      }
-
-      switch section {
-      case .running:
-        RunningActivityView(model: model)
-      case .schedules:
-        SchedulesView(model: model, showsHeader: false)
-      case .history:
-        HistoryView(model: model, showsHeader: false)
-      }
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-  }
-}
-
-private struct RunningActivityView: View {
+struct RunningActivityView: View {
   @ObservedObject var model: AppModel
 
   var body: some View {
@@ -1044,9 +1005,9 @@ private struct ActiveTaskView: View {
             }
           }
           Spacer()
-          if model.canCancelOwnedJob {
+          if model.canCancelActiveJob {
             Button(model.isCancellingJob ? "Cancelling…" : "Cancel…", role: .destructive) {
-              model.cancelOwnedJob()
+              model.cancelActiveJob()
             }
             .disabled(model.isCancellingJob)
           }
@@ -1132,6 +1093,7 @@ private struct ActiveTaskView: View {
 
 private enum AppSettingsSection: String, CaseIterable, Identifiable {
   case storage = "Source & destinations"
+  case schedules = "Schedules"
   case general = "General"
   case notifications = "Notifications"
   case diagnostics = "Diagnostics"
@@ -1141,6 +1103,7 @@ private enum AppSettingsSection: String, CaseIterable, Identifiable {
   var symbol: String {
     switch self {
     case .storage: "externaldrive"
+    case .schedules: "calendar"
     case .general: "gearshape"
     case .notifications: "bell"
     case .diagnostics: "stethoscope"
@@ -1172,6 +1135,8 @@ struct AppSettingsView: View {
         switch selectedSection {
         case .storage:
           SetupView(model: model, showsHeader: false)
+        case .schedules:
+          SchedulesView(model: model, showsHeader: false)
         case .general:
           GeneralSettingsPane()
         case .notifications:
@@ -1190,6 +1155,7 @@ struct AppSettingsView: View {
   private var sectionDetail: String {
     switch selectedSection {
     case .storage: "Identity and availability"
+    case .schedules: "When work runs unattended"
     case .general: "Background availability"
     case .notifications: "Recorded task outcomes"
     case .diagnostics: "rsync, source, and destination identity"

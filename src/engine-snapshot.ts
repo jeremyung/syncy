@@ -71,6 +71,7 @@ export function buildEngineActivity(
       : {
           activeJob: {
             actor: owner.actor,
+            pid: owner.pid,
             operation: owner.operation,
             startedAt: owner.startedAt,
             heartbeatAt: owner.heartbeatAt,

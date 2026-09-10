@@ -458,6 +458,10 @@ public struct UnitSnapshot: Decodable, Identifiable, Sendable {
 
 public struct ActiveJobSnapshot: Decodable, Sendable {
   public let actor: String
+  /// The process holding the job lease. A client that did not start the work has
+  /// no task to cancel, so this is its only handle on it. Absent for a job this
+  /// process is running itself, which it cancels in-process instead.
+  public let pid: Int32?
   public let operation: String
   public let startedAt: Double
   public let heartbeatAt: Double
@@ -469,9 +473,10 @@ public struct ActiveJobSnapshot: Decodable, Sendable {
   public init(
     actor: String, operation: String, startedAt: Double, heartbeatAt: Double,
     activity: ActiveJobActivity?, estimatedDurationMs: Double? = nil,
-    batchPosition: Int64? = nil, batchTotal: Int64? = nil
+    batchPosition: Int64? = nil, batchTotal: Int64? = nil, pid: Int32? = nil
   ) {
     self.actor = actor
+    self.pid = pid
     self.operation = operation
     self.startedAt = startedAt
     self.heartbeatAt = heartbeatAt

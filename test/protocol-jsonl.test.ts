@@ -22,6 +22,7 @@ const snapshot: SnapshotMessage = {
   configRevision: "revision-1",
   activeJob: {
     actor: "mac",
+    pid: 321,
     operation: "deep",
     startedAt: 1_750_000_000_000,
     heartbeatAt: 1_750_000_000_500,

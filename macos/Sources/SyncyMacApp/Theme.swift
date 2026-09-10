@@ -1,17 +1,49 @@
 import SwiftUI
 import SyncyMacCore
 
+/// Semantic tokens, never raw colours — the same arrangement as the terminal's
+/// `theme.ts`, where components ask for `verified` or `rule` and only this file
+/// knows what that is. Here the answer is "whatever macOS says it is".
 enum SyncyTheme {
   static let paper = Color(nsColor: .textBackgroundColor)
   static let raised = Color(nsColor: .windowBackgroundColor)
   static let rule = Color.primary.opacity(0.13)
   static let secondaryInk = Color.primary.opacity(0.64)
   static let quietInk = Color.primary.opacity(0.45)
-  static let verified = Color(red: 0.23, green: 0.47, blue: 0.32)
-  static let caution = Color(red: 0.68, green: 0.43, blue: 0.12)
-  static let fault = Color(red: 0.64, green: 0.24, blue: 0.20)
-  static let selection = caution.opacity(0.10)
 
+  // The system's own semantic colours, which is what they are for. Hard-coded
+  // values had to be chosen for one ground and then lived on both: a single
+  // green tuned against white sat muddy on a dark window, and no one value can
+  // be legible on both, since the luminance windows for 4.5:1 do not overlap.
+  //
+  // These carry a value per appearance, and a further pair for Increase
+  // Contrast, resolved at draw time — so dark mode stops being a compromise and
+  // the accessibility setting starts working, neither of which a literal
+  // `Color(red:green:blue:)` can do. That they measure only ~2.2:1 on white is
+  // Apple's own arithmetic and is fine here for the same reason it is fine in
+  // Finder: nothing below paints text with them.
+  static let verified = Color(nsColor: .systemGreen)
+  static let caution = Color(nsColor: .systemOrange)
+  static let fault = Color(nsColor: .systemRed)
+
+  /// **Marks and fills only — never prose.**
+  ///
+  /// This is how macOS uses its own palette, and the reason it gets away with
+  /// it: `systemGreen` measures 2.22:1 on a white window and `systemOrange`
+  /// 2.31:1, both far below what body text needs. Apple never notices because
+  /// text is always `labelColor`; the system colours go on glyphs, fills,
+  /// selection and indicators. Turning on Increase Contrast even makes them
+  /// *worse* on light, because it pushes saturation rather than darkness.
+  ///
+  /// The ledger used to paint the state words themselves, which is what made
+  /// the palette impossible: a colour legible on white and one legible on a
+  /// dark ground cannot be the same colour, so every choice was a compromise
+  /// between two appearances. Restricted to the proportion rule and
+  /// `StateMark`, the system palette serves both — and nothing is lost, because
+  /// every state is spelled out in words that the review checklist already
+  /// requires to read without colour at all.
+  ///
+  /// Adding a caller on a `Text` would reopen all of it.
   static func color(for state: LedgerState) -> Color {
     switch state {
     case .verified: verified

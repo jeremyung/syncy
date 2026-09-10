@@ -171,6 +171,7 @@ describe("engine snapshot", () => {
 
     expect(snapshot.activeJob).toEqual({
       actor: "mac",
+      pid: 321,
       operation: "deep",
       startedAt: 1_750_000_000_000,
       heartbeatAt: 1_750_000_000_500,
