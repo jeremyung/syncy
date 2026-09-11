@@ -46,8 +46,6 @@ export interface CellSnapshot {
   readonly target: string;
   readonly state: CellState;
   readonly reason: string;
-  /** Canonical difference/evidence summary for clients that do not share the TUI. */
-  readonly differenceSummary: string;
   readonly evidence?: {
     /** Whether the configured destination identity is present now. */
     readonly currentTarget: boolean;

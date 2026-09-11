@@ -113,7 +113,6 @@ function validateCell(value: unknown, where: string): void {
   string(cell["target"], `${where}.target`);
   member(cell["state"], CELL_STATES, `${where}.state`);
   string(cell["reason"], `${where}.reason`);
-  string(cell["differenceSummary"], `${where}.differenceSummary`);
   if (cell["evidence"] !== undefined) {
     const evidence = record(cell["evidence"], `${where}.evidence`);
     bool(evidence["currentTarget"], `${where}.evidence.currentTarget`);

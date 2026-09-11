@@ -12,7 +12,7 @@ describe("cross-platform UI contract", () => {
     expect(message.type).toBe("snapshot");
     if (message.type !== "snapshot") return;
     expect(message.targets[1]?.reachabilityPhrase).toBe("different volume");
-    expect(message.units[0]?.cells[1]?.differenceSummary).toBe("2 files not copied yet");
+    expect(message.units[0]?.cells[1]?.reason).toBe("2 files not copied yet");
     expect(message.units[0]?.cells[1]?.nFiles).toBe(2);
     expect(message.units[0]?.cells[0]?.evidence?.lastCheck).toMatchObject({
       method: "deep",

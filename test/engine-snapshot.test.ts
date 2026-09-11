@@ -98,7 +98,7 @@ describe("engine snapshot", () => {
       state: "verified",
       reason: "all destinations deep verified",
       fingerprint: fp,
-      cells: [{ target: "archive", state: "verified", differenceSummary: "deep verified today" }],
+      cells: [{ target: "archive", state: "verified", reason: "deep verified today" }],
     });
   });
 

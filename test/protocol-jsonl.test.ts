@@ -55,7 +55,6 @@ const snapshot: SnapshotMessage = {
           target: "archive",
           state: "unverified",
           reason: "size and date match, bytes unread",
-          differenceSummary: "size and date match, bytes unread",
           nChanges: 0,
           nExtra: 0,
           bytesPending: 0,

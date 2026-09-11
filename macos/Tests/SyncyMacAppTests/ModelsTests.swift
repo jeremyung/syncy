@@ -159,7 +159,7 @@ final class ModelsTests: XCTestCase {
       EngineSnapshot.self, from: contractFixture("snapshot.json"))
 
     XCTAssertEqual(snapshot.targets[1].reachabilityPhrase, "different volume")
-    XCTAssertEqual(snapshot.units[0].cells[1].differenceSummary, "2 files not copied yet")
+    XCTAssertEqual(snapshot.units[0].cells[1].reason, "2 files not copied yet")
     XCTAssertEqual(snapshot.units[0].cells[1].nFiles, 2)
     XCTAssertEqual(snapshot.units[0].cells[0].evidence?.lastCheck?.method, "deep")
     XCTAssertEqual(snapshot.units[0].cells[0].evidence?.lastCheck?.durationMs, 42_000)

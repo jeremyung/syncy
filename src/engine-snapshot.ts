@@ -122,7 +122,6 @@ export async function buildEngineSnapshot(
         const quick = findScan(state, unit, cell.target, "quick", identity);
         return {
           ...cell,
-          differenceSummary: cell.reason,
           evidence: {
             currentTarget: (reach.get(cell.target) ?? "unreachable") === "ok",
             ...(last === undefined ? {} : { lastCheck: evidenceSnapshot(last) }),

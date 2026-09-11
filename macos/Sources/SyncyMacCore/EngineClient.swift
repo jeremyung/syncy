@@ -411,7 +411,6 @@ public struct CellSnapshot: Decodable, Identifiable, Sendable {
   public let target: String
   public let state: LedgerState
   public let reason: String
-  public let differenceSummary: String?
   public let evidence: CellEvidenceSnapshot?
   public let nChanges: Int64
   public let nFiles: Int64?
@@ -425,7 +424,6 @@ public struct CellSnapshot: Decodable, Identifiable, Sendable {
     target = try values.decode(String.self, forKey: .target)
     state = try values.decode(LedgerState.self, forKey: .state)
     reason = try values.decode(String.self, forKey: .reason)
-    differenceSummary = try values.decodeIfPresent(String.self, forKey: .differenceSummary)
     evidence = try values.decodeIfPresent(CellEvidenceSnapshot.self, forKey: .evidence)
     nChanges = try values.decode(Int64.self, forKey: .nChanges)
     nFiles = try values.decodeIfPresent(Int64.self, forKey: .nFiles)
@@ -438,7 +436,7 @@ public struct CellSnapshot: Decodable, Identifiable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case target, state, reason, differenceSummary, evidence, nChanges, nFiles, nNew, bytesPending, nExtra,
+    case target, state, reason, evidence, nChanges, nFiles, nNew, bytesPending, nExtra,
       needsChecksum
   }
 }

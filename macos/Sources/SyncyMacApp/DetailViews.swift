@@ -470,7 +470,7 @@ struct EvidenceView: View {
               VStack(alignment: .leading, spacing: SyncySpace.sm) {
                 Text(destination.state.rawValue)
                   .font(.headline)
-                Text(destination.differenceSummary ?? destination.reason)
+                Text(destination.reason)
                   .font(.callout)
                   .foregroundStyle(SyncyTheme.secondaryInk)
                 if destination.evidence?.currentTarget == false {
@@ -949,7 +949,7 @@ private struct FolderSummaryView: View {
                 Spacer()
                 Text(destination.state.rawValue)
               }
-              Text(destination.differenceSummary ?? destination.reason)
+              Text(destination.reason)
                 .font(.caption)
                 .foregroundStyle(SyncyTheme.secondaryInk)
               if destination.nExtra > 0 {

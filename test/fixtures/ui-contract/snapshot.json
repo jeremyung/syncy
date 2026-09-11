@@ -31,7 +31,6 @@
           "target": "Archive",
           "state": "verified",
           "reason": "deep verified Sep 6",
-          "differenceSummary": "deep verified Sep 6",
           "evidence": {
             "currentTarget": true,
             "lastCheck": {
@@ -66,7 +65,6 @@
           "target": "Studio NAS",
           "state": "behind",
           "reason": "2 files not copied yet",
-          "differenceSummary": "2 files not copied yet",
           "evidence": { "currentTarget": false },
           "nChanges": 3,
           "nFiles": 2,
