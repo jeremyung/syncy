@@ -536,12 +536,7 @@ struct SyncConfirmationView: View {
   @State private var reviewed = false
 
   private var unit: UnitSnapshot? { model.selectedUnit }
-  private var eligibleTargets: [String] {
-    guard let unit else { return [] }
-    return unit.cells
-      .filter { $0.state == .behind || $0.state == .missing }
-      .map(\.target)
-  }
+  private var eligibleTargets: [String] { unit?.syncableTargets ?? [] }
   private var prepared: SyncPreflight? {
     guard model.syncPreflight?.unit == unit?.unit, model.syncPreflight?.target == targetName else {
       return nil
@@ -856,9 +851,7 @@ struct FolderRecordView: View {
   @State private var showsSyncReview = false
 
   private var unit: UnitSnapshot? { model.presentedUnit }
-  private var canReviewSync: Bool {
-    unit?.cells.contains { $0.state == .behind || $0.state == .missing } == true
-  }
+  private var canReviewSync: Bool { unit?.needsSync == true }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {

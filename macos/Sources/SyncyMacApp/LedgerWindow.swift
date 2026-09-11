@@ -184,6 +184,7 @@ private struct ActivityDrawer: View {
 
 private struct LedgerView: View {
   @ObservedObject var model: AppModel
+  @State private var showsSyncReview = false
 
   var body: some View {
     Group {
@@ -197,7 +198,15 @@ private struct LedgerView: View {
           check: { operation, unit in
             Task { await model.runCheck(operation, unit: unit) }
           },
-          canCheck: model.activeJob == nil && !model.isLaunchingJob
+          canCheck: model.activeJob == nil && !model.isLaunchingJob,
+          // The review sheet reads `selectedUnit`, and a right-click reports the
+          // row it was made on without necessarily moving the selection there.
+          // Set it explicitly, or the sheet describes whichever row happened to
+          // be highlighted and the reader confirms a transfer they did not pick.
+          sync: { id in
+            model.selectedUnitID = id
+            showsSyncReview = true
+          }
         )
       } else {
         PaneNotice(
@@ -207,6 +216,10 @@ private struct LedgerView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .sheet(isPresented: $showsSyncReview) {
+      SyncConfirmationView(model: model)
+        .frame(minWidth: 620, minHeight: 560)
+    }
     // The window's subject goes in the title bar, where macOS puts a window's
     // subject. It used to be a serif `PageHeader` reading "Ledger · What the
     // last checks established" above a trailing "12 folders · 431.38 gb" —
@@ -306,6 +319,7 @@ private struct LedgerTable: View {
   let open: (UnitSnapshot.ID) -> Void
   let check: (EngineCheckOperation, String) -> Void
   let canCheck: Bool
+  let sync: (UnitSnapshot.ID) -> Void
 
   var body: some View {
     Table(of: UnitSnapshot.self, selection: $selection) {
@@ -363,6 +377,15 @@ private struct LedgerTable: View {
         .disabled(!canCheck)
       Button("Deep Verify \u{201C}\(unit.unit)\u{201D}") { check(.deep, unit.unit) }
         .disabled(!canCheck)
+      Divider()
+      // The ledger's whole job is to say which folders are behind, and this is
+      // the row that says it — so the transfer belongs here rather than only
+      // behind a drill-in. It stays visible with nothing to send, like the
+      // checks above it, because a menu item that comes and goes per row is a
+      // worse answer to "can I sync this?" than one that is plainly unavailable.
+      // `canCheck` gates it too: a sync writes the tree a check is reading.
+      Button("Sync \u{201C}\(unit.unit)\u{201D}\u{2026}") { sync(id) }
+        .disabled(!canCheck || !unit.needsSync)
     }
   }
 

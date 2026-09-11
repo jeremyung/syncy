@@ -452,6 +452,17 @@ public struct UnitSnapshot: Decodable, Identifiable, Sendable {
   public func cell(for target: String) -> CellSnapshot? {
     cells.first { $0.target == target }
   }
+
+  /// The destinations a transfer could act on, in ledger order. `behind` and
+  /// `missing` are the only two states rsync changes; there is nothing to send
+  /// to a destination that already matches. The TUI offers the first of these
+  /// on `s` and reaches the rest from the confirm page, so the Mac surfaces
+  /// read the same rule from here rather than restating it per view.
+  public var syncableTargets: [String] {
+    cells.filter { $0.state == .behind || $0.state == .missing }.map(\.target)
+  }
+
+  public var needsSync: Bool { !syncableTargets.isEmpty }
 }
 
 public struct ActiveJobSnapshot: Decodable, Sendable {

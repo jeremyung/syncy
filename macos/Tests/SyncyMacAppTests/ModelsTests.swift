@@ -154,6 +154,28 @@ final class ModelsTests: XCTestCase {
     XCTAssertEqual(snapshot.targets.map(\.name), ["one", "two"])
   }
 
+  func testSyncableTargetsOffersOnlyDestinationsATransferWouldChange() throws {
+    let snapshot = try JSONDecoder().decode(
+      EngineSnapshot.self, from: contractFixture("snapshot.json"))
+    let unit = snapshot.units[0]
+
+    // Archive is verified and Studio NAS is behind, so the verified destination
+    // must not be offered: there is nothing to send to a destination that
+    // already matches, and offering it invites a confirmed no-op transfer.
+    XCTAssertEqual(unit.cells.map(\.target), ["Archive", "Studio NAS"])
+    XCTAssertEqual(unit.syncableTargets, ["Studio NAS"])
+    XCTAssertTrue(unit.needsSync)
+  }
+
+  func testSyncableTargetsIsEmptyWhenEveryDestinationMatches() throws {
+    let json =
+      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[{"unit":"photos","state":"verified","reason":"all destinations deep verified","fingerprint":{"nfiles":1,"bytes":1,"maxMtimeNs":"1"},"cells":[{"target":"Archive","state":"verified","reason":"deep verified","nChanges":0,"bytesPending":0,"nExtra":0}]}]}"#
+    let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
+
+    XCTAssertEqual(snapshot.units[0].syncableTargets, [])
+    XCTAssertFalse(snapshot.units[0].needsSync)
+  }
+
   func testSharedSnapshotFixtureCarriesCanonicalPresentation() throws {
     let snapshot = try JSONDecoder().decode(
       EngineSnapshot.self, from: contractFixture("snapshot.json"))
