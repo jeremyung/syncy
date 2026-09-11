@@ -893,6 +893,10 @@ struct FolderRecordView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    // The ledger names itself in the title bar now, so this has to as well —
+    // otherwise drilling into a folder leaves the window still saying "Ledger"
+    // over a screen that is not one.
+    .navigationTitle(unit?.unit ?? "Folder")
     .toolbar {
       ToolbarItem(placement: .navigation) {
         Button {

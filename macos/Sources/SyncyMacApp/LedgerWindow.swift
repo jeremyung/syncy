@@ -137,8 +137,21 @@ private struct ActivityDrawer: View {
     if model.isLoading, model.snapshot == nil { return "Reading engine snapshot" }
     if let error = model.engineErrorMessage ?? model.errorMessage { return error }
     guard let snapshot = model.snapshot else { return "No snapshot loaded" }
-    let verified = snapshot.units.filter { $0.state == .verified }.count
-    return "\(verified) of \(snapshot.units.count) folders verified"
+    let units = snapshot.units
+    // The scale of the archive and the measure of what is safe, which is what
+    // the page header used to carry as "12 folders · 431.38 gb" — a total with
+    // nothing to compare it against. Bytes rather than a folder count for the
+    // reason `verifiedPhrase` in the TUI footer gives: the reader is deciding
+    // what to delete off a full disk, and a folder is not a unit of space.
+    let total = units.reduce(Int64(0)) { $0 + $1.fingerprint.bytes }
+    let verified = units.filter { $0.state == .verified }
+      .reduce(Int64(0)) { $0 + $1.fingerprint.bytes }
+    let scale = "\(units.count) folder\(units.count == 1 ? "" : "s")"
+    return "\(scale) \u{00B7} \(bytes(verified)) verified of \(bytes(total))"
+  }
+
+  private func bytes(_ value: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
   }
 
   private func running(_ job: ActiveJobSnapshot) -> String {
@@ -173,13 +186,7 @@ private struct LedgerView: View {
   @ObservedObject var model: AppModel
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      PageHeader(
-        title: "Ledger",
-        detail: "What the last checks established",
-        trailing: snapshotSummary
-      )
-
+    Group {
       if model.isLoading, model.snapshot == nil {
         PaneNotice(title: "Reading ledger", isWorking: true)
       } else if let snapshot = model.snapshot {
@@ -199,6 +206,15 @@ private struct LedgerView: View {
           symbol: "externaldrive.badge.exclamationmark")
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    // The window's subject goes in the title bar, where macOS puts a window's
+    // subject. It used to be a serif `PageHeader` reading "Ledger · What the
+    // last checks established" above a trailing "12 folders · 431.38 gb" —
+    // three lines explaining a ledger to the person who keeps it, and a folder
+    // count the footer was already printing six inches away. The scale and the
+    // measure belong on the status bar with the rest of the totals; the name
+    // belongs here; and the table gets the height all of it was spending.
+    .navigationTitle("Ledger")
     .toolbar {
       ToolbarItemGroup {
         CheckButton(
@@ -210,21 +226,20 @@ private struct LedgerView: View {
       }
     }
   }
-
-  private var snapshotSummary: String? {
-    guard let snapshot = model.snapshot else { return nil }
-    let bytes = snapshot.units.reduce(Int64(0)) { $0 + $1.fingerprint.bytes }
-    return
-      "\(snapshot.units.count) folders · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file).lowercased())"
-  }
 }
 
 /// Quick check and deep verify are separate operations, not two settings of one
 /// "Check" control, so each gets its own toolbar button. Clicking a button runs
 /// it over the whole ledger — the unambiguous reading, and the only one this
-/// screen can promise, since the row selection follows the cursor. The chevron
-/// holds the narrower scope and names the folder outright rather than saying
-/// "selected", so nobody has to look away to learn what it will touch.
+/// screen can promise, since the row selection follows the cursor.
+///
+/// Both buttons used to render as a bare glyph: a circled tick and a circled
+/// magnifier, side by side, telling a first-time reader nothing about which was
+/// which or what either would touch. The tooltip said so, but a tooltip is the
+/// answer to a question you have to already know to ask. `.titleAndIcon` holds
+/// the words regardless of the toolbar's display mode, and the menu now spells
+/// out *both* scopes — the whole ledger and the one folder — so the split
+/// button documents its own primary action instead of hiding it behind a click.
 private struct CheckButton: View {
   let title: String
   let symbol: String
@@ -233,19 +248,29 @@ private struct CheckButton: View {
 
   var body: some View {
     Menu {
-      Button(scopedTitle) {
-        Task { await model.runCheck(operation, unit: model.selectedUnit?.unit) }
+      Button(allTitle) { Task { await model.runCheck(operation) } }
+      if model.selectedUnit != nil {
+        Button(scopedTitle) {
+          Task { await model.runCheck(operation, unit: model.selectedUnit?.unit) }
+        }
       }
-      .disabled(model.selectedUnit == nil)
     } label: {
       Label(title, systemImage: symbol)
+        .labelStyle(.titleAndIcon)
     } primaryAction: {
       Task { await model.runCheck(operation) }
     }
     .disabled(model.isLaunchingJob || model.activeJob != nil || model.snapshot == nil)
-    .help("\(title) every folder")
+    .help("\(allTitle) \u{00B7} open the menu to pick one folder")
   }
 
+  private var allTitle: String {
+    guard let count = model.snapshot?.units.count, count > 0 else { return "\(title) Every Folder" }
+    return "\(title) All \(count) Folders"
+  }
+
+  /// Names the folder outright rather than saying "selected", so nobody has to
+  /// look away from the menu to learn what it will touch.
   private var scopedTitle: String {
     guard let unit = model.selectedUnit else { return "\(title) Selected Folder" }
     return "\(title) \u{201C}\(unit.unit)\u{201D}"
@@ -257,6 +282,24 @@ private struct CheckButton: View {
 /// click to open, and a menu on right- or two-finger click: a reader reaching
 /// for any of those on a Mac is not reaching for something exotic, and a
 /// `LazyVStack` cannot answer a single one of them.
+///
+/// Each row states its verdict once, and says nothing it cannot measure.
+///
+/// It used to state the verdict three times — a roll-up mark in a leading 28pt
+/// column, the state word in every destination cell, and under each of those a
+/// reason — so twelve folders printed "source changed since deep verify"
+/// seventeen times and called it evidence. The mark column was arithmetic over
+/// the two cells beside it (`rollUp` in `status.ts`), so it went, and the marks
+/// moved into the cells where the state they colour actually lives.
+///
+/// The reasons went too, rather than collapsing into one trailing column. A
+/// reason is prose about *why we cannot say*, and on this archive nine rows in
+/// eleven carried the same sentence: a column whose value barely changes down
+/// the page is not a column, and every one of those sentences is already on the
+/// folder record, one double click away, per destination and in full. What
+/// stays in the cell is the count, because a number is the one thing the reader
+/// cannot arrive at on their own — the difference between a folder a little
+/// behind and one that was never copied at all.
 private struct LedgerTable: View {
   let snapshot: EngineSnapshot
   @Binding var selection: UnitSnapshot.ID?
@@ -266,11 +309,6 @@ private struct LedgerTable: View {
 
   var body: some View {
     Table(of: UnitSnapshot.self, selection: $selection) {
-      TableColumn("") { unit in
-        StateMark(state: unit.state)
-      }
-      .width(28)
-
       TableColumn("Folder") { unit in
         VStack(alignment: .leading, spacing: SyncySpace.xs) {
           Text(unit.unit).fontWeight(.medium).lineLimit(1)
@@ -281,15 +319,21 @@ private struct LedgerTable: View {
         }
         .padding(.vertical, SyncySpace.xs)
       }
-      .width(min: 180, ideal: 270)
+      .width(min: 220, ideal: 340)
 
       // One column per destination, named by the destination, so the ledger
       // still reads across rather than down.
+      //
+      // A destination that is not mounted is a fact about the destination, not
+      // about twelve folders. It used to be invisible here — the tray panel and
+      // Settings both said "not connected", and the ledger, where the reader
+      // actually is, showed a column of `unchecked` and let them guess. It is
+      // said once, under the name it belongs to.
       TableColumnForEach(snapshot.targets) { target in
-        TableColumn(target.name) { (unit: UnitSnapshot) in
+        TableColumn(header(target)) { (unit: UnitSnapshot) in
           DestinationCell(destination: unit.cell(for: target.name))
         }
-        .width(min: 150, ideal: 230)
+        .width(min: 132, ideal: 190)
       }
     } rows: {
       ForEach(snapshot.units) { TableRow($0) }
@@ -322,32 +366,71 @@ private struct LedgerTable: View {
     }
   }
 
+  /// Kept to one line: a wrapped column header shifts every other header's
+  /// baseline, and the phrase is short enough that it does not need two.
+  private func header(_ target: TargetSnapshot) -> String {
+    guard target.reachability != .ok else { return target.name }
+    let phrase = target.reachabilityPhrase ?? target.reachability.ledgerPhrase
+    return "\(target.name) \u{00B7} \(phrase)"
+  }
+
   private func folderFacts(_ unit: UnitSnapshot) -> String {
     let size = ByteCountFormatter.string(
       fromByteCount: unit.fingerprint.bytes, countStyle: .file
     ).lowercased()
     return "\(size) \u{00B7} \(unit.fingerprint.nfiles.formatted()) files"
   }
+
 }
 
+/// A destination's verdict, in one line: the mark that carries the colour, the
+/// word that carries the meaning without it, and — for `behind` alone — the
+/// count, because "behind" spans a folder missing one file and a folder missing
+/// five hundred, and those are not the same answer to "is this safe to delete".
+///
+/// Every other state's reason is a sentence about why no conclusion could be
+/// drawn, which is what the folder record is for. The one exception this cell
+/// used to have to make — a destination that is simply not plugged in, where
+/// every row would say `unchecked` for one reason — is answered by the column
+/// header instead, once, at the level that fact belongs to.
 private struct DestinationCell: View {
   let destination: CellSnapshot?
 
   var body: some View {
-    VStack(alignment: .leading, spacing: SyncySpace.xs) {
+    HStack(spacing: SyncySpace.sm) {
       if let destination {
-        Text(destination.state.rawValue)
-          .font(.callout.weight(.medium))
-        Text(destination.differenceSummary ?? destination.reason)
-          .font(.caption)
-          .foregroundStyle(SyncyTheme.secondaryInk)
+        StateMark(state: destination.state)
+        Text(verdict(destination))
+          .font(.callout)
           .lineLimit(1)
       } else {
+        // No mark, because there is no state to mark. A `?` glyph here would
+        // read as `unchecked`, which is a verdict the engine did not reach —
+        // it did not report this destination for this folder at all. The gap
+        // is the width of the mark the other rows are wearing, so the words
+        // stay on one line down the column.
+        Color.clear.frame(width: 20, height: 20)
         Text("not reported")
           .font(.callout)
           .foregroundStyle(SyncyTheme.quietInk)
+          .lineLimit(1)
       }
     }
     .padding(.vertical, SyncySpace.xs)
+  }
+
+  /// Taken from the structured counts rather than by parsing `reason`, and
+  /// split on `nFiles` for the reason `behindSummary` in `presentation.ts`
+  /// gives: records predating the file-only count fold directories into
+  /// `nChanges`, so calling that a file count claims more than was read.
+  private func verdict(_ destination: CellSnapshot) -> String {
+    guard destination.state == .behind else { return destination.state.rawValue }
+    let count =
+      if let files = destination.nFiles {
+        "\(files.formatted()) file\(files == 1 ? "" : "s")"
+      } else {
+        "\(destination.nChanges.formatted()) change\(destination.nChanges == 1 ? "" : "s")"
+      }
+    return "behind \u{00B7} \(count)"
   }
 }
