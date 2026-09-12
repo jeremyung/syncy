@@ -72,6 +72,8 @@ export interface Diff {
   readonly totals?: Readonly<Record<DiffKind, number>>;
   readonly unit: string;
   readonly target: string;
+  /** Destination identity recorded when this listing was made. */
+  readonly targetIdentity?: string;
   readonly ts: number;
   readonly method: string;
   /** Every difference found, capped at MAX_ENTRIES. */
@@ -163,6 +165,7 @@ export function buildDiffFromAccumulator(
     readonly wholeFolderMissing?: boolean;
     readonly source?: Fingerprint;
     readonly target?: Fingerprint | null;
+    readonly targetIdentity?: string;
   } = {},
 ): Diff {
   return {
@@ -177,6 +180,7 @@ export function buildDiffFromAccumulator(
     wholeFolderMissing: opts.wholeFolderMissing ?? false,
     ...(opts.source !== undefined ? { sourceHolds: opts.source } : {}),
     ...(opts.target != null ? { targetHolds: opts.target } : {}),
+    ...(opts.targetIdentity === undefined ? {} : { targetIdentity: opts.targetIdentity }),
   };
 }
 
@@ -190,6 +194,7 @@ export function buildDiff(
     readonly wholeFolderMissing?: boolean;
     readonly source?: Fingerprint;
     readonly target?: Fingerprint | null;
+    readonly targetIdentity?: string;
   } = {},
 ): Diff {
   const accumulator = createDiffAccumulator();

@@ -201,6 +201,22 @@ describeRsync("a recorded identity, against the real mount table", () => {
     const t = { ...(await recorded(undefined)), path: join(root, "ext", "no-such-dir") } as Target;
     expect(await targetReachability(t)).toBe("unreachable");
   });
+
+  /**
+   * "Either way" once meant only the branch above. With an identity recorded,
+   * an absent path resolves to the volume that owns its mount point — the boot
+   * disk — whose id never matches, so a share that was merely not mounted
+   * reported `mismatch`. Both refuse the check, so nothing unsafe followed; the
+   * cost was the wording, which told the reader their destination was the wrong
+   * drive and sent them to re-register a configuration that was correct.
+   */
+  test("including when an identity is recorded and the volume is not mounted", async () => {
+    const t = {
+      ...(await recorded("not-the-one")),
+      path: join(root, "ext", "no-such-dir"),
+    } as Target;
+    expect(await targetReachability(t)).toBe("unreachable");
+  });
 });
 
 describeRsync("check outcomes against real rsync", () => {

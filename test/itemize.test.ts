@@ -102,11 +102,13 @@ describe("summarize", () => {
     const items = lines.map(parseItemizeLine).filter((i) => i !== null);
     // 1000 + 2000; the directory's 96 bytes transfer nothing.
     expect(summarize(items).bytesPending).toBe(3000);
+    expect(summarize(items).nFiles).toBe(2);
   });
 
   test("an empty result is clean", () => {
     expect(summarize([])).toEqual({
       nChanges: 0,
+      nFiles: 0,
       nNew: 0,
       nMetadata: 0,
       nSame: 0,

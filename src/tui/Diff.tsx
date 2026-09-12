@@ -6,7 +6,6 @@ import {
   type DiffEntry,
   type DiffGroup,
   type DiffKind,
-  diffCounts,
   folderOf,
   GROUP_BY,
   type GroupBy,
@@ -16,6 +15,12 @@ import {
 } from "../diff.ts";
 import { ageAgo, bytes, count, day, span } from "../format.ts";
 import { explainFlags } from "../itemize.ts";
+import {
+  DIFFERENCE_KIND_ORDER,
+  DIFFERENCE_LABEL,
+  DIFFERENCE_SHORT_LABEL,
+  presentDiffSummary,
+} from "../presentation.ts";
 import { displayWidth, padEnd, padStart, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
 import type { Theme } from "./theme.ts";
@@ -49,14 +54,8 @@ import type { Theme } from "./theme.ts";
  */
 
 /** The order differences are listed in: what is at risk first. */
-const ORDER: readonly DiffKind[] = ["new", "changed", "metadata", "extra"];
-
-const LABEL: Readonly<Record<DiffKind, string>> = {
-  new: "not at destination",
-  changed: "content differs",
-  metadata: "attributes differ",
-  extra: "only at destination",
-};
+const ORDER = DIFFERENCE_KIND_ORDER;
+const LABEL = DIFFERENCE_LABEL;
 
 /** A glyph per kind, so the list reads without colour. */
 const GLYPH: Readonly<Record<DiffKind, string>> = {
@@ -67,12 +66,7 @@ const GLYPH: Readonly<Record<DiffKind, string>> = {
 };
 
 /** The same meanings in fewer columns, for a narrow window. */
-const SHORT: Readonly<Record<DiffKind, string>> = {
-  new: "absent",
-  changed: "differs",
-  metadata: "attributes",
-  extra: "extra",
-};
+const SHORT = DIFFERENCE_SHORT_LABEL;
 
 const TOKEN: Readonly<Record<DiffKind, "missing" | "behind" | "dim" | "unverified">> = {
   new: "missing",
@@ -109,6 +103,10 @@ export interface DiffProps {
   readonly unit: string;
   /** One entry per configured target; null means no check has been recorded. */
   readonly diffs: ReadonlyMap<string, DiffData | null>;
+  readonly provenance?: ReadonlyMap<
+    string,
+    "current" | "different-volume" | "not-connected" | "unknown"
+  >;
   /** When each destination last had a sync land, for the age split. */
   readonly lastSync?: ReadonlyMap<string, number | null>;
   /** The grouping the screen opens on. [b] cycles from wherever this leaves it. */
@@ -124,8 +122,8 @@ export interface DiffProps {
 export function summaryLine(diff: DiffData | null, now: number): string {
   if (diff === null) return "never checked — run a check to see what differs";
   if (diff.wholeFolderMissing) return "the whole folder is absent from this destination";
-  const c = diffCounts(diff);
-  const parts = ORDER.filter((k) => c[k] > 0).map((k) => `${c[k]} ${LABEL[k]}`);
+  const summary = presentDiffSummary(diff);
+  const parts = summary.parts.map((part) => `${part.count} ${part.label}`);
   const when = `${diff.method} check ${ageAgo(diff.ts, now)}`;
   if (parts.length === 0) return `no differences · ${when}`;
   // The byte total is what decides whether this is a five-minute sync or an
@@ -350,7 +348,12 @@ function Entry({
  * showed a fixed dozen and hid the rest with no way to reach them.
  */
 export type DiffRow =
-  | { readonly kind: "header"; readonly target: string; readonly diff: DiffData | null }
+  | {
+      readonly kind: "header";
+      readonly target: string;
+      readonly diff: DiffData | null;
+      readonly provenance?: "current" | "different-volume" | "not-connected" | "unknown";
+    }
   | { readonly kind: "magnitude"; readonly text: string }
   | { readonly kind: "lag"; readonly text: string }
   | { readonly kind: "verdict"; readonly text: string; readonly alarm: boolean }
@@ -378,6 +381,7 @@ export interface RowOptions {
   /** Group ids whose default open state the reader has flipped. */
   readonly toggled?: ReadonlySet<string>;
   readonly now?: number;
+  readonly provenance?: DiffProps["provenance"];
 }
 
 /** A group's identity, stable across re-renders so a toggle survives a refresh. */
@@ -396,7 +400,17 @@ export function diffRows(
   const rows: DiffRow[] = [];
   for (const target of targets) {
     const diff = diffs.get(target) ?? null;
-    rows.push({ kind: "header", target, diff });
+    const provenance = opts.provenance?.get(target);
+    rows.push({
+      kind: "header",
+      target,
+      diff,
+      ...(provenance === undefined ? {} : { provenance }),
+    });
+    if (diff !== null && provenance !== undefined && provenance !== "current") {
+      rows.push({ kind: "blank" });
+      continue;
+    }
     const magnitude = magnitudeLine(diff);
     if (magnitude !== null) rows.push({ kind: "magnitude", text: magnitude });
     const lag = lagLine(diff, now);
@@ -548,9 +562,10 @@ export function Diff(props: DiffProps): React.ReactElement {
           by,
           toggled,
           now,
+          ...(props.provenance === undefined ? {} : { provenance: props.provenance }),
         },
       ),
-    [config.targets, diffs, props.lastSync, by, toggled, now],
+    [config.targets, diffs, props.lastSync, props.provenance, by, toggled, now],
   );
   const [cursor, setCursor] = useState(0);
 
@@ -664,12 +679,22 @@ export function Diff(props: DiffProps): React.ReactElement {
           );
         }
         if (r.kind === "header") {
+          const summary =
+            r.provenance === "different-volume"
+              ? "recorded against a different volume — current status unchecked"
+              : r.provenance === "not-connected"
+                ? "not connected — recorded listing is historical"
+                : r.provenance === "unknown"
+                  ? "recorded listing has no destination identity — run a check"
+                  : summaryLine(r.diff, now);
           return (
             <Box key={key}>
               <Text color={theme.ink}>{"  " + padEnd(r.target, 12)}</Text>
               {/* Truncated, not wrapped: a wrapped summary pushed the listing
                   down a line and cost a file from the bottom of it. */}
-              <Text color={theme.dim}>{truncate(summaryLine(r.diff, now), width - 14)}</Text>
+              <Text color={r.provenance === "current" ? theme.dim : theme.unverified}>
+                {truncate(summary, width - 14)}
+              </Text>
             </Box>
           );
         }

@@ -1,8 +1,11 @@
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { recheckAfterSync } from "../check-runner.ts";
 import type { Config, Target } from "../config.ts";
 import { bytes, count } from "../format.ts";
+import { acquireJobOwner, type JobOwnerLease } from "../job-owner.ts";
 import { PARTIAL_DIR } from "../rsync.ts";
+import { loadState } from "../state.ts";
 import { type SyncHandle, type SyncResult, startSync } from "../sync.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
@@ -26,6 +29,8 @@ export interface JobProps {
   readonly unit: string;
   readonly target: Target;
   readonly nChanges: number;
+  /** Changed files only; old evidence has no separate count. */
+  readonly nFiles?: number;
   readonly bytesPending: number;
   readonly needsChecksum?: boolean;
   readonly theme: Theme;
@@ -49,6 +54,18 @@ export function Job(props: JobProps): React.ReactElement {
   const [elapsed, setElapsed] = useState(0);
   const handle = useRef<SyncHandle | null>(null);
   const pending = useRef<string[]>([]);
+
+  /**
+   * The quick check that runs when the transfer succeeds, and what it found.
+   *
+   * The transfer itself records nothing the ledger reads, so without this the
+   * screen would return to a row still claiming the files it just copied are
+   * not copied. `checked` is what the check concluded, or null when it did not
+   * run — cancelled, failed, or refused for an unreachable destination.
+   */
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState<{ outcome: string; nChanges: number } | null>(null);
+  const recheck = useRef<AbortController | null>(null);
 
   /**
    * A keypress refused rather than acted on, so the refusal is visible instead
@@ -79,6 +96,8 @@ export function Job(props: JobProps): React.ReactElement {
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   useEffect(() => {
     let live = true;
+    let ownerHeartbeat: ReturnType<typeof setInterval> | null = null;
+    const ownership = acquireJobOwner("cli", "sync");
 
     // The batch: lines accumulate in a ref and are committed on a timer, so a
     // fast stream cannot drive one React render per line.
@@ -92,20 +111,148 @@ export function Job(props: JobProps): React.ReactElement {
     }, 500);
 
     try {
+      if (!ownership.acquired) {
+        const message = ownership.owner
+          ? `${ownership.owner.actor} ${ownership.owner.operation} is already running`
+          : "another Syncy process is starting";
+        setDone({ exitCode: null, cancelled: false, transferred: 0, stderr: message });
+        return () => {
+          live = false;
+          clearInterval(flush);
+          clearInterval(ticker);
+        };
+      }
+      const jobId = `${started}-${unit}-${target.name}`;
+      const base = {
+        protocolVersion: 1,
+        jobId,
+        operation: "sync",
+        unit,
+        target: target.name,
+      } as const;
+      ownership.lease.observe({
+        ...base,
+        type: "job.started",
+        at: started,
+        phase: "queued",
+        unitSize: {
+          ...(props.nFiles === undefined ? {} : { files: props.nFiles }),
+          bytes: props.bytesPending,
+        },
+      });
+      ownership.lease.observe({
+        ...base,
+        type: "job.phase-changed",
+        at: Date.now(),
+        phase: "transferring",
+      });
+
+      /**
+       * The trailing quick check, run under the sync's own lease.
+       *
+       * Reads state from disk rather than from a prop: the transfer may have
+       * taken hours, and the copy of state this screen mounted with is the one
+       * that still says these files are missing.
+       */
+      const runRecheck = async (lease: JobOwnerLease): Promise<void> => {
+        const abort = new AbortController();
+        recheck.current = abort;
+        setChecking(true);
+        try {
+          await recheckAfterSync(config, loadState(), unit, target.name, {
+            signal: abort.signal,
+            onEvent: (event) => {
+              lease.observe(event);
+              if (event.type === "job.completed" && "outcome" in event.result) {
+                setChecked({ outcome: event.result.outcome, nChanges: event.result.nChanges });
+              }
+            },
+          });
+        } catch {
+          // A check that will not run is not a reason to lose the transfer's
+          // own outcome. The footer says the row is unchecked, which is true.
+        } finally {
+          recheck.current = null;
+          if (live) setChecking(false);
+        }
+      };
+
+      let seen = 0;
       const h = startSync(config, unit, target, {
         onLine: (line) => pending.current.push(line),
+        onItem: (item) => {
+          if (item.kind !== "change" || item.flags[1] !== "f") return;
+          seen += 1;
+          if (seen % 25 === 0 || seen === props.nFiles) {
+            ownership.lease.observe({
+              ...base,
+              type: "job.progress-observed",
+              at: Date.now(),
+              filesSeen: seen,
+              ...(props.nFiles === undefined ? {} : { filesTotal: props.nFiles }),
+            });
+          }
+        },
         ...(props.needsChecksum === true ? { checksum: true } : {}),
         ...(props.bin !== undefined ? { bin: props.bin } : {}),
       });
       handle.current = h;
+      ownerHeartbeat = setInterval(() => {
+        try {
+          ownership.lease.heartbeat();
+        } catch {
+          h.cancel();
+        }
+      }, 10_000);
       h.done
-        .then((r) => {
+        .then(async (r) => {
+          ownership.lease.observe(
+            r.cancelled
+              ? { ...base, type: "job.cancelled", at: Date.now(), transferred: r.transferred }
+              : // 24 is "some files vanished before they could be transferred",
+                // routine on a live archive. The same run's history record and
+                // the recheck below both count it as a completed transfer.
+                r.exitCode === 0 || r.exitCode === 24
+                ? {
+                    ...base,
+                    type: "job.completed",
+                    at: Date.now(),
+                    result: { exitCode: r.exitCode, transferred: r.transferred },
+                  }
+                : {
+                    ...base,
+                    type: "job.failed",
+                    at: Date.now(),
+                    message: r.stderr || `rsync exited ${String(r.exitCode)}`,
+                    exitCode: r.exitCode,
+                  },
+          );
+          // Before the lease is released and before the parent re-reads state,
+          // so the ledger it returns to is reading the check's record rather
+          // than the pre-sync one it would otherwise still be rendering. The
+          // heartbeat keeps running: a quick check over a large folder easily
+          // outlasts the 30s staleness window, and a lease that expired here
+          // would let a second job start against a tree this one is reading.
+          if (live && !r.cancelled && (r.exitCode === 0 || r.exitCode === 24)) {
+            await runRecheck(ownership.lease);
+          }
+          if (ownerHeartbeat !== null) clearInterval(ownerHeartbeat);
+          ownership.lease.release();
           if (!live) return;
           setLines((prev) => [...prev, ...pending.current.splice(0)].slice(-tail));
           setDone(r);
           props.onDone(r);
         })
         .catch((e: unknown) => {
+          if (ownerHeartbeat !== null) clearInterval(ownerHeartbeat);
+          ownership.lease.observe({
+            ...base,
+            type: "job.failed",
+            at: Date.now(),
+            message: String(e),
+            exitCode: null,
+          });
+          ownership.lease.release();
           // Explicit catch at the subprocess boundary; a swallowed rejection
           // would leave the view claiming a transfer is still running.
           if (live) {
@@ -113,6 +260,10 @@ export function Job(props: JobProps): React.ReactElement {
           }
         });
     } catch (e) {
+      if (ownership.acquired) {
+        if (ownerHeartbeat !== null) clearInterval(ownerHeartbeat);
+        ownership.lease.release();
+      }
       setDone({ exitCode: null, cancelled: false, transferred: 0, stderr: String(e) });
     }
 
@@ -120,6 +271,10 @@ export function Job(props: JobProps): React.ReactElement {
       live = false;
       clearInterval(flush);
       clearInterval(ticker);
+      if (ownerHeartbeat !== null) clearInterval(ownerHeartbeat);
+      // The check outlives the screen otherwise: it is a plain async call with
+      // no tie to React's lifecycle, the same way the transfer queue was.
+      recheck.current?.abort();
     };
   }, [config, unit, target.name, tail, props.bin]);
 
@@ -131,6 +286,11 @@ export function Job(props: JobProps): React.ReactElement {
     if (key.ctrl && input === "c") {
       setCancelling(true);
       handle.current?.cancel();
+      // Once the transfer is done the handle is inert, and the thing still
+      // running is the check. Cancelling it costs only the evidence: the bytes
+      // are already copied, and the row stays on its pre-sync record until
+      // something checks — which is what the footer then says.
+      recheck.current?.abort();
       return;
     }
     // esc used to close this screen while a transfer was in flight: the
@@ -152,7 +312,11 @@ export function Job(props: JobProps): React.ReactElement {
       <Box flexDirection="column">
         <Rule width={W} theme={theme} />
         <Text color={theme.unverified}>
-          {cancelling ? "  cancelling… · [ctrl-c] again to quit" : "  running · [ctrl-c] cancel"}
+          {cancelling
+            ? "  cancelling… · [ctrl-c] again to quit"
+            : checking
+              ? "  copied · checking what landed · [ctrl-c] skip the check"
+              : "  running · [ctrl-c] cancel"}
         </Text>
         {notice == null ? null : (
           <Text color={theme.missing}>{"  " + truncate(notice, W - 2)}</Text>
@@ -184,9 +348,7 @@ export function Job(props: JobProps): React.ReactElement {
           </Text>
         ) : null}
         <Text> </Text>
-        <Text color={theme.dim}>
-          {"  copying is not verifying — press [d] on the ledger to check the bytes"}
-        </Text>
+        <Text color={theme.dim}>{"  " + truncate(afterword(checked), W - 2)}</Text>
         <Text color={theme.dim}>{"  [esc] back"}</Text>
       </Box>
     );
@@ -205,7 +367,7 @@ export function Job(props: JobProps): React.ReactElement {
         <Text color={theme.figure}>{target.name}</Text>
       </Box>
       <Text color={theme.dim}>
-        {`  elapsed ${clock} · ${count(props.nChanges)} files · ${bytes(props.bytesPending)} to move`}
+        {`  elapsed ${clock} · ${count(props.nFiles ?? props.nChanges)} ${props.nFiles === undefined ? "changes" : "files"} · ${bytes(props.bytesPending)} to move`}
       </Text>
       <Rule width={W} theme={theme} />
 
@@ -220,6 +382,27 @@ export function Job(props: JobProps): React.ReactElement {
       )}
     </Screen>
   );
+}
+
+/**
+ * What the ledger will say about this destination, in one line.
+ *
+ * The screen used to end on "press [d] to check the bytes" whatever had
+ * happened, which was advice rather than a report — and read as the whole
+ * story when in fact the row was about to go back to claiming the files had
+ * never been copied. Each case below names the state the row is actually in.
+ */
+function afterword(
+  checked: { readonly outcome: string; readonly nChanges: number } | null,
+): string {
+  if (checked === null) return "not checked · the ledger still shows its last check";
+  if (checked.outcome === "clean") {
+    return "present at the right size and date · [d] reads the bytes";
+  }
+  if (checked.outcome === "behind") {
+    return `the check still finds ${count(checked.nChanges)} pending · [enter] for the differences`;
+  }
+  return "the check after the copy was not clean · [enter] for the differences";
 }
 
 /** Itemize lines arrive as `%i|%l|%n`; show the flags and the name. */

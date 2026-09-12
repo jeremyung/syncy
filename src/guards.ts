@@ -1,5 +1,6 @@
 import { existsSync, statfsSync } from "node:fs";
 import type { Config, Target } from "./config.ts";
+import { bytes } from "./format.ts";
 import { timed, timedAsync } from "./log.ts";
 import { checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
 import { targetReachability } from "./scan.ts";
@@ -100,6 +101,11 @@ export async function preflight(
   });
 
   const free = timed("preflight.freeSpace", 200, () => freeBytes(target.path));
+  // Formatted, because every other byte figure the reader sees is. The raw
+  // integers were the one place this app printed 6486832413 at someone and
+  // expected them to count digits — in a sheet that says "6.18 gb to transfer"
+  // four lines above. `needed` carries SPACE_MARGIN, so it reads slightly above
+  // the transfer size on purpose.
   const needed = Math.ceil(bytesPending * SPACE_MARGIN);
   checks.push({
     name: "space",
@@ -107,7 +113,7 @@ export async function preflight(
     detail:
       free === null
         ? "could not read free space at the destination"
-        : `${needed} needed, ${free} available`,
+        : `${bytes(needed)} needed, ${bytes(free)} available`,
   });
 
   checks.push(deleteCheck(argv));

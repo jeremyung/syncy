@@ -441,9 +441,21 @@ The argv is appended to `history.jsonl` with `exitCode: null` **before** the
 process spawns, and again with the real exit code when it finishes, so a sync
 that takes the machine down still leaves a record of what was attempted.
 
-After a transfer the job view says the target is *not verified until it is
-checked*. A completed rsync proves a copy happened; it never proves the copy
-matches, and only a deep verify may move a unit to `verified`.
+A successful transfer is followed by a **quick check of the one destination it
+wrote to**, run under the sync's own ownership lease and before the ledger is
+re-read. The transfer itself writes nothing to `state.json`, so without this the
+row the user returns to still renders the pre-sync scan — a folder just copied
+in full going on reporting `▲504 · 504 files not copied yet`. rsync's exit code
+is not a substitute for the check: it proves a copy happened, never that the
+copy matches. The stale record is replaced with evidence rather than with an
+assumption.
+
+The check is quick, not deep, and that is the ladder working as intended. It
+establishes that every file is present at the right size and date, which moves
+the row off `behind` to `unverified`. It does not read the bytes, so it cannot
+produce `verified` — only a deep verify may move a unit there. Cancelling the
+check (`ctrl-c` after the copy) costs only the evidence; the bytes are already
+on the disk, and the job view then says the row is unchecked.
 
 ## 7. Setup screen — configuration is UI, not a text file
 

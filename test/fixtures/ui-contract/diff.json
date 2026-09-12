@@ -1,0 +1,41 @@
+{
+  "protocolVersion": 1,
+  "type": "diff",
+  "generatedAt": 1788681600000,
+  "unit": "photos",
+  "target": "Studio NAS",
+  "diff": {
+    "version": 1,
+    "unit": "photos",
+    "target": "Studio NAS",
+    "targetIdentity": "volume-old",
+    "ts": 1788681500000,
+    "method": "quick",
+    "entries": [
+      {
+        "kind": "new",
+        "name": "day-2/photo.nef",
+        "bytes": 2048,
+        "flags": ">f+++++++++",
+        "dir": false,
+        "sized": true,
+        "mtime": 1788681400000
+      }
+    ],
+    "truncated": 2,
+    "wholeFolderMissing": false,
+    "sourceHolds": { "nfiles": 12, "bytes": 4096, "maxMtimeNs": "1788681600000000000" },
+    "targetHolds": { "nfiles": 10, "bytes": 2048, "maxMtimeNs": "1788681400000000000" }
+  },
+  "presentation": {
+    "state": "differences",
+    "parts": [{ "kind": "new", "count": 3, "label": "not at destination" }],
+    "copyableFiles": 2
+  },
+  "provenance": {
+    "targetIdentity": "volume-old",
+    "identityMatches": false,
+    "reachability": "mismatch",
+    "current": false
+  }
+}

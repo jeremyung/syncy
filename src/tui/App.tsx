@@ -9,7 +9,7 @@ import { bytes } from "../format.ts";
 import { timed, timedAsync } from "../log.ts";
 import { allReachability, listUnits, type Reachability } from "../scan.ts";
 import { lastSyncAt, loadState, type State } from "../state.ts";
-import { type CellState, evaluateUnit, type UnitState } from "../status.ts";
+import { type CellState, evaluateUnit, targetIdentity, type UnitState } from "../status.ts";
 import { setTitle, titleFor } from "../title.ts";
 import { padEnd, truncatePath } from "../width.ts";
 import { Confirm } from "./Confirm.tsx";
@@ -247,6 +247,21 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     return new Map(config.targets.map((t) => [t.name, loadDiff(unit, t.name)]));
   }, [showDiff, rows, clampedSelection, config.targets, state]);
 
+  const diffProvenance = useMemo(() => {
+    const values = new Map<string, "current" | "different-volume" | "not-connected" | "unknown">();
+    for (const target of config.targets) {
+      const diff = diffs.get(target.name);
+      if (diff == null) continue;
+      const identity = targetIdentity(target);
+      if (diff.targetIdentity === undefined) values.set(target.name, "unknown");
+      else if (diff.targetIdentity !== identity) values.set(target.name, "different-volume");
+      else if ((scan?.reach.get(target.name) ?? "unreachable") !== "ok")
+        values.set(target.name, "not-connected");
+      else values.set(target.name, "current");
+    }
+    return values;
+  }, [config.targets, diffs, scan?.reach]);
+
   // Read on the same terms as the diffs themselves: the differences screen is
   // the only thing that asks when a sync last landed, and it has to be the
   // sync that just finished rather than the one recorded when the app opened.
@@ -349,6 +364,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
           .map((c) => ({
             name: c.target,
             nChanges: c.nChanges,
+            ...(c.nFiles === undefined ? {} : { nFiles: c.nFiles }),
             bytesPending: c.bytesPending,
           }));
 
@@ -361,6 +377,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
         unit={pendingSync.unit}
         target={syncTarget}
         nChanges={syncCell?.nChanges ?? 0}
+        {...(syncCell?.nFiles === undefined ? {} : { nFiles: syncCell.nFiles })}
         {...(syncCell?.nNew === undefined ? {} : { nNew: syncCell.nNew })}
         nExtra={syncCell?.nExtra ?? 0}
         bytesPending={syncCell?.bytesPending ?? 0}
@@ -384,6 +401,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
         unit={runningSync.unit}
         target={syncTarget}
         nChanges={syncCell?.nChanges ?? 0}
+        {...(syncCell?.nFiles === undefined ? {} : { nFiles: syncCell.nFiles })}
         bytesPending={syncCell?.bytesPending ?? 0}
         {...(syncCell?.needsChecksum === true ? { needsChecksum: true } : {})}
         {...(bin !== undefined ? { bin } : {})}
@@ -489,6 +507,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
           config={config}
           unit={row.status.unit}
           diffs={diffs}
+          provenance={diffProvenance}
           lastSync={lastSync}
           theme={theme}
           width={width}

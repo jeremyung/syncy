@@ -1,0 +1,533 @@
+<title>Ledger Density</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Faustina:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ground: oklch(97.2% 0.006 75);
+    --paper: oklch(99.4% 0.003 75);
+    --ink: oklch(23% 0.012 70);
+    --ink-2: oklch(46% 0.010 70);
+    --ink-3: oklch(62% 0.008 70);
+    --rule: oklch(88% 0.007 70);
+    --rule-soft: oklch(93.5% 0.005 70);
+    --verified: oklch(58% 0.145 148);
+    --caution: oklch(66% 0.155 55);
+    --fault: oklch(57% 0.190 27);
+    --select: oklch(52% 0.205 258);
+    --strike: oklch(57% 0.190 27);
+
+    --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    --text: "Faustina", Charter, Georgia, serif;
+
+    --space-xs: 4px;  --space-sm: 8px;  --space-md: 12px;
+    --space-lg: 16px; --space-xl: 24px; --space-2xl: 32px;
+    --space-3xl: 48px; --space-4xl: 96px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: oklch(19% 0.008 70);
+      --paper: oklch(23.5% 0.008 70);
+      --ink: oklch(93% 0.008 75);
+      --ink-2: oklch(74% 0.008 72);
+      --ink-3: oklch(58% 0.007 72);
+      --rule: oklch(34% 0.008 70);
+      --rule-soft: oklch(29% 0.008 70);
+      --verified: oklch(74% 0.155 148);
+      --caution: oklch(78% 0.145 62);
+      --fault: oklch(70% 0.170 25);
+      --select: oklch(60% 0.190 258);
+      --strike: oklch(70% 0.170 25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: oklch(19% 0.008 70);
+    --paper: oklch(23.5% 0.008 70);
+    --ink: oklch(93% 0.008 75);
+    --ink-2: oklch(74% 0.008 72);
+    --ink-3: oklch(58% 0.007 72);
+    --rule: oklch(34% 0.008 70);
+    --rule-soft: oklch(29% 0.008 70);
+    --verified: oklch(74% 0.155 148);
+    --caution: oklch(78% 0.145 62);
+    --fault: oklch(70% 0.170 25);
+    --select: oklch(60% 0.190 258);
+    --strike: oklch(70% 0.170 25);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--text);
+    font-size: 17px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .sheet { max-width: 1180px; margin: 0 auto; padding: var(--space-4xl) var(--space-2xl) var(--space-3xl); }
+
+  /* ---- masthead ---- */
+  .masthead { margin-bottom: var(--space-4xl); }
+  .masthead h1 {
+    font-size: clamp(2.4rem, 1.4rem + 2.6vw, 3.9rem);
+    font-weight: 600;
+    letter-spacing: -0.022em;
+    line-height: 1.02;
+    margin: 0 0 var(--space-lg);
+    max-width: 16ch;
+  }
+  .masthead p {
+    font-size: 1.16rem;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0;
+  }
+  .stamp {
+    font-family: var(--ui);
+    font-size: 11px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 var(--space-xl);
+  }
+
+  /* ---- findings ---- */
+  .finding {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 0 var(--space-2xl);
+    padding-top: var(--space-3xl);
+    margin-top: var(--space-3xl);
+    border-top: 1px solid var(--rule);
+  }
+  @media (max-width: 760px) { .finding { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); } }
+  .index {
+    font-family: var(--ui);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    padding-top: 0.55em;
+  }
+  .finding h2 {
+    font-size: clamp(1.5rem, 1.15rem + 0.9vw, 2rem);
+    font-weight: 600;
+    letter-spacing: -0.014em;
+    line-height: 1.18;
+    margin: 0 0 var(--space-md);
+    max-width: 30ch;
+  }
+  .finding p { max-width: 68ch; color: var(--ink-2); margin: 0 0 var(--space-lg); }
+  .finding p strong { color: var(--ink); font-weight: 600; }
+  .verdict {
+    font-family: var(--ui);
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    background: color-mix(in oklch, var(--paper) 70%, transparent);
+    border: 1px solid var(--rule-soft);
+    border-radius: 5px;
+    padding: var(--space-md) var(--space-lg);
+    max-width: 70ch;
+    margin-top: var(--space-lg);
+  }
+  .verdict b { color: var(--ink); font-weight: 600; }
+
+  /* ---- app chrome ---- */
+  .win {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 9px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px oklch(0% 0 0 / 0.05);
+    margin-bottom: var(--space-lg);
+  }
+  .win-label {
+    font-family: var(--ui);
+    font-size: 10.5px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 var(--space-sm);
+  }
+  .win-label.now { color: var(--caution); }
+  .win-label.next { color: var(--verified); }
+
+  .titlebar {
+    display: flex; align-items: center; gap: var(--space-md);
+    padding: 0 var(--space-md);
+    height: 44px;
+    border-bottom: 1px solid var(--rule-soft);
+    background: color-mix(in oklch, var(--ground) 55%, var(--paper));
+  }
+  .lights { display: flex; gap: 7px; }
+  .lights i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .lights i:nth-child(1) { background: oklch(66% 0.19 22); }
+  .lights i:nth-child(2) { background: oklch(80% 0.15 85); }
+  .lights i:nth-child(3) { background: oklch(74% 0.17 145); }
+  .wtitle { font-family: var(--ui); font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .tb-right { margin-left: auto; display: flex; gap: var(--space-sm); }
+
+  .tbbtn {
+    font-family: var(--ui); font-size: 12px; color: var(--ink);
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 6px;
+    background: var(--paper);
+    padding: 4px 7px; white-space: nowrap;
+  }
+  .tbbtn .glyph { font-size: 13px; color: var(--ink-2); }
+  .tbbtn .split { border-left: 1px solid var(--rule); margin-left: 2px; padding-left: 6px; color: var(--ink-3); font-size: 9px; }
+  .tbbtn.mute { color: transparent; }
+
+  /* ---- table ---- */
+  table { width: 100%; border-collapse: collapse; font-family: var(--ui); table-layout: fixed; }
+  thead th {
+    font-size: 11.5px; font-weight: 500; color: var(--ink-2);
+    text-align: left; padding: 7px var(--space-md);
+    border-bottom: 1px solid var(--rule-soft);
+    background: color-mix(in oklch, var(--ground) 40%, var(--paper));
+  }
+  thead th + th { border-left: 1px solid var(--rule-soft); }
+  tbody td { padding: 7px var(--space-md); vertical-align: top; font-size: 13px; }
+  tbody tr:nth-child(even) { background: color-mix(in oklch, var(--ground) 45%, transparent); }
+  tbody tr.sel { background: var(--select); }
+  tbody tr.sel td, tbody tr.sel .sub, tbody tr.sel .state, tbody tr.sel .why { color: oklch(99% 0 0); }
+  tbody tr.sel .mark { background: oklch(100% 0 0 / 0.22); color: oklch(99% 0 0); }
+
+  .name { font-weight: 500; color: var(--ink); }
+  .sub { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .state { font-size: 13px; color: var(--ink); }
+  .why { font-size: 11.5px; color: var(--ink-2); margin-top: 2px; }
+  .cell-row { display: flex; align-items: center; gap: var(--space-sm); }
+  .mark {
+    width: 19px; height: 19px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; flex: none; line-height: 1;
+  }
+  .mark.v { color: var(--verified); background: color-mix(in oklch, var(--verified) 13%, transparent); }
+  .mark.c { color: var(--caution); background: color-mix(in oklch, var(--caution) 14%, transparent); }
+  .mark.f { color: var(--fault);   background: color-mix(in oklch, var(--fault) 13%, transparent); }
+  .mark.q { color: var(--ink-3);   background: color-mix(in oklch, var(--ink-3) 13%, transparent); }
+  .gap { width: 19px; flex: none; }
+
+  .pagehead { padding: var(--space-xl) var(--space-lg) var(--space-lg); border-bottom: 1px solid var(--rule-soft); display: flex; align-items: flex-end; gap: var(--space-lg); }
+  .pagehead h3 { font-family: var(--text); font-size: 26px; font-weight: 600; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .pagehead .det { font-family: var(--ui); font-size: 13px; color: var(--ink-2); }
+  .pagehead .tot { font-family: var(--ui); font-size: 13px; color: var(--ink-2); margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  .statusbar {
+    display: flex; align-items: center; gap: var(--space-sm);
+    padding: 0 var(--space-lg); height: 32px;
+    border-top: 1px solid var(--rule-soft);
+    background: color-mix(in oklch, var(--ground) 55%, var(--paper));
+    font-family: var(--ui); font-size: 11.5px; color: var(--ink-2);
+  }
+  .statusbar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
+  .statusbar .right { margin-left: auto; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+  /* redundancy marking */
+  .dup { position: relative; }
+  .dup::after {
+    content: ""; position: absolute; left: 0; right: 6px; top: 50%;
+    height: 1px; background: var(--strike); opacity: 0.5;
+  }
+  .tally {
+    font-family: var(--ui); font-size: 11.5px; color: var(--ink-3);
+    display: flex; flex-wrap: wrap; gap: var(--space-xs) var(--space-lg);
+    margin: var(--space-md) 0 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .tally b { color: var(--strike); font-weight: 600; }
+
+  .wide { overflow-x: auto; }
+  .wide > .win { min-width: 720px; }
+
+  footer {
+    margin-top: var(--space-4xl);
+    padding-top: var(--space-xl);
+    border-top: 1px solid var(--rule);
+    font-family: var(--ui); font-size: 12px; color: var(--ink-3);
+    max-width: 70ch;
+  }
+</style>
+
+<div class="sheet">
+  <div class="masthead">
+    <p class="stamp">syncy · mac ledger · 10 sep 2026</p>
+    <h1>Each row says it once.</h1>
+    <p>The ledger window printed its verdict three times per row and its evidence twice, then
+      repeated the totals from the status bar in a header that explained what a ledger is. This is
+      what was cut and what stayed.</p>
+  </div>
+
+  <!-- 01 -->
+  <section class="finding">
+    <div class="index">01</div>
+    <div>
+      <h2>The verdict was printed three times</h2>
+      <p>A roll‑up mark in the leading column, the state word in every destination cell, and the
+        reason under each of those. The mark is <strong>arithmetic over the cells beside it</strong> —
+        <code>rollUp</code> in <code>status.ts</code> — and the reader can do it by eye when both
+        cells are on screen. It went; the marks moved into the cells, where the state they colour
+        actually lives.</p>
+
+      <p class="win-label now">Before · one row, six strings and a mark</p>
+      <div class="wide"><div class="win">
+        <table>
+          <colgroup><col style="width:34px"><col style="width:32%"><col style="width:31%"><col style="width:31%"></colgroup>
+          <thead><tr><th></th><th>Folder</th><th>External</th><th>NAS</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="mark c">✳</span></td>
+              <td><div class="name">20-01-01 - 2020</div><div class="sub">90.35 gb · 2,507 files</div></td>
+              <td><div class="state dup">verified</div><div class="why">deep verified today</div></td>
+              <td><div class="state dup">unverified</div><div class="why">source changed since deep verify</div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div></div>
+
+      <p class="win-label next">After · the mark belongs to the state it colours</p>
+      <div class="wide"><div class="win">
+        <table>
+          <colgroup><col style="width:42%"><col style="width:29%"><col style="width:29%"></colgroup>
+          <thead><tr><th>Folder</th><th>External</th><th>NAS</th></tr></thead>
+          <tbody>
+            <tr><td><div class="name">20-01-01 - 2020</div><div class="sub">90.35 gb · 2,507 files</div></td><td><div class="cell-row"><span class="mark v">✓</span><span class="state">verified</span></div></td><td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- 02 -->
+  <section class="finding">
+    <div class="index">02</div>
+    <div>
+      <h2>Eleven rows, twenty‑two evidence lines, four sentences</h2>
+      <p>Every destination cell carried its own reason. On the archive in the screenshot that meant
+        <strong>“source changed since deep verify” nine times</strong> and “source changed since last
+        check” seven more. A fact printed sixteen times is not sixteen facts.</p>
+      <p>The first fix collapsed them into one column per row. That was still wrong: a reason is
+        prose about <em>why no conclusion could be drawn</em>, it barely changes down the page, and
+        every word of it is already on the folder record — per destination, in full, one double‑click
+        away. <strong>A column that repeats itself is not made into a column by moving it.</strong>
+        The reasons went.</p>
+      <p>What stayed is the count. “Behind” spans a folder missing one file and a folder missing five
+        hundred, and a number is the one thing the reader cannot arrive at on their own. It is taken
+        from <code>nFiles</code>/<code>nChanges</code>, not by parsing the sentence.</p>
+
+      <p class="win-label now">Before</p>
+      <div class="wide"><div class="win">
+        <table>
+          <colgroup><col style="width:34px"><col style="width:32%"><col style="width:31%"><col style="width:31%"></colgroup>
+          <thead><tr><th></th><th>Folder</th><th>External</th><th>NAS</th></tr></thead>
+          <tbody>
+            <tr class="sel">
+              <td><span class="mark v">✓</span></td>
+              <td><div class="name">19-01-01 - 2019</div><div class="sub">84.26 gb · 2,903 files</div></td>
+              <td><div class="state">verified</div><div class="why">deep verified today</div></td>
+              <td><div class="state">verified</div><div class="why">deep verified today</div></td>
+            </tr>
+            <tr>
+              <td><span class="mark c">✳</span></td>
+              <td><div class="name">2017-12-02 - 2017-12-10 - Maui</div><div class="sub">10.79 gb · 801 files</div></td>
+              <td><div class="state">unverified</div><div class="why dup">source changed since deep verify</div></td>
+              <td><div class="state">unverified</div><div class="why dup">source changed since last check</div></td>
+            </tr>
+            <tr>
+              <td><span class="mark c">✳</span></td>
+              <td><div class="name">2019-11-23 - 2019-12-01 - Chile</div><div class="sub">28.82 gb · 572 files</div></td>
+              <td><div class="state">unverified</div><div class="why dup">source changed since deep verify</div></td>
+              <td><div class="state">unverified</div><div class="why dup">source changed since last check</div></td>
+            </tr>
+            <tr>
+              <td><span class="mark c">✳</span></td>
+              <td><div class="name">21-01-01 - 2021</div><div class="sub">45.15 gb · 959 files</div></td>
+              <td><div class="state">unverified</div><div class="why dup">source changed since deep verify</div></td>
+              <td><div class="state">unverified</div><div class="why dup">source changed since last check</div></td>
+            </tr>
+            <tr>
+              <td><span class="mark c">↑</span></td>
+              <td><div class="name">24-01-01 - 2024</div><div class="sub">14.45 gb · 935 files</div></td>
+              <td><div class="state">unverified</div><div class="why dup">source changed since deep verify</div></td>
+              <td><div class="state">behind</div><div class="why">504 files not copied yet</div></td>
+            </tr>
+            <tr>
+              <td><span class="mark f">−</span></td>
+              <td><div class="name">26-01-01 - 2026</div><div class="sub">2.1 gb · 96 files</div></td>
+              <td><div class="state">missing</div><div class="why dup">never copied</div></td>
+              <td><div class="state">missing</div><div class="why dup">never copied</div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div></div>
+      <p class="tally"><span>struck through: <b>9</b> lines saying one of two sentences</span></p>
+
+      <p class="win-label next" style="margin-top:var(--space-xl)">After</p>
+      <div class="wide"><div class="win">
+        <table>
+          <colgroup><col style="width:42%"><col style="width:29%"><col style="width:29%"></colgroup>
+          <thead><tr><th>Folder</th><th>External</th><th>NAS</th></tr></thead>
+          <tbody>
+            <tr class="sel"><td><div class="name">19-01-01 - 2019</div><div class="sub">84.26 gb · 2,903 files</div></td><td><div class="cell-row"><span class="mark v">✓</span><span class="state">verified</span></div></td><td><div class="cell-row"><span class="mark v">✓</span><span class="state">verified</span></div></td></tr>
+            <tr><td><div class="name">2017-12-02 - 2017-12-10 - Maui</div><div class="sub">10.79 gb · 801 files</div></td><td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td><td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td></tr>
+            <tr><td><div class="name">2019-11-23 - 2019-12-01 - Chile</div><div class="sub">28.82 gb · 572 files</div></td><td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td><td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td></tr>
+            <tr><td><div class="name">21-01-01 - 2021</div><div class="sub">45.15 gb · 959 files</div></td><td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td><td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td></tr>
+            <tr><td><div class="name">24-01-01 - 2024</div><div class="sub">14.45 gb · 935 files</div></td><td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td><td><div class="cell-row"><span class="mark c">↑</span><span class="state">behind · 504 files</span></div></td></tr>
+            <tr><td><div class="name">26-01-01 - 2026</div><div class="sub">2.1 gb · 96 files</div></td><td><div class="cell-row"><span class="mark f">−</span><span class="state">missing</span></div></td><td><div class="cell-row"><span class="mark f">−</span><span class="state">missing</span></div></td></tr>
+          </tbody>
+        </table>
+      </div></div>
+      <div class="verdict">
+        Lost on purpose: the date under a verified row. <b>The word already carries it</b> — the
+        engine turns <code>verified</code> into <code>unverified · deep verify expired</code> the
+        moment the record ages out of its window, so “verified” cannot mean “verified a year ago”.
+        The exact timestamp is on the folder record's Evidence tab, where a timestamp belongs.
+      </div>
+    </div>
+  </section>
+
+  <!-- 03 -->
+  <section class="finding">
+    <div class="index">03</div>
+    <div>
+      <h2>The header explained a ledger to the person who keeps it</h2>
+      <p>“What the last checks established” tells a reader who reads rsync itemize strings nothing
+        they did not know. “12 folders · 431.38 gb” was a folder count the status bar was already
+        printing <strong>six inches away</strong>, and a total with nothing to compare it against.</p>
+      <p>The name moved to the title bar, where macOS puts a window's subject and it costs no
+        content height. The measure moved to the status bar and picked up the thing the reader
+        actually came for: <strong>how much of the archive is safe to delete</strong>. Bytes, not
+        folders — the TUI footer made the same call, for the same reason.</p>
+
+      <p class="win-label now">Before · three lines and a duplicated count</p>
+      <div class="wide"><div class="win">
+        <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><span class="wtitle">Syncy</span></div>
+        <div class="pagehead">
+          <div><h3 class="dup">Ledger</h3><div class="det dup">What the last checks established</div></div>
+          <div class="tot dup">12 folders · 431.38 gb</div>
+        </div>
+        <div class="statusbar"><span class="dot"></span><span class="dup">1 of 12 folders verified</span><span class="right">snapshot · Sep 10, 2026 at 1:42 PM</span></div>
+      </div></div>
+
+      <p class="win-label next">After · the subject in the title bar, the measure in the footer</p>
+      <div class="wide"><div class="win">
+        <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><span class="wtitle">Ledger</span></div>
+        <table>
+          <colgroup><col style="width:42%"><col style="width:29%"><col style="width:29%"></colgroup>
+          <thead><tr><th>Folder</th><th>External</th><th>NAS</th></tr></thead>
+          <tbody><tr><td><div class="name">19-01-01 - 2019</div><div class="sub">84.26 gb · 2,903 files</div></td><td><div class="cell-row"><span class="mark v">✓</span><span class="state">verified</span></div></td><td><div class="cell-row"><span class="mark v">✓</span><span class="state">verified</span></div></td></tr></tbody>
+        </table>
+        <div class="statusbar"><span class="dot"></span><span>12 folders · 84.26 gb verified of 431.38 gb</span><span class="right">snapshot · Sep 10, 2026 at 1:42 PM</span></div>
+      </div></div>
+      <p class="tally"><span>recovered: <b>~92pt</b> of window height, which is three more rows</span></p>
+    </div>
+  </section>
+
+  <!-- 04 -->
+  <section class="finding">
+    <div class="index">04</div>
+    <div>
+      <h2>Two circles that would not say what they were</h2>
+      <p>A tick in a circle and a magnifier in a circle, side by side. The tooltip named them, but a
+        tooltip is the answer to a question you have to already know to ask — and neither said that
+        clicking runs the check over <strong>all twelve folders</strong>.</p>
+      <p>The labels are forced on regardless of the toolbar's display mode. The split menu now spells
+        out both scopes, so it documents its own primary action instead of hiding it behind a click,
+        and the per‑folder item names the folder rather than saying “selected”.</p>
+
+      <p class="win-label now">Before</p>
+      <div class="wide"><div class="win">
+        <div class="titlebar">
+          <div class="lights"><i></i><i></i><i></i></div><span class="wtitle">Syncy</span>
+          <div class="tb-right">
+            <span class="tbbtn"><span class="glyph">⊘</span><span class="split">⌄</span></span>
+            <span class="tbbtn"><span class="glyph">⊙</span><span class="split">⌄</span></span>
+          </div>
+        </div>
+      </div></div>
+
+      <p class="win-label next">After</p>
+      <div class="wide"><div class="win">
+        <div class="titlebar">
+          <div class="lights"><i></i><i></i><i></i></div><span class="wtitle">Ledger</span>
+          <div class="tb-right">
+            <span class="tbbtn"><span class="glyph">⊘</span>Quick Check<span class="split">⌄</span></span>
+            <span class="tbbtn"><span class="glyph">⊙</span>Deep Verify<span class="split">⌄</span></span>
+          </div>
+        </div>
+      </div></div>
+      <div class="verdict">
+        Menu contents · <b>Quick Check All 12 Folders</b> · Quick Check “20-01-01 - 2020”<br>
+        Tooltip · Quick Check All 12 Folders · open the menu to pick one folder
+      </div>
+    </div>
+  </section>
+
+  <!-- 05 -->
+  <section class="finding">
+    <div class="index">05</div>
+    <div>
+      <h2>An unplugged drive is one fact, not twelve</h2>
+      <p>Cutting the reasons exposed a gap that was already there. When a destination is not mounted,
+        every row's cell for it reads <code>unchecked</code> — twelve rows stating one fact about one
+        drive, and <strong>the ledger never said which fact</strong>. The tray panel and Settings both
+        say “not connected”; the window the reader is actually looking at did not.</p>
+      <p>It belongs to the destination, so it goes under the destination's name, once.</p>
+
+      <p class="win-label next">After</p>
+      <div class="wide"><div class="win">
+        <table>
+          <colgroup><col style="width:42%"><col style="width:29%"><col style="width:29%"></colgroup>
+          <thead><tr><th>Folder</th><th>External</th><th>NAS · not connected</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><div class="name">21-01-01 - 2021</div><div class="sub">45.15 gb · 959 files</div></td>
+              <td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td>
+              <td><div class="cell-row"><span class="mark q">?</span><span class="state">unchecked</span></div></td>
+            </tr>
+            <tr>
+              <td><div class="name">22-01-01 - 2022</div><div class="sub">35.88 gb · 712 files</div></td>
+              <td><div class="cell-row"><span class="mark c">✳</span><span class="state">unverified</span></div></td>
+              <td><div class="cell-row"><span class="mark q">?</span><span class="state">unchecked</span></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div></div>
+      <div class="verdict">
+        <code>unchecked</code> still describes our knowledge, not the drive — the header says why we
+        have none. <b>Absence of a record stays reported as absence.</b>
+      </div>
+    </div>
+  </section>
+
+  <!-- 06 -->
+  <section class="finding">
+    <div class="index">06</div>
+    <div>
+      <h2>One field, two names</h2>
+      <p>The cells read <code>differenceSummary ?? reason</code>. In <code>engine-snapshot.ts</code>
+        the engine emits <code>differenceSummary: cell.reason</code> — the same string, under two
+        keys, with a fallback between them that can never fire. The ledger now reads
+        <code>reason</code>, which is what the roll‑up reads, so the two cannot drift.</p>
+      <div class="verdict">
+        Left in place: the engine still emits both, and the folder record still prefers
+        <code>differenceSummary</code>. <b>Worth a follow‑up</b> — one of the two names should go,
+        and that is a change to the protocol, not to this window.
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Kept deliberately: the state word in every destination cell, rather than the TUI's bare glyph.
+    A terminal row is 110 cells and buys a legend with the space it saves; a 1040pt window is not
+    short of room, and a legend is a lookup table the reader has to hold in their head. The mark
+    carries the colour, the word carries the meaning without it — which is the rule
+    <code>Theme.swift</code> already states.
+    <br><br>
+    The test this ledger now passes: <b>every string on a row is either a measurement or a state
+    word, and no string appears twice.</b> Prose about why a conclusion could not be drawn lives on
+    the folder record, which exists precisely to hold it.
+  </footer>
+</div>

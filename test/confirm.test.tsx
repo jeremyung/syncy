@@ -6,6 +6,7 @@ import { type Config, parseConfig, type Target } from "../src/config.ts";
 import { freeBytes } from "../src/guards.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
+import { loadState } from "../src/state.ts";
 import { App } from "../src/tui/App.tsx";
 import { Confirm, nextCandidate, replaceLine } from "../src/tui/Confirm.tsx";
 import { Job } from "../src/tui/Job.tsx";
@@ -467,11 +468,27 @@ describeRsync("the job view", () => {
   });
 
   test("does not claim the target is verified afterwards", async () => {
-    // A transfer proves a copy happened, never that it matches.
+    // A transfer proves a copy happened, never that it matches. The trailing
+    // quick check establishes presence, size and date — which is the rung
+    // below `verified`, and the footer has to keep saying so.
     const s = mountJob();
-    await settle(1200);
-    expect(s.frame()).toContain("copying is not verifying");
+    await settle(2500);
+    expect(s.frame()).toContain("present at the right size and date");
+    expect(s.frame()).toContain("[d] reads the bytes");
     expect(s.frame()).not.toContain("✓ verified");
+  });
+
+  test("records what landed, so the ledger stops reporting the old backlog", async () => {
+    // The bug this closes: rsync exits 0, nothing writes a scan, and the row
+    // the user returns to still says the files it just copied are not copied.
+    const s = mountJob();
+    await settle(2500);
+    expect(s.result()).not.toBeNull();
+    const after = loadState(join(root, "state/syncy/state.json"));
+    const recorded = after.scans.find(
+      (scan) => scan.unit === "photos-2019" && scan.target === target().name,
+    );
+    expect(recorded).toMatchObject({ method: "quick", outcome: "clean", nChanges: 0 });
   });
 
   test("escape closes once finished, with no leftover refusal", async () => {

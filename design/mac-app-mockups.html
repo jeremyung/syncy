@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Syncy for Mac — interface mockups</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: oklch(0.955 0.010 83);
+      --canvas-deep: oklch(0.922 0.013 81);
+      --window: oklch(0.982 0.006 83 / 0.96);
+      --sidebar: oklch(0.939 0.012 82 / 0.92);
+      --surface: oklch(0.971 0.008 83);
+      --surface-raised: oklch(0.991 0.004 83);
+      --ink: oklch(0.235 0.012 78);
+      --figure: oklch(0.165 0.008 78);
+      --dim: oklch(0.505 0.010 78);
+      --faint: oklch(0.68 0.008 78);
+      --rule: oklch(0.795 0.012 82);
+      --rule-soft: oklch(0.88 0.010 82);
+      --verified: oklch(0.49 0.118 137);
+      --verified-bg: oklch(0.935 0.041 137);
+      --unverified: oklch(0.55 0.105 80);
+      --unverified-bg: oklch(0.948 0.040 88);
+      --missing: oklch(0.50 0.132 29);
+      --missing-bg: oklch(0.935 0.036 29);
+      --selected: oklch(0.87 0.030 82);
+      --shadow: 0 30px 70px oklch(0.26 0.015 75 / 0.16), 0 2px 8px oklch(0.26 0.015 75 / 0.12);
+      --menushadow: 0 18px 50px oklch(0.20 0.015 75 / 0.23), 0 1px 3px oklch(0.20 0.015 75 / 0.18);
+      --font-ui: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      --font-display: "New York", "Iowan Old Style", Palatino, serif;
+      --font-ledger: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, monospace;
+      --space-xs: 4px;
+      --space-sm: 8px;
+      --space-md: 12px;
+      --space-lg: 16px;
+      --space-xl: 24px;
+      --space-2xl: 32px;
+      --space-3xl: 48px;
+    }
+
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --canvas: oklch(0.205 0.010 78);
+      --canvas-deep: oklch(0.16 0.010 78);
+      --window: oklch(0.245 0.010 78 / 0.97);
+      --sidebar: oklch(0.215 0.010 78 / 0.94);
+      --surface: oklch(0.275 0.010 78);
+      --surface-raised: oklch(0.30 0.010 78);
+      --ink: oklch(0.90 0.010 82);
+      --figure: oklch(0.96 0.008 82);
+      --dim: oklch(0.67 0.010 82);
+      --faint: oklch(0.53 0.010 82);
+      --rule: oklch(0.39 0.010 78);
+      --rule-soft: oklch(0.325 0.010 78);
+      --verified: oklch(0.71 0.126 137);
+      --verified-bg: oklch(0.30 0.049 137);
+      --unverified: oklch(0.72 0.108 81);
+      --unverified-bg: oklch(0.31 0.045 81);
+      --missing: oklch(0.68 0.123 29);
+      --missing-bg: oklch(0.30 0.052 29);
+      --selected: oklch(0.34 0.022 81);
+      --shadow: 0 34px 80px oklch(0.05 0.01 75 / 0.55), 0 2px 8px oklch(0.05 0.01 75 / 0.4);
+      --menushadow: 0 20px 60px oklch(0.05 0.01 75 / 0.7), 0 1px 4px oklch(0.05 0.01 75 / 0.5);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 14% 4%, color-mix(in oklch, var(--unverified-bg), transparent 25%) 0, transparent 28rem),
+        linear-gradient(135deg, var(--canvas), var(--canvas-deep));
+      color: var(--ink);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, a:focus-visible { outline: 3px solid color-mix(in oklch, var(--unverified), transparent 50%); outline-offset: 2px; }
+
+    .page-shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
+    .catalog {
+      position: sticky; top: 0; height: 100vh; padding: var(--space-xl);
+      background: color-mix(in oklch, var(--sidebar), transparent 4%);
+      border-right: 1px solid var(--rule);
+      overflow-y: auto;
+    }
+    .catalog-mark { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-2xl); }
+    .mark-box { width: 38px; height: 38px; display:grid; place-items:center; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface-raised); font: 700 17px/1 var(--font-ledger); letter-spacing:-2px; }
+    .catalog-title { font-family:var(--font-display); font-weight: 650; color: var(--figure); letter-spacing: -0.015em; }
+    .catalog-kicker { margin-top: 2px; color: var(--dim); font: 11px/1.25 var(--font-ledger); }
+    .catalog nav { display: grid; gap: 2px; }
+    .catalog nav a { padding: 8px 10px; border-radius: 7px; color: var(--dim); text-decoration: none; font-size: 13px; }
+    .catalog nav a:hover { color: var(--figure); background: var(--selected); }
+    .catalog nav .nav-label { margin: 20px 10px 7px; color: var(--faint); font: 700 10px/1 var(--font-ledger); letter-spacing: .08em; text-transform: uppercase; }
+    .theme-toggle { width:100%; display:flex; align-items:center; justify-content:space-between; margin-top: var(--space-xl); padding: 8px 10px; border:1px solid var(--rule); border-radius:8px; background:transparent; cursor:pointer; }
+    .toggle-glyph { font: 12px/1 var(--font-ledger); color: var(--dim); }
+
+    main { min-width:0; padding: clamp(28px, 5vw, 72px); }
+    .intro { max-width: 1040px; display:grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .6fr); gap: var(--space-3xl); align-items:end; margin-bottom: 72px; }
+    .eyebrow { color:var(--unverified); font: 700 11px/1 var(--font-ledger); text-transform:uppercase; letter-spacing:.11em; }
+    h1 { margin: 14px 0 0; max-width: 760px; color:var(--figure); font-family:var(--font-display); font-size: clamp(38px, 5vw, 68px); line-height:.98; letter-spacing:-.052em; font-weight: 690; }
+    .intro p { margin:0; color:var(--dim); font-size: 16px; line-height:1.55; max-width: 42ch; }
+    .section { max-width: 1180px; margin: 0 0 88px; scroll-margin-top: 32px; }
+    .section-heading { display:grid; grid-template-columns: 80px minmax(0, 1fr); gap:var(--space-lg); align-items:start; margin-bottom:var(--space-xl); }
+    .section-number { padding-top:5px; color:var(--faint); font: 12px/1 var(--font-ledger); }
+    h2 { margin:0; color:var(--figure); font-family:var(--font-display); font-size: 26px; line-height:1.12; letter-spacing:-.025em; }
+    .section-note { margin:7px 0 0; max-width:68ch; color:var(--dim); line-height:1.5; }
+    .plate { border:1px solid var(--rule); border-radius:22px; background:color-mix(in oklch, var(--canvas), transparent 10%); padding: clamp(18px, 3vw, 36px); overflow:hidden; }
+    .plate-label { display:flex; justify-content:space-between; gap:12px; margin-bottom:16px; color:var(--dim); font: 11px/1 var(--font-ledger); }
+    .plate-label span:last-child { color:var(--faint); }
+
+    /* Shared macOS materials */
+    .mac-window { overflow:hidden; border:1px solid color-mix(in oklch, var(--rule), var(--ink) 8%); border-radius:13px; background:var(--window); box-shadow:var(--shadow); }
+    .titlebar { height:52px; display:grid; grid-template-columns: 110px 1fr 110px; align-items:center; padding:0 16px; border-bottom:1px solid var(--rule); background:color-mix(in oklch, var(--window), var(--sidebar) 18%); }
+    .traffic { display:flex; gap:8px; }
+    .traffic i { width:12px; height:12px; border-radius:50%; background:var(--rule); border:1px solid color-mix(in oklch, var(--rule), var(--ink) 10%); }
+    .window-title { justify-self:center; color:var(--figure); font-size:13px; font-weight:600; }
+    .toolbar-end { justify-self:end; display:flex; gap:8px; }
+    .icon-button, .small-button { display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--rule); background:var(--surface-raised); border-radius:7px; min-height:27px; cursor:pointer; box-shadow:0 1px 1px color-mix(in oklch, var(--ink), transparent 90%); }
+    .icon-button { width:29px; font:16px/1 var(--font-ledger); }
+    .small-button { padding:4px 11px; color:var(--ink); font-size:12px; }
+    .small-button.primary { border-color:color-mix(in oklch, var(--unverified), var(--rule) 36%); background:var(--unverified); color:oklch(0.98 0.01 83); font-weight:650; }
+    .small-button.danger { border-color: color-mix(in oklch, var(--missing), var(--rule) 40%); color:var(--missing); }
+    .small-button:disabled { color:var(--faint); background:var(--surface); box-shadow:none; }
+    .label { color:var(--dim); font:700 10px/1.2 var(--font-ledger); letter-spacing:.065em; text-transform:uppercase; }
+    .rule { height:1px; background:var(--rule); }
+    .glyph { font-family:var(--font-ledger); font-weight:700; }
+    .verified { color:var(--verified); }
+    .unverified { color:var(--unverified); }
+    .missing { color:var(--missing); }
+    .dim { color:var(--dim); }
+    .mono { font-family:var(--font-ledger); }
+
+    /* Menu-bar states */
+    .menubar-demo { background:oklch(0.30 0.03 240); padding:0; border-radius:12px; overflow:hidden; border:1px solid color-mix(in oklch, var(--rule), transparent 20%); }
+    html[data-theme="dark"] .menubar-demo { background:oklch(0.18 0.014 240); }
+    .menubar-strip { height:30px; display:flex; align-items:center; justify-content:flex-end; gap:20px; padding:0 15px; background:linear-gradient(oklch(0.97 0.01 242 / .88), oklch(0.88 0.02 242 / .83)); color:oklch(0.27 0.025 250); box-shadow:inset 0 -1px oklch(0.22 0.02 250 / .22); }
+    html[data-theme="dark"] .menubar-strip { background:linear-gradient(oklch(0.30 0.015 250 / .92), oklch(0.22 0.015 250 / .95)); color:oklch(0.93 0.01 250); }
+    .menu-generic { font-size:15px; letter-spacing:4px; opacity:.82; }
+    .menu-syncy { display:flex; align-items:center; gap:6px; height:24px; padding:0 7px; border-radius:5px; font:650 12px/1 var(--font-ledger); }
+    .menu-syncy.active { background:oklch(0.18 0.015 250 / .18); }
+    .menu-symbol { width:18px; height:18px; display:grid; place-items:center; font:700 13px/1 var(--font-ledger); border:1.5px solid currentColor; border-radius:5px; }
+    .state-grid { display:grid; grid-template-columns:repeat(5, minmax(130px, 1fr)); gap:1px; margin-top:1px; background:var(--rule); }
+    .state-cell { min-height:124px; display:flex; flex-direction:column; justify-content:space-between; padding:18px; background:var(--surface); }
+    .state-icon { width:36px; height:36px; display:grid; place-items:center; border:1px solid currentColor; border-radius:9px; font:700 16px/1 var(--font-ledger); }
+    .state-name { color:var(--figure); font-weight:650; }
+    .state-detail { margin-top:4px; color:var(--dim); font-size:12px; line-height:1.35; }
+
+    /* Menu popovers */
+    .popover-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(310px, 1fr)); gap:28px; align-items:start; }
+    .popover-wrap { display:grid; gap:10px; justify-items:center; }
+    .popover-caption { justify-self:start; color:var(--dim); font:11px/1 var(--font-ledger); }
+    .popover { width:min(100%, 360px); border:1px solid color-mix(in oklch, var(--rule), var(--ink) 12%); border-radius:14px; background:var(--window); box-shadow:var(--menushadow); overflow:hidden; }
+    .pop-head { display:flex; align-items:center; justify-content:space-between; padding:14px 16px 12px; }
+    .brand-lockup { display:flex; align-items:center; gap:9px; }
+    .brand-icon { width:25px; height:25px; display:grid; place-items:center; border:1px solid var(--rule); border-radius:7px; color:var(--figure); font:700 11px/1 var(--font-ledger); }
+    .brand-name { color:var(--figure); font-family:var(--font-display); font-size:13px; font-weight:650; }
+    .status-summary { padding:18px 16px 20px; border-top:1px solid var(--rule-soft); border-bottom:1px solid var(--rule-soft); }
+    .status-title { margin-top:6px; color:var(--figure); font-size:20px; line-height:1.15; letter-spacing:-.02em; font-weight:650; }
+    .status-sub { margin-top:6px; color:var(--dim); line-height:1.42; }
+    .pop-list { padding:6px 0; }
+    .pop-row { min-height:38px; display:grid; grid-template-columns:20px 1fr auto; gap:8px; align-items:center; padding:7px 16px; }
+    .pop-row .row-title { color:var(--ink); }
+    .pop-row .row-value { color:var(--dim); font:12px/1.25 var(--font-ledger); text-align:right; }
+    .pop-actions { display:flex; justify-content:space-between; align-items:center; padding:11px 12px; border-top:1px solid var(--rule-soft); background:color-mix(in oklch, var(--sidebar), transparent 35%); }
+    .activity { position:relative; padding-left:17px; }
+    .activity::before { content:""; position:absolute; left:0; top:4px; width:8px; height:8px; border:1.5px solid var(--unverified); border-top-color:transparent; border-radius:50%; animation:turn 1.1s linear infinite; }
+    @keyframes turn { to { transform:rotate(360deg); } }
+    .time-block { padding:16px; border-bottom:1px solid var(--rule-soft); }
+    .elapsed { color:var(--figure); font:650 29px/.95 var(--font-ledger); letter-spacing:-.04em; font-variant-numeric:tabular-nums; }
+    .time-caption { margin-top:8px; color:var(--dim); font-size:12px; }
+    .time-range { display:flex; justify-content:space-between; gap:12px; margin-top:14px; padding-top:12px; border-top:1px solid var(--rule-soft); color:var(--dim); font:11px/1.4 var(--font-ledger); }
+    .time-range strong { color:var(--ink); font-weight:600; }
+    .measured-track { height:4px; margin-top:14px; background:var(--rule-soft); border-radius:4px; overflow:hidden; }
+    .measured-fill { width:62%; height:100%; background:var(--verified); }
+    .error-panel { margin:0 16px 14px; padding:12px; border:1px solid color-mix(in oklch, var(--missing), var(--rule) 62%); border-radius:9px; background:var(--missing-bg); color:color-mix(in oklch, var(--missing), var(--figure) 20%); line-height:1.4; }
+
+    /* Canonical state matrix */
+    .canonical-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:1px; background:var(--rule); }
+    .canonical-card { min-height:150px; display:flex; flex-direction:column; gap:10px; padding:16px; background:var(--surface); }
+    .canonical-card .label { color:var(--faint); }
+    .canonical-card h3 { margin:0; color:var(--figure); font-size:15px; letter-spacing:-.01em; }
+    .canonical-card p { margin:0; color:var(--dim); font:11px/1.5 var(--font-ledger); }
+    .canonical-card p strong { color:var(--ink); font-weight:600; }
+    .canonical-columns { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1px; margin-top:1px; background:var(--rule); }
+    .canonical-panel { min-width:0; padding:18px; background:var(--surface); }
+    .canonical-panel h3 { margin:0; color:var(--figure); font-size:15px; }
+    .canonical-panel > p { margin:8px 0 0; color:var(--dim); font:11px/1.5 var(--font-ledger); }
+    .destination-picker { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; margin-top:16px; padding:10px; border:1px solid var(--rule); background:var(--surface-raised); color:var(--ink); font:11px/1.35 var(--font-ledger); }
+    .destination-picker strong { color:var(--figure); font-weight:600; }
+    .destination-picker .chevron { color:var(--dim); font-size:14px; }
+    .progress-compare { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1px; margin-top:1px; background:var(--rule); }
+    .progress-state { min-width:0; padding:18px; background:var(--surface); }
+    .progress-state h3 { margin:7px 0 0; color:var(--figure); font-size:15px; }
+    .progress-state p { margin:8px 0 0; color:var(--dim); font:11px/1.5 var(--font-ledger); }
+    .progress-state .measured-track { margin-top:14px; }
+    .no-progress { display:grid; place-items:center; height:30px; margin-top:14px; border:1px dashed var(--rule); color:var(--faint); font:10px/1 var(--font-ledger); }
+    .outcome-table { width:100%; margin-top:1px; border-collapse:collapse; background:var(--surface); }
+    .outcome-table th { padding:10px 14px; border-bottom:1px solid var(--rule); color:var(--dim); font:600 9px/1 var(--font-ledger); letter-spacing:.05em; text-align:left; text-transform:uppercase; }
+    .outcome-table td { padding:11px 14px; border-bottom:1px solid var(--rule-soft); color:var(--dim); font:11px/1.4 var(--font-ledger); vertical-align:top; }
+    .outcome-table td:first-child { width:110px; color:var(--figure); font-weight:650; }
+    .outcome-table tr:last-child td { border-bottom:0; }
+
+    /* Ledger */
+    .app-layout { display:grid; grid-template-columns:190px minmax(0, 1fr); min-height:620px; }
+    .sidebar { padding:16px 10px; border-right:1px solid var(--rule); background:var(--sidebar); }
+    .sidebar-brand { display:flex; align-items:center; gap:9px; padding:2px 8px 18px; color:var(--figure); font-weight:650; }
+    .sidebar-item { display:flex; align-items:center; gap:9px; min-height:30px; padding:0 9px; border-radius:6px; color:var(--dim); font-size:13px; }
+    .sidebar-item.selected { background:var(--selected); color:var(--figure); font-weight:550; }
+    .sidebar-label { margin:22px 9px 7px; color:var(--faint); font:700 9px/1 var(--font-ledger); letter-spacing:.08em; text-transform:uppercase; }
+    .app-content { min-width:0; background:var(--window); }
+    .content-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; padding:28px 30px 18px; }
+    .content-head h3 { margin:0; color:var(--figure); font-family:var(--font-display); font-size:24px; letter-spacing:-.025em; }
+    .content-sub { margin-top:5px; color:var(--dim); font-size:12px; }
+    .segmented { display:flex; padding:2px; border:1px solid var(--rule); border-radius:7px; background:var(--surface); }
+    .segment { padding:4px 9px; border:0; border-radius:5px; background:transparent; color:var(--dim); font-size:11px; }
+    .segment.active { background:var(--surface-raised); color:var(--figure); box-shadow:0 1px 3px color-mix(in oklch, var(--ink), transparent 86%); }
+    .ledger { width:100%; border-collapse:collapse; font-size:12px; }
+    .ledger th { height:35px; padding:0 12px; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); color:var(--dim); font:600 10px/1 var(--font-ledger); letter-spacing:.045em; text-align:left; text-transform:uppercase; }
+    .ledger th:first-child, .ledger td:first-child { width:44px; padding-left:18px; padding-right:6px; text-align:center; }
+    .ledger td { height:44px; padding:0 12px; border-bottom:1px solid var(--rule-soft); color:var(--ink); }
+    .ledger tr.selected-row td { background:color-mix(in oklch, var(--selected), transparent 28%); }
+    .folder-name { color:var(--figure); font-weight:580; }
+    .figure { color:var(--figure); font-family:var(--font-ledger); font-variant-numeric:tabular-nums; }
+    .status-word { font-family:var(--font-ledger); font-size:11px; }
+    .status-word::before { content:""; display:inline-block; width:6px; height:6px; margin-right:7px; border-radius:50%; background:currentColor; vertical-align:1px; }
+    .ledger-foot { display:flex; justify-content:space-between; gap:18px; padding:15px 30px 18px; color:var(--dim); font:11px/1.5 var(--font-ledger); }
+    .task-shelf { display:grid; grid-template-columns:minmax(0, 1fr) auto; align-items:center; gap:18px; margin:18px 30px 24px; padding:14px 16px; border:1px solid var(--rule); border-radius:10px; background:var(--surface); }
+    .task-shelf strong { display:block; color:var(--figure); font-size:12px; }
+    .task-shelf span { display:block; margin-top:4px; color:var(--dim); font:11px/1.35 var(--font-ledger); }
+
+    /* Details */
+    .detail-layout { display:grid; grid-template-columns: minmax(0, 1.15fr) minmax(260px, .85fr); min-height:560px; }
+    .detail-main { padding:28px 30px; }
+    .detail-aside { padding:28px 26px; border-left:1px solid var(--rule); background:color-mix(in oklch, var(--sidebar), transparent 38%); }
+    .back { color:var(--dim); font-size:12px; }
+    .detail-main h3 { margin:16px 0 4px; color:var(--figure); font-size:27px; letter-spacing:-.03em; }
+    .detail-summary { color:var(--dim); }
+    .diff-group { margin-top:28px; }
+    .diff-group-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding-bottom:9px; border-bottom:1px solid var(--rule); }
+    .diff-group-head strong { color:var(--figure); font-size:12px; }
+    .diff-group-head span { color:var(--dim); font:11px/1 var(--font-ledger); }
+    .file-row { display:grid; grid-template-columns:1fr auto; gap:12px; padding:10px 2px; border-bottom:1px solid var(--rule-soft); font:11px/1.35 var(--font-ledger); }
+    .file-row .path { color:var(--ink); overflow-wrap:anywhere; }
+    .file-row .size { color:var(--dim); }
+    .evidence-block { margin-top:24px; }
+    .evidence-block:first-child { margin-top:0; }
+    .evidence-title { color:var(--figure); font-weight:650; }
+    .evidence-line { display:grid; grid-template-columns:100px 1fr; gap:12px; padding:9px 0; border-bottom:1px solid var(--rule-soft); font-size:12px; }
+    .evidence-line dt { color:var(--dim); }
+    .evidence-line dd { margin:0; color:var(--ink); }
+    .evidence-note { margin-top:13px; color:var(--dim); font:11px/1.45 var(--font-ledger); }
+
+    /* Flows */
+    .flow-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:28px; align-items:start; }
+    .sheet { overflow:hidden; border:1px solid var(--rule); border-radius:13px; background:var(--window); box-shadow:var(--shadow); }
+    .sheet-head { padding:20px 22px 16px; border-bottom:1px solid var(--rule); }
+    .sheet-head h3 { margin:0; color:var(--figure); font-size:17px; letter-spacing:-.015em; }
+    .sheet-head p { margin:6px 0 0; color:var(--dim); font-size:12px; line-height:1.45; }
+    .sheet-body { padding:18px 22px; }
+    .sheet-actions { display:flex; justify-content:flex-end; gap:8px; padding:13px 16px; border-top:1px solid var(--rule); background:color-mix(in oklch, var(--sidebar), transparent 38%); }
+    .plan-line { display:grid; grid-template-columns:19px 1fr auto; gap:9px; padding:9px 0; border-bottom:1px solid var(--rule-soft); font-size:12px; }
+    .plan-line:last-child { border-bottom:0; }
+    .command { margin-top:14px; padding:12px; border:1px solid var(--rule); border-radius:8px; background:var(--surface); color:var(--dim); font:10px/1.55 var(--font-ledger); overflow-wrap:anywhere; }
+    .confirm-check { display:flex; align-items:flex-start; gap:9px; margin-top:14px; color:var(--ink); font-size:12px; line-height:1.4; }
+    .checkbox { flex:0 0 auto; width:14px; height:14px; display:grid; place-items:center; margin-top:1px; border:1px solid var(--rule); border-radius:3px; background:var(--surface-raised); color:var(--verified); font:700 10px/1 var(--font-ledger); }
+    .sync-stat { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:end; }
+    .sync-stat strong { color:var(--figure); font:650 27px/1 var(--font-ledger); }
+    .sync-stat span { color:var(--dim); font:11px/1.3 var(--font-ledger); text-align:right; }
+    .transfer-track { height:5px; margin:14px 0 8px; border-radius:5px; background:var(--rule-soft); overflow:hidden; }
+    .transfer-fill { width:62%; height:100%; background:var(--verified); }
+    .transfer-facts { display:flex; justify-content:space-between; color:var(--dim); font:10px/1.3 var(--font-ledger); }
+    .cancel-note { margin-top:16px; padding-top:13px; border-top:1px solid var(--rule-soft); color:var(--dim); font-size:11px; line-height:1.45; }
+
+    /* Settings and scheduling */
+    .settings-layout { display:grid; grid-template-columns:170px 1fr; min-height:570px; }
+    .settings-side { padding:18px 10px; border-right:1px solid var(--rule); background:var(--sidebar); }
+    .settings-content { padding:30px 34px; }
+    .settings-content h3 { margin:0 0 25px; color:var(--figure); font-family:var(--font-display); font-size:21px; }
+    .form-row { display:grid; grid-template-columns:140px 1fr auto; gap:12px; align-items:center; padding:14px 0; border-bottom:1px solid var(--rule-soft); }
+    .form-row > label { color:var(--dim); font-size:12px; }
+    .path-field { min-width:0; padding:7px 9px; border:1px solid var(--rule); border-radius:6px; background:var(--surface); color:var(--ink); font:11px/1.25 var(--font-ledger); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .destination { display:grid; grid-template-columns:30px 1fr auto; gap:10px; align-items:center; padding:13px 0; border-bottom:1px solid var(--rule-soft); }
+    .drive { width:28px; height:22px; display:grid; place-items:center; border:1px solid var(--rule); border-radius:5px; font:700 10px/1 var(--font-ledger); }
+    .destination strong { display:block; color:var(--figure); font-size:12px; }
+    .destination span { display:block; margin-top:3px; color:var(--dim); font:10px/1.35 var(--font-ledger); }
+    .doctor-list { margin-top:22px; }
+    .doctor-row { display:grid; grid-template-columns:18px 1fr auto; gap:9px; padding:10px 0; border-bottom:1px solid var(--rule-soft); font-size:12px; }
+    .doctor-row small { color:var(--dim); font:10px/1.3 var(--font-ledger); }
+    .switch { width:30px; height:18px; padding:2px; border-radius:9px; background:var(--verified); }
+    .switch::after { content:""; display:block; margin-left:12px; width:14px; height:14px; border-radius:50%; background:oklch(0.98 0.005 83); box-shadow:0 1px 2px oklch(0.2 0.01 78 / .3); }
+    .schedule-row { display:grid; grid-template-columns:34px 1fr auto; gap:12px; align-items:center; padding:15px 0; border-bottom:1px solid var(--rule-soft); }
+    .schedule-mark { width:34px; height:34px; display:grid; place-items:center; border:1px solid var(--rule); border-radius:8px; color:var(--dim); font:700 12px/1 var(--font-ledger); }
+    .schedule-row strong { color:var(--figure); font-size:12px; }
+    .schedule-row p { margin:4px 0 0; color:var(--dim); font:10px/1.4 var(--font-ledger); }
+    .history-table { width:100%; border-collapse:collapse; }
+    .history-table th { padding:8px 7px; border-bottom:1px solid var(--rule); color:var(--dim); font:600 9px/1 var(--font-ledger); text-align:left; text-transform:uppercase; letter-spacing:.05em; }
+    .history-table td { padding:11px 7px; border-bottom:1px solid var(--rule-soft); font-size:11px; }
+    .history-table .when { color:var(--dim); font-family:var(--font-ledger); white-space:nowrap; }
+
+    .annotation { margin-top:18px; padding-top:15px; border-top:1px solid var(--rule); display:grid; grid-template-columns:80px 1fr; gap:12px; color:var(--dim); font:11px/1.55 var(--font-ledger); }
+    .annotation strong { color:var(--ink); font-weight:650; }
+
+    @media (max-width: 920px) {
+      .page-shell { grid-template-columns:1fr; }
+      .catalog { position:relative; height:auto; padding:16px 20px; border-right:0; border-bottom:1px solid var(--rule); }
+      .catalog-mark { margin-bottom:12px; }
+      .catalog nav { display:flex; gap:4px; overflow-x:auto; padding-bottom:4px; }
+      .catalog nav .nav-label { display:none; }
+      .catalog nav a { white-space:nowrap; }
+      .theme-toggle { position:absolute; top:20px; right:20px; width:auto; gap:10px; }
+      main { padding:36px 20px; }
+      .intro { grid-template-columns:1fr; gap:20px; margin-bottom:56px; }
+      .state-grid { grid-template-columns:repeat(2, 1fr); }
+      .detail-layout { grid-template-columns:1fr; }
+      .detail-aside { border-left:0; border-top:1px solid var(--rule); }
+    }
+    @media (max-width: 640px) {
+      .catalog-title, .catalog-kicker { display:none; }
+      .catalog-mark { margin:0; }
+      .mark-box { width:32px; height:32px; }
+      .theme-toggle .theme-label { display:none; }
+      .section-heading { grid-template-columns:1fr; gap:8px; }
+      .section-number { padding:0; }
+      .plate { padding:12px; border-radius:15px; }
+      .state-grid { grid-template-columns:1fr; }
+      .titlebar { grid-template-columns:80px 1fr 80px; }
+      .app-layout, .settings-layout { grid-template-columns:1fr; }
+      .sidebar, .settings-side { display:flex; overflow-x:auto; border-right:0; border-bottom:1px solid var(--rule); padding:8px; }
+      .sidebar-label { display:none; }
+      .sidebar-brand { padding:0 10px; }
+      .sidebar-item { white-space:nowrap; }
+      .content-head { align-items:flex-start; padding:20px 16px 14px; }
+      .app-content { overflow-x:auto; }
+      .ledger { min-width:720px; }
+      .ledger th:first-child, .ledger td:first-child { padding-left:16px; }
+      .ledger-foot { padding:12px 16px; }
+      .task-shelf { margin:14px 16px 20px; }
+      .detail-main, .detail-aside, .settings-content { padding:22px 18px; }
+      .form-row { grid-template-columns:1fr auto; }
+      .form-row > label { grid-column:1 / -1; }
+      .flow-grid { grid-template-columns:1fr; }
+      .annotation { grid-template-columns:1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { animation:none; } html { scroll-behavior:auto; } }
+  </style>
+</head>
+<body>
+  <div class="page-shell">
+    <aside class="catalog" aria-label="Mockup sections">
+      <div class="catalog-mark">
+        <div class="mark-box" aria-hidden="true">s:</div>
+        <div><div class="catalog-title">Syncy for Mac</div><div class="catalog-kicker">interaction mockups · v0.1</div></div>
+      </div>
+      <nav>
+        <div class="nav-label">Surfaces</div>
+        <a href="#menu-bar">Menu-bar states</a>
+        <a href="#popover">Menu popover</a>
+        <a href="#ledger">Main ledger</a>
+        <a href="#evidence">Differences &amp; evidence</a>
+        <a href="#canonical">Canonical states</a>
+        <div class="nav-label">Workflows</div>
+        <a href="#sync">Sync &amp; cancellation</a>
+        <a href="#setup">Setup &amp; doctor</a>
+        <a href="#schedules">Schedules &amp; history</a>
+      </nav>
+      <button type="button" class="theme-toggle" id="themeToggle" aria-label="Switch theme">
+        <span class="theme-label">Dark appearance</span><span class="toggle-glyph" aria-hidden="true">◐</span>
+      </button>
+    </aside>
+
+    <main>
+      <header class="intro">
+        <div><div class="eyebrow">Personal macOS app · first implementation deliverable</div><h1>The archive ledger, within reach.</h1></div>
+        <p>A quiet menu-bar presence for checking what Syncy has established, watching long work unfold, and running every existing function without keeping a terminal open.</p>
+      </header>
+
+      <section class="section" id="menu-bar">
+        <div class="section-heading"><div class="section-number">01 / 08</div><div><h2>One mark, seven legible states</h2><p class="section-note">The menu-bar mark changes only when the underlying condition changes. Shape carries the state before color does; the optional elapsed label appears only while work is running.</p></div></div>
+        <div class="plate">
+          <div class="plate-label"><span>MENU-BAR PRESENCE</span><span>24 pt mark · monochrome-safe</span></div>
+          <div class="menubar-demo">
+            <div class="menubar-strip"><span class="menu-generic">⌁ ◉ ◌</span><span class="menu-syncy active"><span class="menu-symbol">↻</span><span>18m</span></span><span class="menu-generic">⌕ ◉</span></div>
+            <div class="state-grid">
+              <div class="state-cell"><div class="state-icon verified">✓</div><div><div class="state-name">Verified</div><div class="state-detail">All required destinations have current evidence.</div></div></div>
+              <div class="state-cell"><div class="state-icon unverified">~</div><div><div class="state-name">Unverified</div><div class="state-detail">Size and date match; bytes remain unread.</div></div></div>
+              <div class="state-cell"><div class="state-icon unverified">↑</div><div><div class="state-name">Behind</div><div class="state-detail">At least one destination is missing current files.</div></div></div>
+              <div class="state-cell"><div class="state-icon missing">−</div><div><div class="state-name">Missing</div><div class="state-detail">The folder is not present at a required destination.</div></div></div>
+              <div class="state-cell"><div class="state-icon dim">?</div><div><div class="state-name">Unchecked</div><div class="state-detail">A required destination cannot be identified.</div></div></div>
+              <div class="state-cell"><div class="state-icon missing">!</div><div><div class="state-name">Error</div><div class="state-detail">A task or configuration failed.</div></div></div>
+              <div class="state-cell"><div class="state-icon unverified">↻</div><div><div class="state-name">Working · 18m</div><div class="state-detail">Elapsed time advances in the menu bar.</div></div></div>
+            </div>
+          </div>
+          <div class="annotation"><strong>Principle</strong><span>No green check means “probably fine.” The verified mark appears only when every required destination has current deep evidence.</span></div>
+        </div>
+      </section>
+
+      <section class="section" id="popover">
+        <div class="section-heading"><div class="section-number">02 / 08</div><div><h2>The status story, without opening a window</h2><p class="section-note">The popover gives elapsed time, current phase, last observable activity, and historical context. When rsync is silent there is deliberately no bar.</p></div></div>
+        <div class="plate">
+          <div class="plate-label"><span>MENU POPOVER STATES</span><span>360 × variable height</span></div>
+          <div class="popover-grid">
+            <div class="popover-wrap"><div class="popover-caption">IDLE · ALL EVIDENCE CURRENT</div><article class="popover">
+              <div class="pop-head"><div class="brand-lockup"><div class="brand-icon">s:</div><div class="brand-name">Syncy</div></div><button type="button" class="icon-button" aria-label="Open settings">···</button></div>
+              <div class="status-summary"><div class="label verified">Archive ledger</div><div class="status-title">5 folders verified</div><div class="status-sub">412 gb present on both required destinations.</div></div>
+              <div class="pop-list">
+                <div class="pop-row"><span class="glyph verified">✓</span><span class="row-title">External archive</span><span class="row-value">today 09:12</span></div>
+                <div class="pop-row"><span class="glyph verified">✓</span><span class="row-title">Studio NAS</span><span class="row-value">today 03:18</span></div>
+                <div class="pop-row"><span class="glyph dim">○</span><span class="row-title">Next scheduled check</span><span class="row-value">tonight 02:00</span></div>
+              </div>
+              <div class="pop-actions"><button type="button" class="small-button">Check now</button><button type="button" class="small-button">Open Syncy…</button></div>
+            </article></div>
+
+            <div class="popover-wrap"><div class="popover-caption">RUNNING · MEASURED TRANSFER</div><article class="popover">
+              <div class="pop-head"><div class="brand-lockup"><div class="brand-icon unverified">↻</div><div><div class="brand-name">Syncing field-recordings</div><div class="activity label unverified" style="margin-top:4px">transferring</div></div></div><button type="button" class="small-button danger">Cancel</button></div>
+              <div class="time-block"><div class="elapsed">08m 14s</div><div class="time-caption">44.8 gb of 72.3 gb transferred · rsync measured</div><div class="measured-track"><div class="measured-fill"></div></div><div class="time-range"><span>1,842 / 2,306 files</span><strong>62%</strong></div></div>
+              <div class="pop-list"><div class="pop-row"><span class="glyph">→</span><span class="row-title mono">interviews/day-04.wav</span><span class="row-value">1.8 gb</span></div><div class="pop-row"><span class="glyph dim">○</span><span class="row-title">Destination</span><span class="row-value">External archive</span></div></div>
+              <div class="pop-actions"><span class="label">Window may close</span><button type="button" class="small-button">Show task</button></div>
+            </article></div>
+
+            <div class="popover-wrap"><div class="popover-caption">DEEP VERIFY · RSYNC SILENT</div><article class="popover">
+              <div class="pop-head"><div class="brand-lockup"><div class="brand-icon unverified">↻</div><div><div class="brand-name">Verifying photos-2019</div><div class="activity label unverified" style="margin-top:4px">comparing bytes</div></div></div><button type="button" class="small-button danger">Cancel</button></div>
+              <div class="time-block"><div class="elapsed">18m 42s</div><div class="time-caption">Started 9:12 AM · rsync is running</div><div class="time-range"><span>Estimated from previous checks<br><strong>about 49 min</strong></span><span style="text-align:right">Expected around<br><strong>10:01</strong></span></div></div>
+              <div class="status-summary"><div class="label">Last observable event · 18m ago</div><div class="status-sub">No file-level results have arrived. During checksum work rsync may read entire files before reporting them.</div></div>
+              <div class="pop-actions"><span class="label">No measured percentage</span><button type="button" class="small-button">Show task</button></div>
+            </article></div>
+
+            <div class="popover-wrap"><div class="popover-caption">DEEP VERIFY · LONGER THAN PRIOR RUNS</div><article class="popover">
+              <div class="pop-head"><div class="brand-lockup"><div class="brand-icon unverified">↻</div><div><div class="brand-name">Verifying photos-2019</div><div class="activity label unverified" style="margin-top:4px">comparing bytes</div></div></div><button type="button" class="small-button danger">Cancel</button></div>
+              <div class="time-block"><div class="elapsed">1h 08m</div><div class="time-caption">Started 9:12 AM · rsync is running</div><div class="time-range"><span>Historical estimate<br><strong>about 49 min</strong></span><span style="text-align:right">This run remains<br><strong>running</strong></span></div></div>
+              <div class="status-summary"><div class="status-sub">Longer than the last 6 runs. No failure has been reported; the task remains active.</div></div>
+              <div class="pop-actions"><button type="button" class="small-button">Open log</button><button type="button" class="small-button">Show task</button></div>
+            </article></div>
+
+            <div class="popover-wrap"><div class="popover-caption">FINISHED · PARTIAL SKIP</div><article class="popover">
+              <div class="pop-head"><div class="brand-lockup"><div class="brand-icon unverified">·</div><div class="brand-name">Check finished</div></div><span class="label">10:08 AM</span></div>
+              <div class="status-summary"><div class="status-title">1 destination checked</div><div class="status-sub">External archive was checked. Studio NAS was not reached.</div></div>
+              <div class="pop-list"><div class="pop-row"><span class="glyph verified">✓</span><span class="row-title">External archive</span><span class="row-value">5 verified</span></div><div class="pop-row"><span class="glyph dim">×</span><span class="row-title">Studio NAS</span><span class="row-value">not connected</span></div></div>
+              <div class="pop-actions"><span></span><button type="button" class="small-button">Open Syncy…</button></div>
+            </article></div>
+
+            <div class="popover-wrap"><div class="popover-caption">ERROR · EVIDENCE NOT RECORDED</div><article class="popover">
+              <div class="pop-head"><div class="brand-lockup"><div class="brand-icon missing">!</div><div class="brand-name">Verification stopped</div></div><span class="label missing">error</span></div>
+              <div class="status-summary"><div class="status-title">rsync exited with code 12</div><div class="status-sub">photos-2019 → Studio NAS · after 24m 08s</div></div>
+              <div class="error-panel"><strong>No new verification was recorded.</strong><br>The previous result remains in the ledger with its original time.</div>
+              <div class="pop-actions"><button type="button" class="small-button">Open log</button><button type="button" class="small-button">Show task</button></div>
+            </article></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="ledger">
+        <div class="section-heading"><div class="section-number">03 / 08</div><div><h2>A full ledger, still quiet</h2><p class="section-note">The main window scales the terminal ledger into a native, inspectable table. Facts align vertically; the running task remains attached to its folder even if selection changes.</p></div></div>
+        <div class="plate">
+          <div class="plate-label"><span>MAIN WINDOW · LEDGER</span><span>1040 × 680</span></div>
+          <div class="mac-window">
+            <div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="window-title">Syncy</div><div class="toolbar-end"><button type="button" class="icon-button" aria-label="Refresh ledger">↻</button><button type="button" class="icon-button" aria-label="Open settings">···</button></div></div>
+            <div class="app-layout">
+              <aside class="sidebar"><div class="sidebar-brand"><div class="brand-icon">s:</div>Syncy</div><div class="sidebar-item selected"><span>▤</span>Ledger</div><div class="sidebar-item"><span>⇄</span>Differences</div><div class="sidebar-item"><span>◇</span>Evidence</div><div class="sidebar-item"><span>↻</span>Sync</div><div class="sidebar-item"><span>⌁</span>Schedules</div><div class="sidebar-item"><span>◷</span>History</div><div class="sidebar-item"><span>+</span>Setup</div><div class="sidebar-item"><span>◇</span>Diagnostics</div></aside>
+              <div class="app-content">
+                <div class="content-head"><div><h3>Ledger</h3><div class="content-sub">What the last checks established · 5 folders · 412.2 gb</div></div><div class="toolbar-end"><button type="button" class="small-button">Quick check</button><button type="button" class="small-button">Deep verify</button></div></div>
+                <table class="ledger"><thead><tr><th></th><th>Folder</th><th>Size</th><th>Files</th><th>External archive</th><th>Studio NAS</th></tr></thead><tbody>
+                  <tr><td class="verified">✓</td><td><span class="folder-name">client-archive</span></td><td class="figure">84.6 gb</td><td class="figure">8,420</td><td class="status-word verified">verified</td><td class="status-word verified">verified</td></tr>
+                  <tr class="selected-row"><td class="unverified">↻</td><td><span class="folder-name">field-recordings</span></td><td class="figure">72.3 gb</td><td class="figure">2,306</td><td class="status-word unverified">syncing</td><td class="status-word unverified">behind 28</td></tr>
+                  <tr><td class="verified">✓</td><td><span class="folder-name">photos-2018</span></td><td class="figure">96.8 gb</td><td class="figure">6,932</td><td class="status-word verified">verified</td><td class="status-word verified">verified</td></tr>
+                  <tr><td class="dim">?</td><td><span class="folder-name">photos-2019</span></td><td class="figure">113.7 gb</td><td class="figure">7,104</td><td class="status-word verified">verified</td><td class="status-word dim">unchecked</td></tr>
+                  <tr><td class="missing">−</td><td><span class="folder-name">working-scans</span></td><td class="figure">44.8 gb</td><td class="figure">1,842</td><td class="status-word missing">missing</td><td class="status-word unverified">behind 6</td></tr>
+                </tbody></table>
+                <div class="ledger-foot"><span><span class="verified">●</span> verified &nbsp; <span class="unverified">●</span> behind &nbsp; <span class="missing">●</span> missing &nbsp; <span class="dim">●</span> unchecked</span><span>2 / 5 verified · 181.4 gb</span></div>
+                <div class="task-shelf"><div><strong>Syncing field-recordings → External archive</strong><span>08m 14s elapsed · 44.8 gb of 72.3 gb measured · window may close</span></div><button type="button" class="small-button">Show task</button></div>
+              </div>
+            </div>
+          </div>
+          <div class="annotation"><strong>Hierarchy</strong><span>Overall status lives at folder level. Destination cells preserve their distinct evidence. “Established” is a timestamp, not a freshness-colored badge.</span></div>
+        </div>
+      </section>
+
+      <section class="section" id="evidence">
+        <div class="section-heading"><div class="section-number">04 / 08</div><div><h2>Differences on the left. Evidence on the right.</h2><p class="section-note">A selected folder becomes a record to inspect. Difference categories say what rsync established; evidence preserves method, time, identity, and literal command.</p></div></div>
+        <div class="plate">
+          <div class="plate-label"><span>FOLDER DETAIL · DIFFERENCES &amp; EVIDENCE</span><span>Nothing prescribes an action</span></div>
+          <div class="mac-window"><div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="window-title">field-recordings</div><div class="toolbar-end"><button type="button" class="small-button">Quick check</button><button type="button" class="small-button">Verify bytes</button></div></div>
+            <div class="detail-layout"><div class="detail-main"><div class="back">‹ Archive ledger</div><h3>field-recordings</h3><div class="detail-summary">28 files short · 4.7 gb · Studio NAS</div>
+              <div class="diff-group"><div class="diff-group-head"><strong>Not at destination</strong><span>24 files · 4.6 gb</span></div><div class="file-row"><span class="path">interviews/day-04.wav</span><span class="size">1.8 gb</span></div><div class="file-row"><span class="path">interviews/day-05.wav</span><span class="size">1.7 gb</span></div><div class="file-row"><span class="path">room-tone/session-b.wav</span><span class="size">892 mb</span></div></div>
+              <div class="diff-group"><div class="diff-group-head"><strong>Content differs</strong><span>4 files · 116 mb</span></div><div class="file-row"><span class="path">notes/cue-sheet.pdf</span><span class="size">18 mb</span></div><div class="file-row"><span class="path">edits/assembly-v7.wav</span><span class="size">98 mb</span></div></div>
+              <div class="diff-group"><div class="diff-group-head"><strong>Only at destination</strong><span>2 files · 31 mb</span></div><div class="file-row"><span class="path">exports/assembly-v5.wav</span><span class="size">31 mb</span></div></div>
+            </div><aside class="detail-aside"><div class="evidence-block"><div class="label">Current evidence</div><div style="margin-top:8px" class="evidence-title unverified">size and date differ</div><dl><div class="evidence-line"><dt>Method</dt><dd>Quick check</dd></div><div class="evidence-line"><dt>Read</dt><dd>Today, 9:46 AM</dd></div><div class="evidence-line"><dt>Source</dt><dd>2,306 files · 72.3 gb</dd></div><div class="evidence-line"><dt>Destination</dt><dd>Studio NAS</dd></div><div class="evidence-line"><dt>Volume</dt><dd class="mono">volume UUID …C42A</dd></div></dl><div class="evidence-note">Bytes were not read. A deep verification last matched on August 31.</div></div><div class="evidence-block"><div class="label">Command</div><div class="command">/opt/homebrew/bin/rsync -aAX -n -i --delete --out-format=%i|%l|%n …</div></div></aside></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="sync">
+        <div class="section-heading"><div class="section-number">05 / 08</div><div><h2>Sync remains deliberate</h2><p class="section-note">The plan and preflight are visible before the write begins. Once running, progress is measured from rsync’s bytes; cancellation says exactly what will remain.</p></div></div>
+        <div class="plate">
+          <div class="plate-label"><span>SYNC PLAN · CONFIRM · RUN · CANCEL</span><span>Writes only through rsync</span></div>
+          <div class="flow-grid">
+            <article class="sheet"><div class="sheet-head"><h3>Sync field-recordings</h3><p>Source → External archive. A fresh preflight was read at 10:06 AM.</p></div><div class="sheet-body"><div class="plan-line"><span class="glyph verified">✓</span><span>Destination identity</span><span class="mono dim">volume …7B12</span></div><div class="plan-line"><span class="glyph verified">✓</span><span>Space available</span><span class="mono dim">231 gb</span></div><div class="plan-line"><span class="glyph unverified">→</span><span>Files to transfer</span><span class="mono">28 · 4.7 gb</span></div><div class="plan-line"><span class="glyph dim">+</span><span>Extra at destination</span><span class="mono dim">2 · unchanged</span></div><div class="command">/opt/homebrew/bin/rsync -aAX -h --info=progress2 --partial-dir=.syncy-partial …</div><div class="confirm-check"><span class="checkbox">✓</span><span>I reviewed this source, destination, and command.</span></div></div><div class="sheet-actions"><button type="button" class="small-button">Cancel</button><button type="button" class="small-button primary">Start sync</button></div></article>
+            <article class="sheet"><div class="sheet-head"><h3>Syncing field-recordings</h3><p class="activity">Transferring to External archive</p></div><div class="sheet-body"><div class="sync-stat"><strong>08m 14s</strong><span>Started 10:08 AM<br>rsync is running</span></div><div class="transfer-track"><div class="transfer-fill"></div></div><div class="transfer-facts"><span>44.8 gb of 72.3 gb</span><span>1,842 / 2,306 files · 62%</span></div><div class="plan-line" style="margin-top:15px"><span class="glyph">→</span><span class="mono">interviews/day-04.wav</span><span class="mono dim">1.8 gb</span></div><div class="cancel-note">Closing this window does not stop the sync. Cancelling asks rsync to stop; partial data stays inside <span class="mono">.syncy-partial</span> and no verification is recorded.</div></div><div class="sheet-actions"><button type="button" class="small-button danger">Cancel sync…</button><button type="button" class="small-button">Hide window</button></div></article>
+            <article class="sheet"><div class="sheet-head"><h3>Cancel this sync?</h3><p>field-recordings → External archive has run for 08m 14s.</p></div><div class="sheet-body"><div class="plan-line"><span class="glyph dim">○</span><span>Files already completed</span><span class="mono">1,842</span></div><div class="plan-line"><span class="glyph dim">○</span><span>Current partial file</span><span class="mono">kept apart</span></div><div class="plan-line"><span class="glyph dim">○</span><span>Verification evidence</span><span class="mono">not recorded</span></div><p class="status-sub">The ledger will continue to show the evidence from before this sync.</p></div><div class="sheet-actions"><button type="button" class="small-button">Keep running</button><button type="button" class="small-button danger">Cancel sync</button></div></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="setup">
+        <div class="section-heading"><div class="section-number">06 / 08</div><div><h2>Setup records what the OS can prove</h2><p class="section-note">Finder pickers choose paths, but identity comes from the mounted volume. Capability probes and doctor results use the same exact language as the CLI.</p></div></div>
+        <div class="plate">
+          <div class="plate-label"><span>SETTINGS · DESTINATIONS · DOCTOR</span><span>Native controls, engine-owned facts</span></div>
+          <div class="mac-window"><div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><div class="window-title">Syncy Settings</div><div></div></div><div class="settings-layout">
+            <aside class="settings-side"><div class="sidebar-item selected">Source &amp; destinations</div><div class="sidebar-item">Schedules</div><div class="sidebar-item">Notifications</div><div class="sidebar-item">General</div><div class="sidebar-item">Doctor</div></aside>
+            <div class="settings-content"><h3>Source &amp; destinations</h3><div class="form-row"><span class="label">Source folder</span><div class="path-field">/Users/user/Archive</div><button type="button" class="small-button">Choose…</button></div><div style="margin-top:24px" class="label">Destinations</div>
+              <div class="destination"><div class="drive verified">✓</div><div><strong>External archive</strong><span>/Volumes/Archive · APFS · volume UUID …7B12</span></div><button type="button" class="small-button">Add sentinel</button></div>
+              <div class="destination"><div class="drive verified">✓</div><div><strong>Studio NAS</strong><span>/Volumes/Studio · SMB · sentinel …C42A · ACL and xattr omitted</span></div><span class="label">sentinel recorded</span></div>
+              <div style="margin-top:12px"><button type="button" class="small-button">Add destination…</button></div>
+              <div class="doctor-list"><div class="label">Doctor · last run just now</div><div class="doctor-row"><span class="verified">✓</span><span>rsync 3.4.1</span><small>/opt/homebrew/bin/rsync</small></div><div class="doctor-row"><span class="verified">✓</span><span>Source readable</span><small>5 folders</small></div><div class="doctor-row"><span class="verified">✓</span><span>External archive identified</span><small>APFS · volume UUID</small></div><div class="doctor-row"><span class="verified">✓</span><span>Studio NAS identified</span><small>SMB · sentinel</small></div><div class="doctor-row"><span class="unverified">·</span><span>Studio NAS attributes</span><small>ACL and xattr not persisted</small></div></div>
+            </div>
+          </div></div>
+        </div>
+      </section>
+
+      <section class="section" id="schedules">
+        <div class="section-heading"><div class="section-number">07 / 08</div><div><h2>Background work leaves a complete record</h2><p class="section-note">Schedules state their skip conditions up front. History distinguishes completed, skipped, failed, cancelled, and missed work; “finished” is never used for work that did not run.</p></div></div>
+        <div class="plate">
+          <div class="plate-label"><span>SCHEDULES · HISTORY</span><span>Launch at login · one task at a time</span></div>
+          <div class="flow-grid">
+            <article class="sheet"><div class="sheet-head"><h3>Schedules</h3><p>Tasks run whenever the Mac and Syncy are awake, including on battery. Unavailable destinations are recorded as skipped.</p></div><div class="sheet-body"><div class="schedule-row"><div class="schedule-mark">q</div><div><strong>Quick check · all folders</strong><p>Every day at 8:00 PM · required destinations</p></div><div class="switch" aria-hidden="true"></div></div><div class="schedule-row"><div class="schedule-mark">d</div><div><strong>Deep verify · all folders</strong><p>Sunday at 2:00 AM · required destinations</p></div><div class="switch" aria-hidden="true"></div></div><div class="schedule-row"><div class="schedule-mark">s</div><div><strong>Sync field-recordings</strong><p class="unverified">Suspended · configuration changed</p></div><button type="button" class="small-button">Review</button></div><div class="evidence-note">After sleep: run the latest missed check once. Never duplicate. Configuration changes suspend affected sync schedules until reviewed.</div></div><div class="sheet-actions"><button type="button" class="small-button">New schedule…</button></div></article>
+            <article class="sheet"><div class="sheet-head"><h3>Task history</h3><p>Literal outcomes, newest first.</p></div><div class="sheet-body" style="padding-top:10px"><table class="history-table"><thead><tr><th>When</th><th>Task</th><th>Outcome</th><th>Time</th></tr></thead><tbody><tr><td class="when">Today 10:08</td><td>Quick check · all</td><td class="verified">completed · 10</td><td class="when">3m 12s</td></tr><tr><td class="when">Today 02:00</td><td>Deep verify · all</td><td class="unverified">completed 5 · skipped 5</td><td class="when">2h 44m</td></tr><tr><td class="when">Fri 22:00</td><td>Sync · field-recordings</td><td class="missing">failed · code 12</td><td class="when">24m 08s</td></tr><tr><td class="when">Sep 02</td><td>Deep verify · photos-2019</td><td class="dim">cancelled</td><td class="when">18m 42s</td></tr><tr><td class="when">Sep 01</td><td>Quick check · all</td><td class="dim">missed · Mac asleep</td><td class="when">—</td></tr></tbody></table></div><div class="sheet-actions"><button type="button" class="small-button">Open selected log</button><button type="button" class="small-button">Export history…</button></div></article>
+          </div>
+          <div class="annotation"><strong>Notification</strong><span>“Deep verify: 5 folders verified · Studio NAS skipped, not connected.” Routine full successes may remain quiet; partial work is always named.</span></div>
+        </div>
+      </section>
+
+      <section class="section" id="canonical">
+        <div class="section-heading"><div class="section-number">08 / 08</div><div><h2>Canonical states, named once</h2><p class="section-note">These are the evidence claims the Mac surface may render. A missing record never becomes “clean,” a stale record never becomes “verified,” and a task outcome never becomes a verification result.</p></div></div>
+        <div class="plate">
+          <div class="plate-label"><span>CANONICAL COPY · LEDGER · DIFFERENCES · TASKS</span><span>Shared vocabulary</span></div>
+          <div class="canonical-grid">
+            <article class="canonical-card"><div class="label verified">CLEAN · NO DIFFERENCES</div><h3>No differences</h3><p><strong>Quick check</strong> · 10:08 AM · no differences recorded</p><p>source 1,842 files · 72.3 gb · destination 1,842 files · 72.3 gb · identical totals</p></article>
+            <article class="canonical-card"><div class="label dim">NO RECORD</div><h3>No check recorded</h3><p>No recorded check for Studio NAS.</p><p>Run a check to record differences. This is not the same as a clean listing.</p></article>
+            <article class="canonical-card"><div class="label missing">ERROR</div><h3>Differences unavailable</h3><p>The recorded listing could not be read.</p><p><strong>No new verification was recorded.</strong> Previous evidence remains unchanged.</p></article>
+            <article class="canonical-card"><div class="label unverified">STALE EVIDENCE</div><h3>Evidence is stale</h3><p>Deep verify 31d ago · source changed since verify.</p><p>Current status: <strong>unverified</strong>.</p></article>
+            <article class="canonical-card"><div class="label dim">WRONG VOLUME</div><h3>Destination identity changed</h3><p>The records here were made against a different volume.</p><p>Current status: <strong>unchecked</strong>.</p></article>
+            <article class="canonical-card"><div class="label missing">WHOLE FOLDER MISSING</div><h3>Whole folder missing</h3><p>The source holds the files; nothing was itemized at this destination.</p><p>Counts remain at folder level.</p></article>
+            <article class="canonical-card"><div class="label dim">TRUNCATED LISTING</div><h3>Listing truncated</h3><p><strong>1,200 more not stored · counts remain exact.</strong></p><p>The cap limits rows, not the total counts or the evidence timestamp.</p></article>
+          </div>
+
+          <div class="progress-compare">
+            <article class="progress-state"><div class="label unverified">SILENT CHECKSUM</div><h3>Deep verify is running</h3><p>18m 42s elapsed · Comparing file contents · rsync is running</p><div class="no-progress">no measured percentage</div><p>No file-level results yet · elapsed time remains authoritative.</p></article>
+            <article class="progress-state"><div class="label verified">MEASURED TRANSFER</div><h3>Sync is running</h3><p>44.8 gb of 72.3 gb transferred · rsync measured</p><div class="measured-track"><div class="measured-fill"></div></div><p>1,842 of 2,306 files observed · <strong>62%</strong></p></article>
+          </div>
+
+          <div class="canonical-columns">
+            <article class="canonical-panel"><h3>Relevant destination default</h3><p>Differences opens on the first required destination that needs work, then the first recorded destination. Sync lists only destinations that are behind or missing, with required ones first.</p><div class="destination-picker"><span class="glyph unverified">↑</span><span><strong>Studio NAS</strong><br>behind 28 · 4.7 gb</span><span class="chevron">⌄</span></div><p>Destination is the visible term everywhere.</p></article>
+            <article class="canonical-panel"><h3>Silent background refresh</h3><p>Background refresh · 10:11 AM</p><p>No new evidence recorded · ledger remains unchanged.</p><p>Owned by the background scheduler. Refresh to read newly recorded evidence.</p></article>
+          </div>
+
+          <table class="outcome-table"><thead><tr><th>Outcome</th><th>Canonical copy</th><th>Evidence rule</th></tr></thead><tbody>
+            <tr><td class="verified">completed</td><td>Deep verify · 5 folders · evidence recorded</td><td>Only work that ran and recorded its result is completed.</td></tr>
+            <tr><td class="unverified">skipped</td><td>Studio NAS · not connected · skipped</td><td>No check ran; it never reads as completed.</td></tr>
+            <tr><td class="missing">failed</td><td>rsync exited with code 12</td><td>No new verification was recorded.</td></tr>
+            <tr><td class="dim">cancelled</td><td>Check cancelled · no verification was recorded</td><td>Previous evidence remains with its original time.</td></tr>
+            <tr><td class="dim">missed</td><td>Quick check · Mac asleep · missed</td><td>Nothing ran; the absence is named.</td></tr>
+          </tbody></table>
+          <div class="annotation"><strong>Vocabulary</strong><span>Use <b>destination</b> consistently. The ledger states are <b>verified</b> · <b>unverified</b> · <b>behind</b> · <b>missing</b> · <b>unchecked</b> · <b>error</b>.</span></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const root = document.documentElement;
+    const toggle = document.querySelector('#themeToggle');
+    const label = toggle.querySelector('.theme-label');
+    toggle.addEventListener('click', () => {
+      const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+      root.dataset.theme = next;
+      label.textContent = next === 'light' ? 'Dark appearance' : 'Light appearance';
+      toggle.setAttribute('aria-label', `Switch to ${next === 'light' ? 'dark' : 'light'} appearance`);
+    });
+  </script>
+</body>
+</html>
