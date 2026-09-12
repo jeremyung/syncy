@@ -589,35 +589,55 @@ struct SyncConfirmationView: View {
               .foregroundStyle(SyncyTheme.secondaryInk)
           }
         }
-        HStack {
-          Button("Run preflight") {
-            guard let unit else { return }
-            Task { await model.prepareSync(unit: unit.unit, target: targetName) }
-          }
-          .disabled(
-            unit == nil || targetName.isEmpty || model.isPreparingSync || model.isLaunchingJob
-              || model.activeJob != nil)
-          Spacer()
-          Button("Cancel") { dismiss() }
-            .keyboardShortcut(.cancelAction)
-          // The sheet is for reviewing a transfer, not for watching one. It used
-          // to hold its ground once the job started and swap this button for
-          // "Cancel sync…", which left the reader confirming a transfer and then
-          // staring at the review of it — the window behind, where the progress
-          // and the running job actually are, was covered by the very sheet
-          // reporting nothing further. Starting the work is the moment the
-          // review is finished with.
-          Button("Begin sync") {
-            model.startPreparedSync()
-            model.activityDrawer = .running
-            dismiss()
-          }
-          .buttonStyle(.borderedProminent)
-          .disabled(prepared?.ok != true || !reviewed || model.activeJob != nil)
-          .help("Requires a fresh preflight and explicit review")
-        }
       }
       .formStyle(.grouped)
+
+      Divider()
+      // Outside the Form, because this row is the way out.
+      //
+      // The sheet had no exit. Not a disabled one — none: no Cancel, no close
+      // button, and no `.cancelAction` for the escape key. "Cancel sync…"
+      // appeared only once a job was launching and reads like the way out, but
+      // it cancels the transfer and leaves the sheet standing, so the reader who
+      // pressed it was exactly where they started with one fewer thing running.
+      // Every other path — a preflight that came back blocked, a job another
+      // client had already started, a destination picked by mistake — left the
+      // window unreachable behind a modal with nothing to press.
+      //
+      // Pinned here rather than left as the Form's last row: at 560pt with a
+      // four-line command block the row sat below the fold, so the exit existed
+      // but scrolled. A sheet's escape must not depend on the window's height.
+      HStack(spacing: SyncySpace.md) {
+        Button("Run preflight") {
+          guard let unit else { return }
+          Task { await model.prepareSync(unit: unit.unit, target: targetName) }
+        }
+        .disabled(
+          unit == nil || targetName.isEmpty || model.isPreparingSync || model.isLaunchingJob
+            || model.activeJob != nil)
+        Spacer()
+        Button("Cancel") { dismiss() }
+          .keyboardShortcut(.cancelAction)
+        // The sheet is for reviewing a transfer, not for watching one. It used
+        // to hold its ground once the job started and swap its primary button
+        // for "Cancel sync…", which left the reader confirming a transfer and
+        // then staring at the review of it — the window behind, where the
+        // progress and the running job actually are, was covered by the very
+        // sheet reporting nothing further. Starting the work is the moment the
+        // review is finished with.
+        Button("Begin sync") {
+          model.startPreparedSync()
+          model.activityDrawer = .running
+          dismiss()
+        }
+        .buttonStyle(.borderedProminent)
+        .keyboardShortcut(.defaultAction)
+        .disabled(prepared?.ok != true || !reviewed || model.activeJob != nil)
+        .help("Requires a fresh preflight and explicit review")
+      }
+      .padding(.horizontal, SyncySpace.gutter)
+      .padding(.vertical, SyncySpace.md)
+      .background(.bar)
     }
     .task(id: unit?.id) {
       targetName = eligibleTargets.first ?? ""
