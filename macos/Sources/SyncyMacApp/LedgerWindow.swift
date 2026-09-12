@@ -147,11 +147,7 @@ private struct ActivityDrawer: View {
     let verified = units.filter { $0.state == .verified }
       .reduce(Int64(0)) { $0 + $1.fingerprint.bytes }
     let scale = "\(units.count) folder\(units.count == 1 ? "" : "s")"
-    return "\(scale) \u{00B7} \(bytes(verified)) verified of \(bytes(total))"
-  }
-
-  private func bytes(_ value: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
+    return "\(scale) \u{00B7} \(SyncyFormat.bytes(verified)) verified of \(SyncyFormat.bytes(total))"
   }
 
   private func running(_ job: ActiveJobSnapshot) -> String {
@@ -398,9 +394,7 @@ private struct LedgerTable: View {
   }
 
   private func folderFacts(_ unit: UnitSnapshot) -> String {
-    let size = ByteCountFormatter.string(
-      fromByteCount: unit.fingerprint.bytes, countStyle: .file
-    ).lowercased()
+    let size = SyncyFormat.bytes(unit.fingerprint.bytes)
     return "\(size) \u{00B7} \(unit.fingerprint.nfiles.formatted()) files"
   }
 

@@ -449,10 +449,6 @@ final class AppModel: ObservableObject {
     }
   }
 
-  func cancelSync() {
-    cancelOwnedJob()
-  }
-
   func cancelOwnedJob() {
     guard canCancelOwnedJob else { return }
     isCancellingJob = true

@@ -110,9 +110,7 @@ struct DifferencesView: View {
                         Spacer()
                         if entry.sized {
                           Text(
-                            ByteCountFormatter.string(
-                              fromByteCount: entry.bytes, countStyle: .file
-                            ).lowercased()
+                            SyncyFormat.bytes(entry.bytes)
                           )
                           .font(.caption.monospacedDigit())
                           .foregroundStyle(SyncyTheme.secondaryInk)
@@ -233,20 +231,16 @@ struct DifferencesView: View {
   private func cleanDifferenceDescription(_ diff: RecordedDiff) -> String {
     guard let source = diff.sourceHolds else { return recordedCheckDescription(diff) }
     let sourceSummary =
-      "source \(source.nfiles.formatted()) files · \(bytes(source.bytes))"
+      "source \(source.nfiles.formatted()) files · \(SyncyFormat.bytes(source.bytes))"
     guard let destination = diff.targetHolds else {
       return "\(recordedCheckDescription(diff))\n\(sourceSummary) · destination not measured"
     }
     let destinationSummary =
-      "destination \(destination.nfiles.formatted()) files · \(bytes(destination.bytes))"
+      "destination \(destination.nfiles.formatted()) files · \(SyncyFormat.bytes(destination.bytes))"
     let totals =
       source.nfiles == destination.nfiles && source.bytes == destination.bytes
       ? " · identical totals" : ""
     return "\(recordedCheckDescription(diff))\n\(sourceSummary) · \(destinationSummary)\(totals)"
-  }
-
-  private func bytes(_ value: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
   }
 }
 
@@ -488,7 +482,7 @@ struct EvidenceView: View {
               LabeledContent(
                 "Result",
                 value:
-                  "\(check.nChanges.formatted()) changes · \(formatBytes(check.bytesPending)) pending"
+                  "\(check.nChanges.formatted()) changes · \(SyncyFormat.bytes(check.bytesPending)) pending"
               )
               if let deep = destination.evidence?.deepCheck, deep.at != check.at {
                 LabeledContent("Last deep verify", value: checkDescription(deep))
@@ -518,10 +512,6 @@ struct EvidenceView: View {
     return "\(method) · \(when) · \(formatDuration(duration))"
   }
 
-  private func formatBytes(_ value: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
-  }
-
   private func formatDuration(_ milliseconds: Double) -> String {
     let seconds = max(0, Int(milliseconds / 1_000))
     if seconds >= 3_600 { return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m" }
@@ -532,6 +522,7 @@ struct EvidenceView: View {
 
 struct SyncConfirmationView: View {
   @ObservedObject var model: AppModel
+  @Environment(\.dismiss) private var dismiss
   @State private var targetName = ""
   @State private var reviewed = false
 
@@ -576,9 +567,7 @@ struct SyncConfirmationView: View {
               value: (prepared.nFiles ?? prepared.nChanges).formatted())
             LabeledContent(
               "Bytes to transfer",
-              value: ByteCountFormatter.string(
-                fromByteCount: prepared.bytesPending, countStyle: .file
-              ).lowercased())
+              value: SyncyFormat.bytes(prepared.bytesPending))
             // "Only at destination" everywhere: the evidence inspector and the
             // folder summary already name this fact that way, and a count that
             // skips `formatted()` loses its separator at four digits.
@@ -609,19 +598,23 @@ struct SyncConfirmationView: View {
             unit == nil || targetName.isEmpty || model.isPreparingSync || model.isLaunchingJob
               || model.activeJob != nil)
           Spacer()
-          if model.isLaunchingJob {
-            Button(model.isCancellingJob ? "Cancelling…" : "Cancel sync…", role: .destructive) {
-              model.cancelSync()
-            }
-            .disabled(model.isCancellingJob)
-          } else {
-            Button("Begin sync") {
-              model.startPreparedSync()
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(prepared?.ok != true || !reviewed || model.activeJob != nil)
-            .help("Requires a fresh preflight and explicit review")
+          Button("Cancel") { dismiss() }
+            .keyboardShortcut(.cancelAction)
+          // The sheet is for reviewing a transfer, not for watching one. It used
+          // to hold its ground once the job started and swap this button for
+          // "Cancel sync…", which left the reader confirming a transfer and then
+          // staring at the review of it — the window behind, where the progress
+          // and the running job actually are, was covered by the very sheet
+          // reporting nothing further. Starting the work is the moment the
+          // review is finished with.
+          Button("Begin sync") {
+            model.startPreparedSync()
+            model.activityDrawer = .running
+            dismiss()
           }
+          .buttonStyle(.borderedProminent)
+          .disabled(prepared?.ok != true || !reviewed || model.activeJob != nil)
+          .help("Requires a fresh preflight and explicit review")
         }
       }
       .formStyle(.grouped)
@@ -930,7 +923,7 @@ private struct FolderSummaryView: View {
     Form {
       Section("Source") {
         LabeledContent("Files", value: unit.fingerprint.nfiles.formatted())
-        LabeledContent("Size", value: bytes(unit.fingerprint.bytes))
+        LabeledContent("Size", value: SyncyFormat.bytes(unit.fingerprint.bytes))
       }
       Section("Destinations") {
         ForEach(unit.cells) { destination in
@@ -957,10 +950,6 @@ private struct FolderSummaryView: View {
       }
     }
     .formStyle(.grouped)
-  }
-
-  private func bytes(_ value: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
   }
 }
 
@@ -1022,7 +1011,7 @@ private struct ActiveTaskView: View {
               .foregroundStyle(SyncyTheme.secondaryInk)
           } else if let done = activity.bytesDone, let total = activity.bytesTotal, total > 0 {
             ProgressView(value: Double(done), total: Double(total))
-            Text("\(bytes(done)) of \(bytes(total)) observed · rsync measured")
+            Text("\(SyncyFormat.bytes(done)) of \(SyncyFormat.bytes(total)) observed · rsync measured")
               .font(.caption.monospacedDigit())
               .foregroundStyle(SyncyTheme.secondaryInk)
           } else {
@@ -1081,10 +1070,6 @@ private struct ActiveTaskView: View {
 
   private func phase(_ value: String) -> String {
     value.replacingOccurrences(of: "-", with: " ")
-  }
-
-  private func bytes(_ value: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: value, countStyle: .file).lowercased()
   }
 }
 

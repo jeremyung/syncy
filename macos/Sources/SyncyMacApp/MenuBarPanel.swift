@@ -268,7 +268,7 @@ private struct ArchiveReport: View {
 
   private var extent: String {
     let bytes = snapshot.units.reduce(Int64(0)) { $0 + $1.fingerprint.bytes }
-    return "\(counted(snapshot.units.count, of: "folder")) · \(byteText(bytes))"
+    return "\(counted(snapshot.units.count, of: "folder")) · \(SyncyFormat.bytes(bytes))"
   }
 
   /// Bytes, because the reader is reclaiming disk space and that is the measure
@@ -331,7 +331,7 @@ private struct TallyLine: View {
   /// in the accessibility layer.
   private var summary: String {
     rows
-      .map { "\(counted($0.count, of: "folder")) \($0.state.rawValue), \(byteText($0.bytes))" }
+      .map { "\(counted($0.count, of: "folder")) \($0.state.rawValue), \(SyncyFormat.bytes($0.bytes))" }
       .joined(separator: ". ")
   }
 }
@@ -545,7 +545,7 @@ private struct RunningReport: View {
       if let seen = activity.filesSeen, let total = activity.filesTotal, total > 0 {
         parts.append("\(seen.formatted()) of \(total.formatted()) files")
       } else if let done = activity.bytesDone, let total = activity.bytesTotal, total > 0 {
-        parts.append("\(byteText(done)) of \(byteText(total))")
+        parts.append("\(SyncyFormat.bytes(done)) of \(SyncyFormat.bytes(total))")
       } else if let seen = activity.filesSeen {
         parts.append("\(counted(Int(seen), of: "file")) · no measured total")
       } else {
@@ -671,15 +671,6 @@ extension Date {
   /// one-second clock drop a tick whenever a redraw lands just before one. A
   /// constant anchor keeps the cadence independent of when we happened to draw.
   static let epochAnchor = Date(timeIntervalSince1970: 0)
-}
-
-private func byteText(_ value: Int64) -> String {
-  let formatter = ByteCountFormatter()
-  formatter.countStyle = .file
-  // Left on, a zero total reads "Zero KB" — prose in the slot where the ledger
-  // puts a number first.
-  formatter.allowsNonnumericFormatting = false
-  return formatter.string(fromByteCount: value).lowercased()
 }
 
 /// A running clock, zero-padded. The elapsed line is set in monospaced digits

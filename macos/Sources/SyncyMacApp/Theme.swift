@@ -54,6 +54,32 @@ enum SyncyTheme {
   }
 }
 
+/// Byte figures, in the engine's units.
+///
+/// Six call sites had each grown their own copy of this, all of them
+/// `ByteCountFormatter` at `.file` — which is Finder's base-1000 reading, while
+/// `bytes()` in `src/format.ts` divides by 1024. Every figure the Mac app drew
+/// therefore disagreed with the CLI and the TUI about the same folder: 84.26 gb
+/// here, 78.47 gb there, for one unchanged directory.
+///
+/// It stayed invisible until the sync sheet put both on screen at once — the
+/// engine's `space` guard reporting what a transfer needs, five per cent *above*
+/// the transfer size, printing below it. `presentation.ts` says a client may lay
+/// evidence out as it likes but must not invent a second vocabulary for it, and
+/// a unit is vocabulary.
+///
+/// `.binary` is that base. `allowsNonnumericFormatting` is off because a zero
+/// total otherwise reads "Zero KB" — prose in the slot where the ledger puts a
+/// number first.
+enum SyncyFormat {
+  static func bytes(_ value: Int64) -> String {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .binary
+    formatter.allowsNonnumericFormatting = false
+    return formatter.string(fromByteCount: value).lowercased()
+  }
+}
+
 enum SyncySpace {
   static let xs: CGFloat = 4
   static let sm: CGFloat = 8
