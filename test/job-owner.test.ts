@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { acquireJobOwner, jobOwnerExists, readJobOwner } from "../src/job-owner.ts";
-import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
+import { makeFixtureDir, PROJECT_ROOT, removeFixtureDir } from "./helpers.ts";
 
 const roots: string[] = [];
 
@@ -57,7 +57,7 @@ describe("cross-process job ownership", () => {
     );
   });
 
-  test("a stale dead owner is archived before recovery", () => {
+  test("a stale dead owner is archived (as a file keyed by its token) before recovery", () => {
     const root = fixture("job-owner-stale");
     const first = acquireJobOwner("cli", "sync", {
       root,
@@ -66,6 +66,7 @@ describe("cross-process job ownership", () => {
       token: () => "dead",
     });
     expect(first.acquired).toBe(true);
+    expect(readdirSync(join(root, "job-owner"))).toEqual(["owner.dead.json"]);
 
     const recovered = acquireJobOwner("mac", "deep", {
       root,
@@ -77,7 +78,10 @@ describe("cross-process job ownership", () => {
     });
     expect(recovered.acquired).toBe(true);
     expect(readJobOwner(root)?.token).toBe("replacement");
-    expect(readdirSync(join(root, "job-owners"))).toContain("90000-stale-dead");
+    expect(readdirSync(join(root, "job-owners"))).toContain("90000-stale-dead.json");
+    expect(
+      JSON.parse(readFileSync(join(root, "job-owners", "90000-stale-dead.json"), "utf8")).token,
+    ).toBe("dead");
   });
 
   test("a reused PID cannot preserve an abandoned lease indefinitely", () => {
@@ -103,7 +107,7 @@ describe("cross-process job ownership", () => {
     expect(readJobOwner(root)?.token).toBe("new-process");
   });
 
-  test("release preserves the ownership record in history", () => {
+  test("release preserves the ownership record in history, as one file", () => {
     const root = fixture("job-owner-release");
     const result = acquireJobOwner("cli", "quick", {
       root,
@@ -115,20 +119,39 @@ describe("cross-process job ownership", () => {
     result.lease.release();
 
     expect(jobOwnerExists(root)).toBe(false);
-    const archived = join(root, "job-owners", "7000-released-done", "owner.json");
+    const archived = join(root, "job-owners", "7000-released-done.json");
     expect(JSON.parse(readFileSync(archived, "utf8")).token).toBe("done");
   });
 
-  test("an incomplete fresh claim is not stolen", () => {
-    const root = fixture("job-owner-starting");
+  test("an empty ownership directory (mkdir with no record yet) is reclaimed, not treated as owned", () => {
+    const root = fixture("job-owner-empty-dir");
+    // Simulates the aftermath of a crash between mkdir and the first write:
+    // the directory exists but holds no record. Nothing legitimate to
+    // protect, so this must resolve to a normal acquisition.
     mkdirSync(join(root, "job-owner"));
     const result = acquireJobOwner("mac", "quick", {
       root,
-      now: () => Date.now(),
+      now: () => 1_000,
       pid: 707,
       token: () => "late",
     });
-    expect(result).toEqual({ acquired: false, reason: "owner-starting" });
+    expect(result.acquired).toBe(true);
+    expect(readJobOwner(root)?.token).toBe("late");
+  });
+
+  test("a directory with only unparsable files is swept into the archive as invalid", () => {
+    const root = fixture("job-owner-corrupt");
+    mkdirSync(join(root, "job-owner"));
+    writeFileSync(join(root, "job-owner", "owner.garbage.json"), "not json");
+    const result = acquireJobOwner("mac", "quick", {
+      root,
+      now: () => 5_000,
+      pid: 808,
+      token: () => "recovered",
+    });
+    expect(result.acquired).toBe(true);
+    expect(readJobOwner(root)?.token).toBe("recovered");
+    expect(readdirSync(join(root, "job-owners"))).toContain("5000-invalid-owner.garbage.json");
   });
 
   test("heartbeat refuses to update after ownership changes", () => {
@@ -142,7 +165,7 @@ describe("cross-process job ownership", () => {
     });
     if (!result.acquired) throw new Error("expected ownership");
     writeFileSync(
-      join(root, "job-owner", "owner.json"),
+      join(root, "job-owner", "owner.mine.json"),
       JSON.stringify({ ...result.lease.record, token: "other" }),
     );
     clock = 2_000;
@@ -232,4 +255,168 @@ describe("cross-process job ownership", () => {
     expect(readJobOwner(root)).not.toHaveProperty("batchPosition");
     expect(readJobOwner(root)?.activity).toMatchObject({ unit: "videos", phase: "queued" });
   });
+
+  test("readJobOwner treats more than one record file as unresolved, not a guess", () => {
+    const root = fixture("job-owner-ambiguous");
+    mkdirSync(join(root, "job-owner"));
+    writeFileSync(
+      join(root, "job-owner", "owner.a.json"),
+      JSON.stringify({
+        version: 1,
+        token: "a",
+        pid: 111,
+        actor: "cli",
+        operation: "quick",
+        startedAt: 1,
+        heartbeatAt: 1,
+      }),
+    );
+    writeFileSync(
+      join(root, "job-owner", "owner.b.json"),
+      JSON.stringify({
+        version: 1,
+        token: "b",
+        pid: 222,
+        actor: "cli",
+        operation: "quick",
+        startedAt: 1,
+        heartbeatAt: 1,
+      }),
+    );
+    expect(readJobOwner(root)).toBeUndefined();
+    expect(jobOwnerExists(root)).toBe(false);
+  });
+
+  test("a write that lands after a rival rmdir's our still-empty directory retries instead of returning two owners", () => {
+    // Hooks `token()`, which acquireJobOwner calls right after its own mkdir
+    // succeeds but before it writes its record — exactly the window a rival
+    // could act in. The first call simulates that rival: it rmdir's the
+    // directory out from under us (still empty, so the rmdir genuinely
+    // succeeds), which must make our subsequent write fail with ENOENT and
+    // retry, rather than silently landing in whatever directory happens to
+    // exist by the time the write runs.
+    const root = fixture("job-owner-write-race");
+    let calls = 0;
+    const result = acquireJobOwner("cli", "quick", {
+      root,
+      now: () => 3_000,
+      pid: 1010,
+      token: () => {
+        calls += 1;
+        if (calls === 1) {
+          rmdirSync(join(root, "job-owner"));
+          return "should-not-be-used";
+        }
+        return "won-the-retry";
+      },
+    });
+    expect(result.acquired).toBe(true);
+    if (result.acquired) expect(result.lease.record.token).toBe("won-the-retry");
+    expect(readdirSync(join(root, "job-owner"))).toEqual(["owner.won-the-retry.json"]);
+  });
+
+  test("a write that lands in a rival's freshly re-mkdir'd directory backs itself out", () => {
+    // Same hook point as above, but this time the rival doesn't just rmdir —
+    // it rmdir's, re-mkdirs, and publishes its OWN record before we resume,
+    // so our directory still exists by the time we write (no ENOENT). Our
+    // write succeeds too (different filename), landing two records in one
+    // directory. The post-write self-check must catch that and back out —
+    // the rival's record is fresh, so we must end up correctly reporting
+    // "owned" by the rival, never a lease of our own that shares a
+    // directory with theirs.
+    const root = fixture("job-owner-write-race-collision");
+    const result = acquireJobOwner("cli", "quick", {
+      root,
+      now: () => 4_000,
+      pid: 1111,
+      token: () => {
+        const rival = acquireJobOwner("mac", "quick", {
+          root,
+          now: () => 4_000,
+          pid: 2222,
+          token: () => "rival",
+        });
+        if (!rival.acquired) throw new Error("expected the rival to win the directory");
+        return "loser";
+      },
+    });
+    expect(result).toEqual({
+      acquired: false,
+      owner: expect.objectContaining({ token: "rival" }),
+      reason: "owned",
+    });
+    // Exactly one record remains — the rival's — never our "loser" write.
+    expect(readdirSync(join(root, "job-owner")).filter((name) => name.endsWith(".json"))).toEqual([
+      "owner.rival.json",
+    ]);
+    expect(readJobOwner(root)?.token).toBe("rival");
+  });
+});
+
+describe("two real processes racing for the same dead owner", () => {
+  const WORKER_SOURCE = `
+import { acquireJobOwner } from ${JSON.stringify(join(PROJECT_ROOT, "src", "job-owner.ts"))};
+
+const root = process.argv[2];
+const label = process.argv[3];
+
+const result = acquireJobOwner("cli", "quick", {
+  root,
+  pid: process.pid,
+  token: () => \`\${label}-\${process.pid}-\${Math.random().toString(36).slice(2)}\`,
+  pidAlive: () => false,
+  staleAfterMs: 30_000,
+  abandonAfterMs: 300_000,
+});
+
+process.stdout.write(JSON.stringify({ acquired: result.acquired }));
+`;
+
+  test("exactly one of two concurrent processes acquires a dead owner, every trial", async () => {
+    const scriptDir = fixture("job-owner-race-worker-src");
+    const workerPath = join(scriptDir, "worker.ts");
+    writeFileSync(workerPath, WORKER_SOURCE, "utf8");
+
+    const TRIALS = 40;
+    for (let i = 0; i < TRIALS; i += 1) {
+      const root = fixture(`job-owner-race-${i}`);
+      mkdirSync(join(root, "job-owner"));
+      writeFileSync(
+        join(root, "job-owner", "owner.dead-seed.json"),
+        JSON.stringify({
+          version: 1,
+          token: "dead-seed",
+          pid: 999_999,
+          actor: "cli",
+          operation: "quick",
+          startedAt: 1,
+          heartbeatAt: 1,
+        }),
+      );
+
+      const spawn = (label: string) =>
+        Bun.spawn(["bun", "run", workerPath, root, label], {
+          cwd: PROJECT_ROOT,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      const a = spawn("A");
+      const b = spawn("B");
+      const [outA, outB, exitA, exitB, errA, errB] = await Promise.all([
+        new Response(a.stdout).text(),
+        new Response(b.stdout).text(),
+        a.exited,
+        b.exited,
+        new Response(a.stderr).text(),
+        new Response(b.stderr).text(),
+      ]);
+      expect(exitA, errA).toBe(0);
+      expect(exitB, errB).toBe(0);
+      const acquiredA = (JSON.parse(outA) as { acquired: boolean }).acquired;
+      const acquiredB = (JSON.parse(outB) as { acquired: boolean }).acquired;
+      expect([acquiredA, acquiredB].filter(Boolean).length, `trial ${i}: A=${outA} B=${outB}`).toBe(
+        1,
+      );
+    }
+  }, 20_000);
 });
