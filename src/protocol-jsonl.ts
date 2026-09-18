@@ -86,6 +86,14 @@ function optionalCount(value: unknown, where: string): void {
   if (value !== undefined) count(value, where);
 }
 
+/** An rsync exit code: null (no invocation occurred) or a non-negative integer. */
+function exitCode(value: unknown, where: string): asserts value is number | null {
+  if (value === null) return;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new ProtocolError(`${where} must be null or a non-negative integer`);
+  }
+}
+
 function member<T extends string>(
   value: unknown,
   values: ReadonlySet<T>,
@@ -389,7 +397,11 @@ function validateJob(message: RecordValue): void {
     case "job.completed": {
       const result = record(message["result"], "job.completed.result");
       if (operation === "sync") {
-        finite(result["exitCode"], "job.completed.result.exitCode");
+        // A completed sync always ran rsync, so null is not an option here.
+        exitCode(result["exitCode"], "job.completed.result.exitCode");
+        if (result["exitCode"] === null) {
+          throw new ProtocolError("job.completed.result.exitCode must be present for a sync");
+        }
         count(result["transferred"], "job.completed.result.transferred");
         return;
       }
@@ -399,15 +411,13 @@ function validateJob(message: RecordValue): void {
       optionalCount(result["nFiles"], "job.completed.result.nFiles");
       count(result["nExtra"], "job.completed.result.nExtra");
       count(result["bytesPending"], "job.completed.result.bytesPending");
-      if (result["exitCode"] !== null) {
-        finite(result["exitCode"], "job.completed.result.exitCode");
-      }
+      exitCode(result["exitCode"], "job.completed.result.exitCode");
       optionalCount(result["durationMs"], "job.completed.result.durationMs");
       return;
     }
     case "job.failed":
       string(message["message"], "job.failed.message");
-      if (message["exitCode"] !== null) finite(message["exitCode"], "job.failed.exitCode");
+      exitCode(message["exitCode"], "job.failed.exitCode");
       return;
     case "job.cancelled":
       optionalCount(message["transferred"], "job.cancelled.transferred");

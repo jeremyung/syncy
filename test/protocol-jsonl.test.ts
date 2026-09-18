@@ -231,6 +231,30 @@ describe("engine JSON Lines protocol", () => {
     expect(() => parseEngineMessage(bad)).toThrow(/must contain an observation/);
   });
 
+  test("rejects a completed check with a negative exit code", () => {
+    const bad = JSON.stringify({
+      ...started,
+      type: "job.completed",
+      operation: "quick",
+      result: { outcome: "clean", nChanges: 0, nExtra: 0, bytesPending: 0, exitCode: -1 },
+    });
+    expect(() => parseEngineMessage(bad)).toThrow(
+      /exitCode must be null or a non-negative integer/,
+    );
+  });
+
+  test("rejects a completed sync with a fractional exit code", () => {
+    const bad = JSON.stringify({
+      ...started,
+      type: "job.completed",
+      operation: "sync",
+      result: { exitCode: 1.5, transferred: 3 },
+    });
+    expect(() => parseEngineMessage(bad)).toThrow(
+      /exitCode must be null or a non-negative integer/,
+    );
+  });
+
   test("rejects malformed nested snapshot evidence", () => {
     const bad = structuredClone(snapshot) as unknown as {
       units: Array<{ fingerprint: { nfiles: unknown } }>;
