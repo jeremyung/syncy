@@ -6,6 +6,7 @@ import type { Config } from "../config.ts";
 import { type Diff, loadDiff } from "../diff.ts";
 import { EMPTY as EMPTY_FINGERPRINT, type Fingerprint, fingerprint } from "../fingerprint.ts";
 import { bytes } from "../format.ts";
+import { isJobOwnerActive, readJobOwner } from "../job-owner.ts";
 import { timed, timedAsync } from "../log.ts";
 import { allReachability, listUnits, type Reachability } from "../scan.ts";
 import { lastSyncAt, loadState, type State } from "../state.ts";
@@ -331,6 +332,15 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
             showNotice(
               `[s] ignored — the ${running.mode} check on ${running.unit} is still running`,
             );
+            return;
+          }
+          // This only peeks at the lease — acquiring it happens in Job.tsx,
+          // once the sync is actually confirmed — but another process (the
+          // Mac app, the scheduler, a second CLI) can hold it right now, and
+          // opening Confirm on top of that would let [enter] race its write.
+          const owner = readJobOwner();
+          if (owner !== undefined && isJobOwnerActive(owner)) {
+            showNotice(`sync ignored — ${owner.actor} ${owner.operation} is still running`);
             return;
           }
           const row = rows[clampedSelection];
