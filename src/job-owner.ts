@@ -202,6 +202,17 @@ export function readJobOwner(root = stateDir()): JobOwnerRecord | undefined {
 }
 
 /**
+ * Whether a failed call means its path was already removed or renamed by a
+ * process racing this one. Linux says ENOENT; APFS has been seen to say
+ * EINVAL when the vnode went away under the call, so that code is trusted
+ * only once the path is confirmed gone.
+ */
+function vanished(error: unknown, path: string): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || (code === "EINVAL" && !existsSync(path));
+}
+
+/**
  * Moves one exact file out of `job-owner/` into the archive, then removes the
  * directory if that leaves it empty.
  *
@@ -221,13 +232,8 @@ function archiveFile(root: string, fileName: string, archivedAs: string): void {
   try {
     renameSync(source, join(archive, archivedAs));
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
     // Already archived (or never written) by whoever else raced us here.
-    // Linux reports the vanished source as ENOENT; APFS has been seen to
-    // report EINVAL when the file was renamed away under it, so that code is
-    // trusted only once the source is confirmed gone.
-    const raced = code === "ENOENT" || (code === "EINVAL" && !existsSync(source));
-    if (!raced) throw error;
+    if (!vanished(error, source)) throw error;
   }
   rmdirIgnoringNonEmpty(current);
 }
@@ -243,7 +249,7 @@ function rmdirIgnoringNonEmpty(dir: string): void {
     rmdirSync(dir);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT" && code !== "ENOTEMPTY") throw error;
+    if (code !== "ENOTEMPTY" && !vanished(error, dir)) throw error;
   }
 }
 
@@ -287,10 +293,9 @@ export function acquireJobOwner(
       try {
         writeFileSync(path, `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "wx" });
       } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
         // Our directory was rmdir'd (and not yet recreated) in the
         // microsecond window between our mkdir and this write.
-        if (code === "ENOENT") continue;
+        if (vanished(error, paths.current)) continue;
         throw error;
       }
       // Confirm the directory we just wrote into still holds only our
@@ -300,9 +305,19 @@ export function acquireJobOwner(
       // that: a second file appearing means we lost a race we can't win
       // retroactively, so we back out instead of returning a lease that
       // shares its directory with someone else's.
-      const siblings = readdirSync(paths.current).filter(isRecordName);
+      let siblings: string[];
+      try {
+        siblings = readdirSync(paths.current).filter(isRecordName);
+      } catch (error) {
+        if (vanished(error, paths.current)) continue;
+        throw error;
+      }
       if (siblings.length !== 1 || siblings[0] !== recordName(token)) {
-        rmSync(path, { force: true });
+        try {
+          rmSync(path, { force: true });
+        } catch (error) {
+          if (!vanished(error, path)) throw error;
+        }
         rmdirIgnoringNonEmpty(paths.current);
         continue;
       }
