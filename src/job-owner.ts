@@ -1,5 +1,4 @@
 import {
-  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -202,14 +201,17 @@ export function readJobOwner(root = stateDir()): JobOwnerRecord | undefined {
 }
 
 /**
- * Whether a failed call means its path was already removed or renamed by a
- * process racing this one. Linux says ENOENT; APFS has been seen to say
- * EINVAL when the vnode went away under the call, so that code is trusted
- * only once the path is confirmed gone.
+ * Whether a failed call means its path was removed or renamed by a process
+ * racing this one. Linux says ENOENT. APFS says EINVAL when the directory
+ * entry it resolved went away under the call — and by the time the caller
+ * looks, a rival may already have put the path back, so the code is taken
+ * at its word: every flag and path here is constant, which leaves a race
+ * as the only thing EINVAL can mean, and every caller retries or gives up
+ * within a bounded loop.
  */
-function vanished(error: unknown, path: string): boolean {
+function vanished(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
-  return code === "ENOENT" || (code === "EINVAL" && !existsSync(path));
+  return code === "ENOENT" || code === "EINVAL";
 }
 
 /**
@@ -233,7 +235,7 @@ function archiveFile(root: string, fileName: string, archivedAs: string): void {
     renameSync(source, join(archive, archivedAs));
   } catch (error) {
     // Already archived (or never written) by whoever else raced us here.
-    if (!vanished(error, source)) throw error;
+    if (!vanished(error)) throw error;
   }
   rmdirIgnoringNonEmpty(current);
 }
@@ -249,7 +251,7 @@ function rmdirIgnoringNonEmpty(dir: string): void {
     rmdirSync(dir);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOTEMPTY" && !vanished(error, dir)) throw error;
+    if (code !== "ENOTEMPTY" && !vanished(error)) throw error;
   }
 }
 
@@ -295,7 +297,7 @@ export function acquireJobOwner(
       } catch (error) {
         // Our directory was rmdir'd (and not yet recreated) in the
         // microsecond window between our mkdir and this write.
-        if (vanished(error, paths.current)) continue;
+        if (vanished(error)) continue;
         throw error;
       }
       // Confirm the directory we just wrote into still holds only our
@@ -309,14 +311,14 @@ export function acquireJobOwner(
       try {
         siblings = readdirSync(paths.current).filter(isRecordName);
       } catch (error) {
-        if (vanished(error, paths.current)) continue;
+        if (vanished(error)) continue;
         throw error;
       }
       if (siblings.length !== 1 || siblings[0] !== recordName(token)) {
         try {
           rmSync(path, { force: true });
         } catch (error) {
-          if (!vanished(error, path)) throw error;
+          if (!vanished(error)) throw error;
         }
         rmdirIgnoringNonEmpty(paths.current);
         continue;
