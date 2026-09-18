@@ -124,9 +124,7 @@ public struct JobEventSnapshot: Decodable, Sendable {
     phase = try values.decodeIfPresent(String.self, forKey: .phase)
     batch = try values.decodeIfPresent(JobBatchSnapshot.self, forKey: .batch)
     unitSize = try values.decodeIfPresent(JobUnitSizeSnapshot.self, forKey: .unitSize)
-    estimatedDurationMs =
-      try values.decodeIfPresent(Double.self, forKey: .estimatedDurationMs)
-      ?? (try values.decodeIfPresent(Double.self, forKey: .priorDurationMs))
+    estimatedDurationMs = try values.decodeIfPresent(Double.self, forKey: .estimatedDurationMs)
     filesSeen = try values.decodeIfPresent(Int64.self, forKey: .filesSeen)
     filesTotal = try values.decodeIfPresent(Int64.self, forKey: .filesTotal)
     bytesDone = try values.decodeIfPresent(Int64.self, forKey: .bytesDone)
@@ -226,8 +224,7 @@ public struct JobEventSnapshot: Decodable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case protocolVersion, type, jobId, at, operation, unit, target, phase, batch, unitSize
-    case estimatedDurationMs, priorDurationMs, filesSeen, filesTotal, bytesDone, bytesTotal, lastItem,
-      reachability
+    case estimatedDurationMs, filesSeen, filesTotal, bytesDone, bytesTotal, lastItem, reachability
     case reason, result, message, exitCode, transferred
   }
 }
@@ -906,7 +903,7 @@ public struct ProcessEngineClient: EngineClient {
     process.standardOutput = stdout
     process.standardError = stderr
 
-    let pair: (Data, Data) = try await withTaskCancellationHandler {
+    let triple: (Data, Data, (any Error)?) = try await withTaskCancellationHandler {
       try Task.checkCancellation()
       do {
         try process.run()
@@ -921,32 +918,49 @@ public struct ProcessEngineClient: EngineClient {
       let errorReader = Task.detached { errorHandle.readDataToEndOfFile() }
       var output = Data()
       var pending: [UInt8] = []
+      // A record this build cannot read is a fault in the reader, not in the
+      // work. Throwing here would unwind through the `defer` above and send
+      // the engine SIGTERM, which it honours as a cancel — so a phase name
+      // added by a newer engine would have cancelled a sync that was already
+      // writing. The stream is read to its end instead, every record that
+      // does decode is still delivered, and the first failure is reported
+      // once the engine has finished and recorded its own outcome.
+      var unreadable: (any Error)?
+      func deliver(_ line: Data) {
+        do {
+          onEvent(try decodeJobEvent(line))
+        } catch {
+          if unreadable == nil { unreadable = error }
+        }
+      }
       while let chunk = try stdout.fileHandleForReading.read(upToCount: 64 * 1_024), !chunk.isEmpty {
         output.append(chunk)
         pending.append(contentsOf: chunk)
         while let newline = pending.firstIndex(of: 0x0A) {
           let line = Data(pending[..<newline])
           pending.removeFirst(newline + 1)
-          if !line.isEmpty { onEvent(try decodeJobEvent(line)) }
+          if !line.isEmpty { deliver(line) }
         }
       }
-      if !pending.isEmpty { onEvent(try decodeJobEvent(Data(pending))) }
+      if !pending.isEmpty { deliver(Data(pending)) }
       let errorOutput = await errorReader.value
       process.waitUntilExit()
       try Task.checkCancellation()
-      return (output, errorOutput)
+      return (output, errorOutput, unreadable)
     } onCancel: {
       if processBox.process.isRunning { processBox.process.terminate() }
     }
-    let (output, errorOutput) = pair
+    let (output, errorOutput, unreadable) = triple
     let errorText =
       String(data: errorOutput, encoding: .utf8)?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    // The engine's own exit outranks a record this reader could not parse:
+    // its status and stderr say what happened to the work.
     guard process.terminationStatus == 0 else {
       throw EngineClientError.exited(process.terminationStatus, errorText)
     }
     guard !output.isEmpty else { throw EngineClientError.emptyOutput }
-
+    if let unreadable { throw unreadable }
   }
 
   private static func decodeJobEvent(_ data: Data) throws -> JobEventSnapshot {

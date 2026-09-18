@@ -1,4 +1,6 @@
-import AppKit
+#if canImport(AppKit)
+  import AppKit
+#endif
 import Foundation
 import XCTest
 
@@ -68,11 +70,17 @@ final class ModelsTests: XCTestCase {
   /// `tilde`, which is the TUI's `~` but is not an SF Symbol, so every
   /// unverified row in the ledger showed a blank circle.
   func testEveryStateGlyphResolves() throws {
-    for state in LedgerState.allCases {
-      XCTAssertNotNil(
-        NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil),
-        "\(state.rawValue) draws nothing: \"\(state.symbol)\" is not an SF Symbol")
-    }
+    #if canImport(AppKit)
+      for state in LedgerState.allCases {
+        XCTAssertNotNil(
+          NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil),
+          "\(state.rawValue) draws nothing: \"\(state.symbol)\" is not an SF Symbol")
+      }
+    #else
+      // SF Symbols only resolve on Apple platforms; the rest of this file is
+      // pure Foundation and runs anywhere the core target compiles.
+      throw XCTSkip("SF Symbols resolve only where AppKit is available")
+    #endif
   }
 
   func testArchiveReportsItsWeakestFolder() throws {
@@ -229,6 +237,57 @@ final class ModelsTests: XCTestCase {
     XCTAssertEqual(events[2].filesSeen, 4)
     XCTAssertEqual(events[2].filesTotal, 12)
     XCTAssertEqual(events[0].estimatedDurationMs, 42_000)
+  }
+
+  /// A record this build cannot read is a fault in the reader. The engine
+  /// keeps running and records its own outcome; the reader must not turn a
+  /// display problem into a cancelled sync by terminating it. The fake
+  /// engine below writes a marker if it is ever signalled.
+  func testUnreadableJobEventDoesNotTerminateTheEngine() async throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("syncy-engine-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let marker = dir.appendingPathComponent("terminated")
+    let engine = dir.appendingPathComponent("engine.sh")
+    let base = "\"protocolVersion\":1,\"jobId\":\"j\",\"operation\":\"quick\",\"unit\":\"u\",\"target\":\"t\""
+    let script = """
+      #!/bin/sh
+      trap 'echo terminated > "\(marker.path)"; exit 143' TERM
+      printf '%s\\n' '{\(base),"type":"job.started","at":1,"phase":"queued","unitSize":{"bytes":1}}'
+      printf '%s\\n' '{\(base),"type":"job.phase-changed","at":2,"phase":"a-phase-this-build-does-not-know"}'
+      sleep 0.3
+      printf '%s\\n' '{\(base),"type":"job.completed","at":3,"result":{"outcome":"clean","nChanges":0,"nExtra":0,"bytesPending":0,"exitCode":0}}'
+      exit 0
+      """
+    try script.write(to: engine, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: engine.path)
+
+    final class Seen: @unchecked Sendable {
+      private let lock = NSLock()
+      private var types: [String] = []
+      func add(_ type: String) { lock.withLock { types.append(type) } }
+      var all: [String] { lock.withLock { types } }
+    }
+    let seen = Seen()
+    let client = ProcessEngineClient(executableURL: engine)
+    do {
+      try await client.runCheck(.quick, unit: nil, actor: .mac) { seen.add($0.type) }
+      XCTFail("an unreadable record must still be reported")
+    } catch let error as EngineClientError {
+      guard case .protocolFailure = error else {
+        return XCTFail("expected a protocol failure, got \(error)")
+      }
+    }
+    // A signalled engine writes its marker from a trap; give it a moment so
+    // the assertion below is about the signal, not about who ran first.
+    try await Task.sleep(nanoseconds: 500_000_000)
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: marker.path),
+      "the engine was signalled because of a record the reader could not parse")
+    XCTAssertEqual(
+      seen.all, ["job.started", "job.completed"],
+      "records that do decode are still delivered, before and after the unreadable one")
   }
 
   func testJobProtocolRejectsUnknownEventTypes() {
