@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { claimSyncIntent, type SyncIntent, saveSyncIntent } from "../src/sync-intent.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
@@ -18,6 +18,7 @@ const intent = (overrides: Partial<SyncIntent> = {}): SyncIntent => ({
   target: "archive",
   argv: ["-a", "/source/photos/", "/destination/photos/"],
   fingerprint: { nfiles: 12, bytes: 4_096, maxMtimeNs: "100" },
+  configRevision: "revision-1",
   nChanges: 4,
   bytesPending: 2_048,
   needsChecksum: false,
@@ -30,6 +31,20 @@ describe("one-use sync confirmations", () => {
     saveSyncIntent(intent(), root);
     expect(claimSyncIntent("confirmation-123", 2_000, root)).toEqual(intent());
     expect(() => claimSyncIntent("confirmation-123", 2_001, root)).toThrow(/already been used/);
+  });
+
+  test("round-trips the config revision the review was performed against", () => {
+    root = makeFixtureDir("syncy-intent-revision");
+    saveSyncIntent(intent({ configRevision: "revision-of-record" }), root);
+    const claimed = claimSyncIntent("confirmation-123", 2_000, root);
+    expect(claimed.configRevision).toBe("revision-of-record");
+  });
+
+  test("writes the pending confirmation file readable only by its owner", () => {
+    root = makeFixtureDir("syncy-intent-mode");
+    saveSyncIntent(intent(), root);
+    const file = join(root, "sync-intents", "pending", "confirmation-123.json");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
   test("an expired confirmation remains claimed but cannot run", () => {

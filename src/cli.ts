@@ -5,7 +5,7 @@ import { type Config, ConfigError, loadConfig } from "./config.ts";
 import { EMPTY_CONFIG, saveConfig, withoutTarget, withTarget } from "./configio.ts";
 import { loadDiff } from "./diff.ts";
 import { loadHistorySnapshot } from "./engine-history.ts";
-import { buildEngineActivity, buildEngineSnapshot } from "./engine-snapshot.ts";
+import { buildEngineActivity, buildEngineSnapshot, configRevision } from "./engine-snapshot.ts";
 import { fingerprint } from "./fingerprint.ts";
 import { bytes } from "./format.ts";
 import { preflight } from "./guards.ts";
@@ -494,6 +494,7 @@ async function cmdSyncPreflight(
       target: targetName,
       argv,
       fingerprint: unit.fingerprint,
+      configRevision: snapshot.configRevision,
       nChanges: cell.nChanges,
       ...(cell.nFiles === undefined ? {} : { nFiles: cell.nFiles }),
       bytesPending: cell.bytesPending,
@@ -557,6 +558,14 @@ async function cmdEngineSync(config: Config, token: string): Promise<void> {
     const intent = claimSyncIntent(token);
     const target = config.targets.find((candidate) => candidate.name === intent.target);
     if (target === undefined) throw new Error(`destination no longer exists: ${intent.target}`);
+    // Defence in depth: the fingerprint and argv checks below catch most
+    // config edits as a side effect (a changed destination path changes the
+    // argv it produces), but this closes the gap for any config change that
+    // doesn't happen to move either of those — the confirmation is bound to
+    // the exact config it was reviewed against.
+    if (configRevision(config) !== intent.configRevision) {
+      throw new Error("configuration changed after review; run the preflight again");
+    }
     const measured = fingerprint(join(config.source, intent.unit), config.exclude);
     if (
       measured.nfiles !== intent.fingerprint.nfiles ||

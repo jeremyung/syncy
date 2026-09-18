@@ -292,6 +292,142 @@ sentinel = "${sentinel}"
       }),
     );
   }, 30_000);
+
+  test("refuses a sync whose config changed after the preflight review, and consumes the token", async () => {
+    root = makeFixtureDir("syncy-engine-revision-changed");
+    const source = join(root, "source");
+    const destination = join(root, "destination");
+    const otherDestination = join(root, "other-destination");
+    const configHome = join(root, "config-home");
+    const stateHome = join(root, "state-home");
+    mkdirSync(join(source, "photos"), { recursive: true });
+    mkdirSync(destination, { recursive: true });
+    mkdirSync(otherDestination, { recursive: true });
+    writeFileSync(join(source, "photos", "one.txt"), "one");
+    const sentinel = await writeSentinel(destination);
+    const configDir = join(configHome, "syncy");
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, "config.toml");
+    const configFor = (path: string, sentinelValue: string) => `source = "${source}"
+
+[status]
+max_verify_age_days = 30
+max_quick_age_days = 7
+min_targets = 1
+
+[[target]]
+name = "archive"
+path = "${path}"
+required = true
+sentinel = "${sentinelValue}"
+`;
+    writeFileSync(configPath, configFor(destination, sentinel));
+
+    expect((await runEngine(["check", "photos"], configHome, stateHome)).exitCode).toBe(0);
+    const prepared = await runEngine(["preflight", "photos", "archive"], configHome, stateHome);
+    const preparedMessage = parseEngineMessage(prepared.stdout);
+    if (
+      preparedMessage.type !== "sync.preflight" ||
+      preparedMessage.confirmationToken === undefined
+    ) {
+      throw new Error("preflight did not return a confirmation");
+    }
+
+    // The destination is repointed after review — same target name, different
+    // path — so the confirmation token was reviewed against a config that no
+    // longer exists.
+    writeFileSync(configPath, configFor(otherDestination, sentinel));
+
+    const refused = await runEngine(
+      ["sync", preparedMessage.confirmationToken],
+      configHome,
+      stateHome,
+    );
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stderr).toContain("configuration changed after review; run the preflight again");
+    expect(existsSync(join(destination, "photos", "one.txt"))).toBe(false);
+    expect(existsSync(join(otherDestination, "photos", "one.txt"))).toBe(false);
+
+    // Refusal still claims the token: a second attempt cannot spend it either.
+    const reused = await runEngine(
+      ["sync", preparedMessage.confirmationToken],
+      configHome,
+      stateHome,
+    );
+    expect(reused.exitCode).not.toBe(0);
+    expect(reused.stderr).toContain("already been used");
+  }, 30_000);
+
+  test("refuses a sync whose argv no longer matches the one it was reviewed against", async () => {
+    root = makeFixtureDir("syncy-engine-argv-changed");
+    const source = join(root, "source");
+    const destination = join(root, "destination");
+    const configHome = join(root, "config-home");
+    const stateHome = join(root, "state-home");
+    mkdirSync(join(source, "photos"), { recursive: true });
+    mkdirSync(destination, { recursive: true });
+    writeFileSync(join(source, "photos", "one.txt"), "one");
+    const sentinel = await writeSentinel(destination);
+    const configDir = join(configHome, "syncy");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, "config.toml"),
+      `source = "${source}"
+
+[status]
+max_verify_age_days = 30
+max_quick_age_days = 7
+min_targets = 1
+
+[[target]]
+name = "archive"
+path = "${destination}"
+required = true
+sentinel = "${sentinel}"
+`,
+    );
+
+    expect((await runEngine(["check", "photos"], configHome, stateHome)).exitCode).toBe(0);
+    const prepared = await runEngine(["preflight", "photos", "archive"], configHome, stateHome);
+    const preparedMessage = parseEngineMessage(prepared.stdout);
+    if (
+      preparedMessage.type !== "sync.preflight" ||
+      preparedMessage.confirmationToken === undefined
+    ) {
+      throw new Error("preflight did not return a confirmation");
+    }
+
+    // Tamper with the persisted confirmation's argv directly — the config and
+    // source are untouched, so this isolates the argv-equality check from the
+    // config-revision and fingerprint checks that would otherwise also fire.
+    const intentFile = join(
+      stateHome,
+      "syncy",
+      "sync-intents",
+      "pending",
+      `${preparedMessage.confirmationToken}.json`,
+    );
+    const stored = JSON.parse(readFileSync(intentFile, "utf8"));
+    stored.argv = [...stored.argv, "--bogus-flag-not-reviewed"];
+    writeFileSync(intentFile, `${JSON.stringify(stored)}\n`);
+
+    const refused = await runEngine(
+      ["sync", preparedMessage.confirmationToken],
+      configHome,
+      stateHome,
+    );
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stderr).toContain("sync command changed after review; run the preflight again");
+    expect(existsSync(join(destination, "photos", "one.txt"))).toBe(false);
+
+    const reused = await runEngine(
+      ["sync", preparedMessage.confirmationToken],
+      configHome,
+      stateHome,
+    );
+    expect(reused.exitCode).not.toBe(0);
+    expect(reused.stderr).toContain("already been used");
+  }, 30_000);
 });
 
 describe("syncy adopt (the bootstrap command)", () => {

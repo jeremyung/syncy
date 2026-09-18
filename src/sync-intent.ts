@@ -12,6 +12,8 @@ export interface SyncIntent {
   readonly target: string;
   readonly argv: readonly string[];
   readonly fingerprint: Fingerprint;
+  /** Hash of the config the review was performed against; see buildEngineSnapshot. */
+  readonly configRevision: string;
   readonly nChanges: number;
   /** Changed file total used for transfer progress; absent on legacy intents. */
   readonly nFiles?: number;
@@ -26,10 +28,13 @@ const roots = (root: string) => ({
 
 export function saveSyncIntent(intent: SyncIntent, root: string = stateDir()): void {
   const paths = roots(root);
-  mkdirSync(paths.pending, { recursive: true });
+  mkdirSync(paths.pending, { recursive: true, mode: 0o700 });
+  // The token in this file authorises a destination write; keep it unreadable
+  // by anyone but the owner of the state directory.
   writeFileSync(join(paths.pending, `${intent.token}.json`), `${JSON.stringify(intent)}\n`, {
     encoding: "utf8",
     flag: "wx",
+    mode: 0o600,
   });
 }
 
@@ -47,6 +52,7 @@ function parseIntent(raw: unknown): SyncIntent {
     !value.argv.every((part) => typeof part === "string") ||
     typeof value.fingerprint !== "object" ||
     value.fingerprint === null ||
+    typeof value.configRevision !== "string" ||
     typeof value.nChanges !== "number" ||
     (value.nFiles !== undefined && typeof value.nFiles !== "number") ||
     typeof value.bytesPending !== "number" ||
@@ -73,7 +79,7 @@ export function claimSyncIntent(
 ): SyncIntent {
   if (!/^[A-Za-z0-9-]{8,128}$/.test(token)) throw new Error("invalid sync confirmation token");
   const paths = roots(root);
-  mkdirSync(paths.claimed, { recursive: true });
+  mkdirSync(paths.claimed, { recursive: true, mode: 0o700 });
   const source = join(paths.pending, `${token}.json`);
   const claimed = join(paths.claimed, `${now}-${token}.json`);
   try {

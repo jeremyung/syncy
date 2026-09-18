@@ -94,6 +94,14 @@ export function buildEngineActivity(
  * A native client must never reconstruct a stronger verdict from state.json
  * alone, because a detached destination cannot support `verified` now.
  */
+/**
+ * Changes whenever the configuration changes. A sync confirmation records the
+ * revision it was reviewed against so a config edit in between refuses it.
+ */
+export function configRevision(config: Config): string {
+  return createHash("sha256").update(JSON.stringify(config)).digest("hex");
+}
+
 export async function buildEngineSnapshot(
   config: Config,
   state: State,
@@ -142,7 +150,7 @@ export async function buildEngineSnapshot(
     type: "snapshot",
     generatedAt: io.completedAt?.() ?? now,
     source: config.source,
-    configRevision: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+    configRevision: configRevision(config),
     targets: config.targets.map((target) => ({
       name: target.name,
       required: target.required,
