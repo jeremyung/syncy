@@ -19,6 +19,28 @@ describe("shared presentation contract", () => {
     expect(result.summary).not.toContain("finished");
   });
 
+  test("a batch with both a failure and a skip reports the failure, not the skip", () => {
+    // Old TUI behaviour reported skips first; a failed job is the more
+    // actionable fact, so it must win even when a destination was also
+    // skipped in the same batch.
+    const result = presentCheckOutcome({
+      mode: "quick",
+      scope: "all",
+      selectedFolders: 2,
+      total: 2,
+      ran: 1,
+      failed: [{ unit: "photos", target: "Archive", message: "rsync exited with code 12" }],
+      skipped: [{ target: "Studio NAS", why: "mismatch" }],
+    });
+
+    expect(result.level).toBe("failure");
+    expect(result.summary).toBe(
+      "quick check failed · photos → Archive: failed — rsync exited with code 12",
+    );
+    expect(result.summary).not.toContain("nothing checked");
+    expect(result.summary).not.toContain("skipped");
+  });
+
   test("a fully skipped run says that nothing was checked", () => {
     const result = presentCheckOutcome({
       mode: "quick",
