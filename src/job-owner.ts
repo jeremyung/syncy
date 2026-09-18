@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -216,12 +217,17 @@ export function readJobOwner(root = stateDir()): JobOwnerRecord | undefined {
 function archiveFile(root: string, fileName: string, archivedAs: string): void {
   const { current, archive } = ownerPaths(root);
   mkdirSync(archive, { recursive: true });
+  const source = join(current, fileName);
   try {
-    renameSync(join(current, fileName), join(archive, archivedAs));
+    renameSync(source, join(archive, archivedAs));
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") throw error;
     // Already archived (or never written) by whoever else raced us here.
+    // Linux reports the vanished source as ENOENT; APFS has been seen to
+    // report EINVAL when the file was renamed away under it, so that code is
+    // trusted only once the source is confirmed gone.
+    const raced = code === "ENOENT" || (code === "EINVAL" && !existsSync(source));
+    if (!raced) throw error;
   }
   rmdirIgnoringNonEmpty(current);
 }
