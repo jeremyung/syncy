@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, type Target } from "../src/config.ts";
 import { explainFlags } from "../src/itemize.ts";
@@ -6,10 +7,17 @@ import {
   argvFor,
   assertDeleteIsDryRun,
   buildArgv,
+  checkBuild,
+  DEFAULT_RSYNC,
   glossArgv,
   type Mode,
   RsyncError,
+  runRsync,
 } from "../src/rsync.ts";
+import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
+
+const build = await checkBuild(DEFAULT_RSYNC);
+const describeRsync = build.ok ? describe : describe.skip;
 
 const target = (over: Partial<Target> = {}): Target => ({
   name: "nas",
@@ -303,4 +311,60 @@ describe("the argv in words", () => {
   test("a flag with no gloss is dropped rather than shown blank", () => {
     expect(glossArgv(["-a", "--zz-unknown", "/src/", "/dst/"]).map((g) => g.flag)).toEqual(["-a"]);
   });
+});
+
+describeRsync("runRsync: aborting kills the whole process group", () => {
+  /**
+   * Even a local, read-only, dry-run check makes rsync fork a
+   * generator/receiver helper (confirmed empirically: a chain of rsync
+   * processes sharing one pgid). Bun's `signal:` option on Bun.spawn only
+   * ever reaches the immediate child, so a lone SIGTERM to it can leave that
+   * helper as an orphan — reparented to init, still walking the source tree.
+   * runRsync spawns detached and kills the whole group on abort instead.
+   */
+  test("no rsync process — leader or forked helper — survives an abort", async () => {
+    const root = makeFixtureDir("syncy-rsync-abort");
+    try {
+      const src = join(root, "src");
+      const dst = join(root, "dst");
+      mkdirSync(src, { recursive: true });
+      mkdirSync(dst, { recursive: true });
+      // Large enough that the check is still in flight (comparing files, not
+      // yet exited) when the abort fires a few milliseconds in.
+      for (let i = 0; i < 20_000; i += 1) {
+        writeFileSync(join(src, `file-${i}.txt`), `payload number ${i}`);
+      }
+      const argv = [
+        "-a",
+        "-A",
+        "-X",
+        "-n",
+        "-i",
+        "-vv",
+        "--out-format=%i|%l|%M|%n",
+        "--delete",
+        "--exclude=.syncy-*",
+        `${src}/`,
+        `${dst}/`,
+      ];
+      const abort = new AbortController();
+      const running = runRsync(argv, { signal: abort.signal });
+      await new Promise((r) => setTimeout(r, 30));
+      abort.abort();
+      const result = await running;
+      expect(result.exitCode).not.toBe(0);
+
+      // Give an orphaned helper the moment it would need to still be visible
+      // before asserting the whole group is actually gone.
+      await new Promise((r) => setTimeout(r, 200));
+      const ps = Bun.spawnSync(["ps", "-eo", "pid,args"]);
+      const survivors = new TextDecoder()
+        .decode(ps.stdout)
+        .split("\n")
+        .filter((line) => line.includes("rsync") && line.includes(root));
+      expect(survivors).toEqual([]);
+    } finally {
+      removeFixtureDir(root);
+    }
+  }, 20_000);
 });

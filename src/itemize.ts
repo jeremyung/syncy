@@ -52,6 +52,8 @@ export function parseMtime(field: string): number | null {
 
 export interface Summary {
   readonly nChanges: number;
+  /** Changed file items only. Directories do not transfer file content. */
+  readonly nFiles: number;
   /**
    * Of those changes, the ones rsync would create from nothing.
    *
@@ -134,6 +136,7 @@ export function isNew(item: Item): boolean {
 
 export function summarize(items: readonly Item[]): Summary {
   let nChanges = 0;
+  let nFiles = 0;
   let nNew = 0;
   let nMetadata = 0;
   let nSame = 0;
@@ -148,12 +151,13 @@ export function summarize(items: readonly Item[]): Summary {
       nMetadata += 1;
     } else {
       nChanges += 1;
+      if (it.flags[1] === "f") nFiles += 1;
       if (isNew(it)) nNew += 1;
       // Directories carry a size but transfer nothing.
       if (it.flags[1] === "f") bytesPending += it.bytes;
     }
   }
-  return { nChanges, nNew, nMetadata, nSame, nExtra, bytesPending };
+  return { nChanges, nFiles, nNew, nMetadata, nSame, nExtra, bytesPending };
 }
 
 /**

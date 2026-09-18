@@ -96,6 +96,7 @@ describe("cell state ladder", () => {
       outcome: "behind",
       method: "quick",
       nChanges: 143,
+      nFiles: 143,
       bytesPending: 8_400_000_000,
     });
     const c = cell({ latest: s, quick: s });
@@ -115,7 +116,7 @@ describe("cell state ladder", () => {
     // deep verify. rsync copies a file that is not there whatever it compares
     // by, so `-c` buys nothing and the confirm page must not announce that
     // these differ by content.
-    const s = scan({ outcome: "behind", method: "deep", nChanges: 504, nNew: 504 });
+    const s = scan({ outcome: "behind", method: "deep", nChanges: 504, nFiles: 504, nNew: 504 });
     const c = cell({ latest: s, deep: s });
     expect(c.needsChecksum).toBeUndefined();
     expect(c.reason).toBe("504 files not copied yet");
@@ -481,21 +482,21 @@ describe("behind says what the files actually are", () => {
     // The bug: a deep check reporting 504 changes was described as "504 files
     // differ by content" purely because the method was deep, while the
     // evidence screen — from the same rsync run — said "not at destination".
-    expect(behindReason(scan({ nNew: 504 }))).toBe("504 files not copied yet");
+    expect(behindReason(scan({ nNew: 504 }))).toBe("504 changes not copied yet");
   });
 
   test("genuine content differences are named as such", () => {
-    expect(behindReason(scan({ nChanges: 12, nNew: 0 }))).toBe("12 files differ by content");
+    expect(behindReason(scan({ nChanges: 12, nNew: 0 }))).toBe("12 changes differ by content");
   });
 
   test("a mix is broken down rather than flattened", () => {
     expect(behindReason(scan({ nChanges: 504, nNew: 492 }))).toBe(
-      "492 not copied, 12 differ by content",
+      "492 changes not copied, 12 differ by content",
     );
   });
 
   test("a record written before the breakdown existed falls back, not invents", () => {
-    expect(behindReason(scan({}))).toBe("504 files pending");
+    expect(behindReason(scan({}))).toBe("504 changes pending");
   });
 });
 

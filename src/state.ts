@@ -34,6 +34,8 @@ export interface Scan {
   readonly method: Method;
   readonly outcome: ScanOutcome;
   readonly nChanges: number;
+  /** Changed files only; absent from records written before this was tracked. */
+  readonly nFiles?: number;
   /** Of those, the ones absent from the destination entirely. */
   readonly nNew?: number;
   readonly nExtra: number;
@@ -78,6 +80,7 @@ function validateScan(raw: unknown): Scan | string {
   const method = o["method"];
   const outcome = o["outcome"];
   const nChanges = o["nChanges"];
+  const nFiles = o["nFiles"];
   const nExtra = o["nExtra"];
   const bytesPending = o["bytesPending"];
   const sentinel = o["sentinel"];
@@ -94,6 +97,7 @@ function validateScan(raw: unknown): Scan | string {
     return "outcome is not a recognised value";
   }
   if (typeof nChanges !== "number") return "nChanges is not a number";
+  if (nFiles !== undefined && typeof nFiles !== "number") return "nFiles is not a number";
   if (typeof nExtra !== "number") return "nExtra is not a number";
   if (typeof bytesPending !== "number") return "bytesPending is not a number";
   if (typeof sentinel !== "string") return "sentinel is not a string";
@@ -126,6 +130,7 @@ function validateScan(raw: unknown): Scan | string {
     method,
     outcome,
     nChanges,
+    ...(nFiles !== undefined ? { nFiles } : {}),
     nExtra,
     bytesPending,
     fingerprint: {
@@ -283,6 +288,9 @@ export interface HistoryEntry {
   readonly argv: readonly string[];
   readonly exitCode: number | null;
   readonly log?: string;
+  readonly operation?: "quick" | "deep" | "sync";
+  readonly outcome?: "started" | "completed" | "skipped" | "failed" | "cancelled" | "missed";
+  readonly detail?: string;
 }
 
 /** Append-only, and separate from state so history writes can never endanger it. */

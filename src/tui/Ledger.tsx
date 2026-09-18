@@ -350,6 +350,13 @@ function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactEl
           theme={theme}
           notice={props.notice ?? null}
         />
+      ) : props.notice != null ? (
+        // A refusal while idle — a key ignored because another process owns
+        // the job — takes the hint line, since nothing else is on screen to
+        // carry it. It outranks the last job's summary for the seconds it
+        // shows: the person just pressed a key and needs to know why nothing
+        // happened.
+        <Text color={theme.unverified}>{"  " + truncate(props.notice, props.width - 2)}</Text>
       ) : busy === null ? (
         <Text color={theme.dim}>{"  " + hintLine(props.width)}</Text>
       ) : (

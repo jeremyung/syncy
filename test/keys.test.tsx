@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { render } from "ink-testing-library";
 import { type Config, parseConfig } from "../src/config.ts";
+import { acquireJobOwner } from "../src/job-owner.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
 import { App } from "../src/tui/App.tsx";
 import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
@@ -258,6 +259,33 @@ describe("a key that cannot act says so", () => {
       expect(line).toContain("[d]");
       expect(line).toMatch(/quick|deep/);
     }
+    s.unmount();
+  });
+
+  test("[s] refuses to open confirm while another process holds the job-owner lease", async () => {
+    const s = mount();
+    await s.ready();
+    // Give the selected folder something to sync, so pressing [s] would open
+    // confirm if nothing stopped it — otherwise the test could pass for the
+    // wrong reason (no destination behind, rather than the lease check).
+    await s.press("q");
+    await waitFor(() => !s.frame().includes("check running"), {
+      what: "the quick check to finish",
+    });
+
+    // A sync writes; opening confirm on top of work another process already
+    // owns would let [enter] race that write. This never acquires the lease
+    // itself — Job.tsx does, once the sync is actually confirmed — it only
+    // peeks, the same way [d]/[q] refuse a check already owned elsewhere.
+    const owned = acquireJobOwner("mac", "deep");
+    expect(owned.acquired).toBe(true);
+
+    await s.press("s");
+    await tick(200);
+    expect(s.frame()).not.toContain("confirm sync");
+    // The refusal is said on screen, in the hint line, since nothing is
+    // running here to carry it.
+    expect(s.frame()).toContain("sync ignored — mac deep is still running");
     s.unmount();
   });
 });

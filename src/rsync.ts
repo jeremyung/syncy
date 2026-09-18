@@ -274,11 +274,32 @@ export async function runRsync(argv: readonly string[], opts: RunOptions = {}): 
   assertDeleteIsDryRun(argv);
   const bin = opts.bin ?? DEFAULT_RSYNC;
 
+  // Its own process group (POSIX setsid), the same as sync.ts's real transfer:
+  // even a local dry-run check has rsync fork a generator/receiver helper
+  // (confirmed empirically — a chain of rsync processes sharing one pgid), and
+  // Bun's `signal:` option only ever reaches the immediate child. Killing just
+  // that leader can leave the helper as an orphan still walking the source
+  // tree; killing the whole group does not.
   const proc = Bun.spawn([bin, ...argv], {
     stdout: "pipe",
     stderr: "pipe",
-    ...(opts.signal ? { signal: opts.signal } : {}),
+    detached: true,
   });
+
+  const killGroup = (): void => {
+    if (proc.exitCode === null) {
+      try {
+        process.kill(-proc.pid, "SIGTERM");
+      } catch {
+        proc.kill();
+      }
+    }
+  };
+  const signal = opts.signal;
+  if (signal !== undefined) {
+    if (signal.aborted) killGroup();
+    else signal.addEventListener("abort", killGroup, { once: true });
+  }
 
   const pump = async (): Promise<void> => {
     if (!opts.onLine) return;
@@ -296,13 +317,17 @@ export async function runRsync(argv: readonly string[], opts: RunOptions = {}): 
     if (carry !== "") opts.onLine(carry);
   };
 
-  const [, stderr, exitCode] = await Promise.all([
-    pump(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  try {
+    const [, stderr, exitCode] = await Promise.all([
+      pump(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
 
-  return { exitCode, stderr };
+    return { exitCode, stderr };
+  } finally {
+    signal?.removeEventListener("abort", killGroup);
+  }
 }
 
 export interface RsyncBuild {

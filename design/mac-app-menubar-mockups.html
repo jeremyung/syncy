@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Syncy for Mac — menu bar panel</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page:#e9e6df; --paper:#fbfaf7; --chrome:#f1efe9; --raised:#fffefa;
+      --ink:#25231f; --dim:#716d65; --quiet:#9a958b; --rule:#d8d4cb;
+      --select:#e3dfd5; --good:#3f7b59; --warn:#a36b21; --bad:#a04c3f;
+      --good-bg:#e6efe8; --warn-bg:#f5ead8; --bad-bg:#f3e4e0;
+      --shadow:0 24px 64px rgb(49 43 32 / .16), 0 2px 8px rgb(49 43 32 / .08);
+      --ui:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;
+      --serif:"New York","Iowan Old Style",Palatino,serif;
+      --mono:ui-monospace,"SFMono-Regular","SF Mono",Menlo,monospace;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --page:#181714; --paper:#24231f; --chrome:#201f1c; --raised:#2b2925;
+      --ink:#eeece6; --dim:#aaa59b; --quiet:#777269; --rule:#423f38;
+      --select:#39362f; --good:#79b88e; --warn:#d2a25d; --bad:#d48778;
+      --good-bg:#253a2c; --warn-bg:#3b3122; --bad-bg:#3b2926;
+      --shadow:0 28px 72px rgb(0 0 0 / .5), 0 2px 8px rgb(0 0 0 / .35);
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--page); color:var(--ink); font:14px/1.4 var(--ui); -webkit-font-smoothing:antialiased; }
+    .page { max-width:1420px; margin:auto; padding:44px clamp(18px,4vw,58px) 90px; }
+    .theme { position:fixed; top:18px; right:18px; z-index:10; border:1px solid var(--rule); border-radius:8px; background:var(--raised); color:inherit; font:inherit; padding:7px 11px; box-shadow:0 2px 8px rgb(0 0 0 / .08); cursor:pointer; }
+    .intro { display:grid; grid-template-columns:1fr minmax(280px,460px); gap:36px; align-items:end; margin-bottom:52px; }
+    .kicker,.plate-label,.eyebrow { color:var(--quiet); font:700 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase; }
+    h1 { max-width:780px; margin:12px 0 0; font:650 clamp(38px,5vw,66px)/.98 var(--serif); letter-spacing:-.045em; }
+    .intro p { margin:0; color:var(--dim); font-size:16px; line-height:1.55; }
+    .principles { display:flex; flex-wrap:wrap; gap:8px; margin-top:19px; }
+    .principles span { padding:6px 9px; border:1px solid var(--rule); border-radius:99px; color:var(--dim); font:11px/1 var(--mono); }
+    section { margin-top:68px; }
+    .section-head { display:grid; grid-template-columns:70px minmax(0,650px); gap:16px; margin-bottom:20px; }
+    .section-head h2 { margin:0; font:650 26px/1.1 var(--serif); letter-spacing:-.02em; }
+    .section-head p { margin:7px 0 0; color:var(--dim); }
+    .plate { padding:26px; border:1px solid var(--rule); border-radius:18px; background:color-mix(in srgb,var(--paper),transparent 20%); }
+    .plate-label { display:flex; justify-content:space-between; gap:16px; margin-bottom:18px; }
+    .note { display:grid; grid-template-columns:74px 1fr; gap:14px; margin-top:18px; padding-top:15px; border-top:1px solid var(--rule); color:var(--dim); font:11px/1.55 var(--mono); }
+    .note strong { color:var(--ink); }
+    .shelf { display:flex; flex-wrap:wrap; gap:30px; align-items:flex-start; }
+    .specimen { width:360px; }
+    .caption { margin-top:13px; color:var(--dim); font:11px/1.55 var(--mono); }
+    .caption strong { color:var(--ink); }
+
+    /* ---------- the panel, 1:1 with the SwiftUI frame ---------- */
+    .popover { width:360px; overflow:hidden; border:1px solid var(--rule); border-radius:15px; background:var(--paper); box-shadow:var(--shadow); }
+    .gear { color:var(--quiet); font-size:13px; }
+    .hair { height:1px; background:var(--rule); }
+    .pop-body { padding:12px 16px; }
+    .pop-actions { display:flex; align-items:center; gap:8px; padding:8px 16px; }
+    .pop-actions .spacer { flex:1; }
+
+    .headrow { display:flex; align-items:baseline; gap:8px; }
+    .headline { font:600 22px/1.15 var(--serif); letter-spacing:-.01em; }
+    .trailing { margin-left:auto; white-space:nowrap; color:var(--dim); font:12px/1.35 var(--ui); font-variant-numeric:tabular-nums; }
+    .extent { margin-top:4px; color:var(--dim); font:12px/1.35 var(--ui); }
+
+    .band { display:flex; gap:2px; height:5px; margin-top:8px; }
+    .band i { display:block; height:5px; }
+    .track { position:relative; height:5px; margin-top:8px; background:var(--rule); }
+    .track i { position:absolute; inset:0 auto 0 0; background:var(--warn); }
+
+    .tallyline { margin-top:8px; font:12px/1.4 var(--ui); }
+    .tallyline b { font:600 12px/1.4 var(--mono); font-variant-numeric:tabular-nums; }
+    .tallyline .sep { color:var(--quiet); }
+
+    .destinations { margin-top:12px; }
+    table.dest { width:100%; border-collapse:collapse; }
+    table.dest td { padding:0 0 4px; vertical-align:baseline; }
+    table.dest tr:last-child td { padding-bottom:0; }
+    table.dest td.dname { max-width:148px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font:500 12px/1.35 var(--ui); }
+    table.dest td.dphrase { width:100%; padding-left:8px; color:var(--dim); font:10px/1.35 var(--ui); }
+    .drive { color:var(--quiet); font-size:11px; margin-right:5px; }
+
+    .prov { margin-top:12px; color:var(--quiet); font:10px/1.45 var(--ui); }
+    .prov .outcome { margin-bottom:4px; color:var(--dim); }
+
+    .facts { margin-top:12px; }
+    .measure { font:12px/1.35 var(--ui); font-variant-numeric:tabular-nums; }
+    .circ { margin-top:4px; color:var(--dim); font:10px/1.45 var(--ui); }
+    .stall { margin-top:4px; color:var(--warn); font:10px/1.45 var(--ui); font-variant-numeric:tabular-nums; }
+
+    .good { color:var(--good); } .warn { color:var(--warn); } .bad { color:var(--bad); } .dim { color:var(--quiet); }
+
+    .button { min-height:28px; padding:4px 11px; border:1px solid var(--rule); border-radius:7px; background:var(--raised); color:inherit; font:13px/1.3 var(--ui); }
+    .button.primary { border-color:var(--ink); background:var(--ink); color:var(--paper); font-weight:600; }
+    .button.destructive { color:var(--bad); }
+
+    /* ---------- the panel as it stands today ---------- */
+    .old .oldhead { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    .old .oldtitle { font:600 17px/1 var(--serif); }
+    .old .oldstatus { color:var(--dim); font-size:10px; }
+    .old .oldrow { display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
+    .old .oldval { min-width:26px; text-align:right; font:600 13px/1.3 var(--mono); }
+    .old .oldlab { color:var(--dim); font:12px/1.3 var(--ui); }
+    .old .oldsnap { margin-top:6px; color:var(--quiet); font:10px/1.3 var(--ui); }
+
+    @media (max-width:880px) { .intro { grid-template-columns:1fr; } .section-head { grid-template-columns:1fr; } }
+    @media (max-width:620px) { .page { padding-inline:12px; } .plate { padding:12px; } .specimen,.popover { width:100%; max-width:360px; } }
+  </style>
+</head>
+<body>
+  <button type="button" class="theme" id="theme">Dark</button>
+  <main class="page">
+    <header class="intro">
+      <div>
+        <div class="kicker">Menu bar panel · review before implementation</div>
+        <h1>A tally slip, not a status board.</h1>
+        <div class="principles">
+          <span>one verdict, said once</span>
+          <span>the rule is the byte view</span>
+          <span>measured or absent</span>
+          <span>210 pt at its tallest</span>
+        </div>
+      </div>
+      <p>The tray panel is read in about two seconds by someone deciding whether a folder is safe to delete from a full boot volume. It is a tray readout, so it is built to stay short: the proportion rule carries the byte split, the tally line carries the counts, and anything you read rather than glance at lives one click away in the ledger.</p>
+    </header>
+
+    <section>
+      <div class="section-head">
+        <div class="kicker">01 / 04</div>
+        <div>
+          <h2>The same ledger, before and after</h2>
+          <p>Twelve folders, both destinations on a different volume. The panel today prints “unchecked” three times and never says how much data is at stake.</p>
+        </div>
+      </div>
+      <div class="plate">
+        <div class="plate-label"><span>TRAY PANEL · ALL FOLDERS UNCHECKED</span><span>360 pt wide, 1:1</span></div>
+        <div class="shelf">
+          <div class="specimen">
+            <div class="popover old">
+              <div class="pop-body" style="padding:16px">
+                <div class="oldhead"><div class="oldtitle">Syncy</div><div><span class="oldstatus">unchecked</span> <span class="gear">⚙</span></div></div>
+                <div class="oldrow"><span class="oldval">12</span><span class="oldlab">folders unchecked</span></div>
+                <div class="oldrow"><span class="oldval">External</span><span class="oldlab">different volume</span></div>
+                <div class="oldrow"><span class="oldval">NAS</span><span class="oldlab">different volume</span></div>
+                <div class="oldsnap">Snapshot 7:10 AM</div>
+              </div>
+              <div class="hair"></div>
+              <div class="pop-actions" style="padding:12px 16px"><button type="button" class="button">Check ⌄</button><span class="spacer"></span><button type="button" class="button primary">Open Syncy</button></div>
+            </div>
+            <p class="caption"><strong>Before.</strong> “unchecked” appears in the header, again in the tally, and is implied by both destination lines. Drive names sit in the bold monospace slot reserved for numbers, so the eye reads them as quantities. No bytes anywhere, and the clock dates the reading rather than any measurement.</p>
+          </div>
+
+          <div class="specimen">
+            <div class="popover">
+              <div class="pop-body">
+                <div class="headrow"><span class="headline">unchecked</span><span class="trailing">12 folders · 4.2 tb</span></div>
+                <div class="band"><i style="background:var(--quiet);flex:1"></i></div>
+                <div class="destinations">
+                  <table class="dest">
+                    <tr><td class="dname"><span class="drive">&#9636;</span>External</td><td class="dphrase">different volume</td></tr>
+                    <tr><td class="dname"><span class="drive">&#9636;</span>NAS</td><td class="dphrase">different volume</td></tr>
+                  </table>
+                </div>
+                <div class="prov">newest evidence 3 days ago</div>
+              </div>
+              <div class="hair"></div>
+              <div class="pop-actions"><span class="gear">⚙</span><button type="button" class="button">Check ⌄</button><span class="spacer"></span><button type="button" class="button primary">Open Syncy</button></div>
+            </div>
+            <p class="caption"><strong>After.</strong> The verdict is stated once, with its extent riding the same baseline instead of costing a line. One state present means the tally is suppressed entirely — it could only reprint the headline. Measures <strong>184 pt</strong>, against 210 for the panel it replaces.</p>
+          </div>
+        </div>
+        <div class="note"><strong>Removed</strong><span>The repeated status word, the monospace treatment of drive names, the snapshot clock, and the wordmark row &mdash; you clicked a Syncy icon to get here. The gear moved down to the action row. The DESTINATIONS heading went too: the drive glyph now does that orienting work from inside a row that already existed, so it costs no height at all. It is the same glyph on every row on purpose &mdash; it marks the subject, it does not encode the state, because the phrase beside it already names that in the ledger's own words.</span></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div class="kicker">02 / 04</div>
+        <div>
+          <h2>The rule is the byte view, the line is the count view</h2>
+          <p>A segment's width already <em>is</em> its byte figure, so the tally is left with counts alone — and four counts do not need four rows.</p>
+        </div>
+      </div>
+      <div class="plate">
+        <div class="plate-label"><span>TRAY PANEL · MIXED EVIDENCE</span><span>Weakest state leads</span></div>
+        <div class="shelf">
+          <div class="specimen">
+            <div class="popover">
+              <div class="pop-body">
+                <div class="headrow"><span class="headline">missing</span><span class="trailing">24 folders · 6.1 tb</span></div>
+                <div class="band">
+                  <i style="background:var(--bad);width:14px"></i>
+                  <i style="background:var(--warn);width:36px"></i>
+                  <i style="background:var(--quiet);width:96px"></i>
+                  <i style="background:var(--good);width:174px"></i>
+                </div>
+                <div class="tallyline"><b>1</b> <span class="bad">missing</span> <span class="sep">·</span> <b>3</b> <span class="warn">behind</span> <span class="sep">·</span> <b>6</b> <span class="dim">unchecked</span> <span class="sep">·</span> <b>14</b> <span class="good">verified</span></div>
+                <div class="destinations">
+                  <table class="dest">
+                    <tr><td class="dname"><span class="drive">&#9636;</span>Studio NAS</td><td class="dphrase">different volume</td></tr>
+                    <tr><td class="dname"><span class="drive">&#9636;</span>Offsite</td><td class="dphrase">not connected · optional</td></tr>
+                  </table>
+                </div>
+                <div class="prov">Quick check completed &middot; evidence recorded</div>
+              </div>
+              <div class="hair"></div>
+              <div class="pop-actions"><span class="gear">⚙</span><button type="button" class="button">Check ⌄</button><span class="spacer"></span><button type="button" class="button primary">Open Syncy</button></div>
+            </div>
+            <p class="caption"><strong>The full slip</strong>, and the tallest the panel gets — <strong>210 pt</strong>, against 446 for the four-row version it replaces — a 53% cut. The rule stays weighted by bytes: six unchecked folders holding 1.7 tb take the width their size earns, not the width their count would. Each segment keeps a four-point floor so a small state never vanishes beside a terabyte.</p>
+          </div>
+
+          <div class="specimen">
+            <div class="popover">
+              <div class="pop-body">
+                <div class="headrow"><span class="headline">verified</span><span class="trailing">24 folders · 6.1 tb</span></div>
+                <div class="band"><i style="background:var(--good);flex:1"></i></div>
+                <div class="prov">all destinations connected &middot; newest evidence 2 hours ago</div>
+              </div>
+              <div class="hair"></div>
+              <div class="pop-actions"><span class="gear">⚙</span><button type="button" class="button">Check ⌄</button><span class="spacer"></span><button type="button" class="button primary">Open Syncy</button></div>
+            </div>
+            <p class="caption"><strong>The settled archive</strong> — <strong>136 pt</strong>. Only destinations that are not simply connected get a line of their own; when they all are, one line says so. It still reports rather than congratulates: no badge, no “all good”, no suggestion to delete anything.</p>
+          </div>
+        </div>
+        <div class="note"><strong>Traded away</strong><span>Per-state byte figures. The rule encodes them by width and the headline carries the total, so the exact numbers stay in the ledger window — a figure you read rather than glance at.</span></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div class="kicker">03 / 04</div>
+        <div>
+          <h2>While work is running</h2>
+          <p>Ten lines become four. The progress rule shares the proportion rule's geometry, so both readings are the same slip.</p>
+        </div>
+      </div>
+      <div class="plate">
+        <div class="plate-label"><span>TRAY PANEL · ACTIVE JOB</span><span>Measured, silent, and stalled</span></div>
+        <div class="shelf">
+          <div class="specimen">
+            <div class="popover">
+              <div class="pop-body">
+                <div class="headrow"><span class="headline">deep verify</span></div>
+                <div class="extent">photos-2020 → Studio NAS</div>
+                <div class="track"><i style="width:52%"></i></div>
+                <div class="facts">
+                  <div class="measure">18m 42s elapsed · 12,908 of 24,901 files</div>
+                  <div class="circ">comparing content · folder 3 of 24 · around 49m from previous checks</div>
+                </div>
+              </div>
+              <div class="hair"></div>
+              <div class="pop-actions"><span class="gear">⚙</span><button type="button" class="button destructive">Cancel…</button><span class="spacer"></span><button type="button" class="button primary">View activity</button></div>
+            </div>
+            <p class="caption"><strong>Measured.</strong> Measurements on the first line, circumstance on the second. The historical duration stays labelled as one prior measurement, never as a percentage.</p>
+          </div>
+
+          <div class="specimen">
+            <div class="popover">
+              <div class="pop-body">
+                <div class="headrow"><span class="headline">deep verify</span></div>
+                <div class="extent">field-recordings → Archive</div>
+                <div class="facts">
+                  <div class="measure">6m 03s elapsed · no measured total</div>
+                  <div class="circ">comparing content · around 49m from previous checks</div>
+                  <div class="stall">no engine event for 4m</div>
+                </div>
+              </div>
+              <div class="hair"></div>
+              <div class="pop-actions"><span class="gear">⚙</span><button type="button" class="button destructive">Cancel…</button><span class="spacer"></span><button type="button" class="button primary">View activity</button></div>
+            </div>
+            <p class="caption"><strong>Silent, then stalled.</strong> No rule at all when rsync has reported no total — absent rather than a barber-pole, which would imply a measurement nobody took. After ninety seconds without a heartbeat the amber line runs, so a stalled job stops looking identical to a finished one.</p>
+          </div>
+        </div>
+        <div class="note"><strong>Removed</strong><span>“Owned by the Mac app. Refresh to read newly recorded evidence.”, the last rsync itemize line, the last-engine-event age, and the standalone elapsed clock. All of it remains on the Activity pane, one click away.</span></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div class="kicker">04 / 04</div>
+        <div>
+          <h2>Everything else the slot has to hold</h2>
+          <p>Reading, failing, and empty use the same headline block, so the panel never changes shape as it moves between them.</p>
+        </div>
+      </div>
+      <div class="plate">
+        <div class="plate-label"><span>TRAY PANEL · REMAINING STATES</span><span>One headline slot</span></div>
+        <div class="shelf">
+          <div class="specimen">
+            <div class="popover">
+              <div class="pop-body"><div class="headrow"><span class="headline">reading ledger</span> <span class="gear">◌</span></div></div>
+              <div class="hair"></div>
+              <div class="pop-actions"><span class="gear">⚙</span><button type="button" class="button">Check ⌄</button><span class="spacer"></span><button type="button" class="button primary">Open Syncy</button></div>
+            </div>
+            <p class="caption"><strong>Reading.</strong> The spinner sits on the headline's baseline rather than replacing it.</p>
+          </div>
+
+          <div class="specimen">
+            <div class="popover">
+              <div class="pop-body">
+                <div class="headrow"><span class="headline">ledger unavailable</span></div>
+                <div class="extent">The engine exited with status 2 · syncy: config.toml not found</div>
+              </div>
+              <div class="hair"></div>
+              <div class="pop-actions"><span class="gear">⚙</span><button type="button" class="button">Check ⌄</button><span class="spacer"></span><button type="button" class="button primary">Open Syncy</button></div>
+            </div>
+            <p class="caption"><strong>Unavailable.</strong> The reason the engine gave, in full and wrapped, rather than a status code.</p>
+          </div>
+
+          <div class="specimen">
+            <div class="popover">
+              <div class="pop-body">
+                <div class="headrow"><span class="headline">nothing tracked</span></div>
+                <div class="extent">No folders are recorded in the ledger.</div>
+                <div class="prov">no check recorded</div>
+              </div>
+              <div class="hair"></div>
+              <div class="pop-actions"><span class="gear">⚙</span><button type="button" class="button">Check ⌄</button><span class="spacer"></span><button type="button" class="button primary">Open Syncy</button></div>
+            </div>
+            <p class="caption"><strong>Empty.</strong> An absence, reported as one. No folders means no state — the ledger does not call it <em>unchecked</em>, which would claim it looked at something.</p>
+          </div>
+        </div>
+        <div class="note"><strong>Headline case</strong><span>Lower case throughout. The idle headline is a ledger state word; a slot that holds “unchecked” one moment should not hold “Ledger Unavailable” the next.</span></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const button=document.querySelector('#theme');
+    button.addEventListener('click',()=>{const root=document.documentElement;const next=root.dataset.theme==='light'?'dark':'light';root.dataset.theme=next;button.textContent=next==='light'?'Dark':'Light';});
+  </script>
+</body>
+</html>

@@ -64,10 +64,13 @@ export type Reachability = SentinelStatus | "unreachable";
  */
 export async function targetReachability(target: Target): Promise<Reachability> {
   if (target.identity !== undefined && target.identity !== "") {
+    // Existence first, for the reason spelled out in `observeTargetSync`: an
+    // absent path resolves to the volume owning its mount point, so asking
+    // "is this the right volume?" of a share that is not mounted answers
+    // "wrong drive" when the truth is "no drive".
+    if (!existsSync(target.path)) return "unreachable";
     const v = await checkVolume(target.path, target.identity);
     if (v !== "ok") return v === "unreachable" ? "unreachable" : "mismatch";
-    // The volume is right; the directory still has to exist on it.
-    if (!existsSync(target.path)) return "unreachable";
     if (identityIsProof(target) || target.sentinel === undefined) return "ok";
     return checkSentinel(target.path, target.sentinel);
   }
@@ -119,8 +122,16 @@ export function observeTargetSync(target: Target): TargetObservation {
   if (target.identity !== undefined && target.identity !== "") {
     const found = identifySync(target.path);
     if (found === null) return { reachability: "unreachable", identity: "" };
-    if (found.id !== target.identity) return { reachability: "mismatch", identity: found.id };
+    // Existence before identity. An unmounted destination resolves to whatever
+    // volume owns its mount point — usually the boot disk — so comparing
+    // identities first reported *wrong drive* for what is really *no drive*.
+    // Both answers refuse the check, so nothing unsafe slipped through; but the
+    // reader was told the destination was "different volume · re-add it in
+    // setup" when the configuration was right all along and the share was
+    // simply not mounted. `missing` and `unknown` must never look alike (§5),
+    // and neither must these two.
     if (!existsSync(target.path)) return { reachability: "unreachable", identity: found.id };
+    if (found.id !== target.identity) return { reachability: "mismatch", identity: found.id };
     if (identityIsProof(target) || target.sentinel === undefined) {
       return { reachability: "ok", identity: found.id };
     }
@@ -202,6 +213,8 @@ export interface CheckOptions {
   readonly onLine?: (line: string) => void;
   /** Called as rsync finishes with each file — the only source of progress. */
   readonly onFile?: (seen: number, name: string) => void;
+  /** Observable work boundaries for clients that cannot inspect this process. */
+  readonly onPhase?: (phase: CheckPhase) => void;
   readonly now?: number;
   readonly fingerprint?: Fingerprint;
   /**
@@ -215,6 +228,12 @@ export interface CheckOptions {
   readonly signal?: AbortSignal;
 }
 
+export type CheckPhase =
+  | "inspecting-source"
+  | "starting-rsync"
+  | "comparing"
+  | "fingerprinting-destination";
+
 export const methodOf = (mode: Mode): Method => (mode === "deep" ? "deep" : "quick");
 
 export async function checkUnit(
@@ -226,6 +245,7 @@ export async function checkUnit(
 ): Promise<CheckResult> {
   const now = opts.now ?? Date.now();
   const startedAt = Date.now();
+  opts.onPhase?.("inspecting-source");
   const fp = opts.fingerprint ?? fingerprint(join(config.source, unit), config.exclude);
 
   // The reachability map belongs to the ledger refresh and may be stale by
@@ -257,6 +277,7 @@ export async function checkUnit(
       ts: now,
       wholeFolderMissing: true,
       source: fp,
+      targetIdentity: observation.identity,
     });
     return {
       scan: { ...base, outcome: "missing", nChanges: 0, nExtra: 0, bytesPending: 0 },
@@ -282,11 +303,17 @@ export async function checkUnit(
     fingerprint: fp,
     sentinel: observation.identity,
   } as const;
+  // Two different counts, and conflating them claimed the whole folder was
+  // pending: `-vv` itemizes every file rsync finishes with, so `filesSeen` is
+  // progress through the walk, while `nFiles` is evidence about what differs.
+  let filesSeen = 0;
   let nFiles = 0;
   let nChanges = 0;
   let nNew = 0;
   let nExtra = 0;
   let bytesPending = 0;
+  opts.onPhase?.("starting-rsync");
+  opts.onPhase?.("comparing");
   const result = await runRsync(argv, {
     ...(opts.bin !== undefined ? { bin: opts.bin } : {}),
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
@@ -301,12 +328,15 @@ export async function checkUnit(
         nChanges += 1;
         if (isNew(item)) nNew += 1;
         // Directories carry a size but transfer no file content.
-        if (item.flags[1] === "f") bytesPending += item.bytes;
+        if (item.flags[1] === "f") {
+          nFiles += 1;
+          bytesPending += item.bytes;
+        }
       }
       // Directories are not files; counting them would overshoot the total.
       if (item.flags[1] === "f") {
-        nFiles += 1;
-        opts.onFile?.(nFiles, item.name);
+        filesSeen += 1;
+        opts.onFile?.(filesSeen, item.name);
       }
     },
   });
@@ -325,6 +355,7 @@ export async function checkUnit(
       diff: buildDiffFromAccumulator(unit, target.name, methodOf(mode), accumulator, {
         ts: now,
         source: fp,
+        targetIdentity: observation.identity,
       }),
       argv,
       targetFingerprint: null,
@@ -334,11 +365,13 @@ export async function checkUnit(
 
   // After rsync, not before: the walk is read-only and cheap next to a check,
   // but doing it first would delay the run for a number only shown afterwards.
+  opts.onPhase?.("fingerprinting-destination");
   const targetFingerprint = fingerprint(join(target.path, unit), config.exclude);
   const diff = buildDiffFromAccumulator(unit, target.name, methodOf(mode), accumulator, {
     ts: now,
     source: fp,
     target: targetFingerprint,
+    targetIdentity: observation.identity,
   });
   return {
     scan: {
@@ -346,6 +379,7 @@ export async function checkUnit(
       durationMs: Date.now() - startedAt,
       outcome: nChanges === 0 ? "clean" : "behind",
       nChanges,
+      nFiles,
       nNew,
       nExtra,
       bytesPending,
