@@ -184,13 +184,20 @@ export function Job(props: JobProps): React.ReactElement {
           if (item.kind !== "change" || item.flags[1] !== "f") return;
           seen += 1;
           if (seen % 25 === 0 || seen === props.nFiles) {
-            ownership.lease.observe({
-              ...base,
-              type: "job.progress-observed",
-              at: Date.now(),
-              filesSeen: seen,
-              ...(props.nFiles === undefined ? {} : { filesTotal: props.nFiles }),
-            });
+            try {
+              ownership.lease.observe({
+                ...base,
+                type: "job.progress-observed",
+                at: Date.now(),
+                filesSeen: seen,
+                ...(props.nFiles === undefined ? {} : { filesTotal: props.nFiles }),
+              });
+            } catch {
+              // The lease is gone — same as a lost heartbeat: stop rsync
+              // through the one cancellation path (`h.cancel()`) rather than
+              // letting the error reach pump() inside startSync.
+              h.cancel();
+            }
           }
         },
         ...(props.needsChecksum === true ? { checksum: true } : {}),

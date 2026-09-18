@@ -108,9 +108,19 @@ async function cmdCheck(
     fail(`Syncy is already running work: ${detail}`);
   }
   const abort = new AbortController();
-  const requestCancel = (): void => abort.abort();
+  let cancelling = false;
+  const requestCancel = (): void => {
+    if (cancelling) return;
+    cancelling = true;
+    abort.abort();
+  };
+  // A second Ctrl-C still force-quits an interactive session, so SIGINT stays
+  // `once`. SIGTERM stays subscribed: a graceful cancel can take a while
+  // (rsync does not exit instantly), and a second SIGTERM must still reach
+  // this handler rather than falling through to the default disposition and
+  // killing the supervisor before history and the lease are written.
   process.once("SIGINT", requestCancel);
-  process.once("SIGTERM", requestCancel);
+  process.on("SIGTERM", requestCancel);
   const heartbeat = heartbeatOwner(
     () => ownership.lease.heartbeat(),
     () => abort.abort(),
@@ -416,9 +426,19 @@ async function cmdEngine(
   }
 
   const abort = new AbortController();
-  const requestCancel = (): void => abort.abort();
+  let cancelling = false;
+  const requestCancel = (): void => {
+    if (cancelling) return;
+    cancelling = true;
+    abort.abort();
+  };
+  // A second Ctrl-C still force-quits an interactive session, so SIGINT stays
+  // `once`. SIGTERM stays subscribed: a graceful cancel can take a while
+  // (rsync does not exit instantly), and a second SIGTERM must still reach
+  // this handler rather than falling through to the default disposition and
+  // killing the supervisor before history and the lease are written.
   process.once("SIGINT", requestCancel);
-  process.once("SIGTERM", requestCancel);
+  process.on("SIGTERM", requestCancel);
   const heartbeat = heartbeatOwner(
     () => ownership.lease.heartbeat(),
     () => abort.abort(),
@@ -502,7 +522,10 @@ async function cmdSyncPreflight(
 }
 
 async function cmdEngineSync(config: Config, token: string): Promise<void> {
-  const actor = process.env.SYNCY_ACTOR === "scheduler" ? "scheduler" : "mac";
+  const actor =
+    process.env.SYNCY_ACTOR === "mac" || process.env.SYNCY_ACTOR === "scheduler"
+      ? process.env.SYNCY_ACTOR
+      : "cli";
   const ownership = acquireJobOwner(actor, "sync");
   if (!ownership.acquired) {
     const detail = ownership.owner
@@ -512,12 +535,20 @@ async function cmdEngineSync(config: Config, token: string): Promise<void> {
   }
   const abort = new AbortController();
   let handle: ReturnType<typeof startSync> | undefined;
+  let cancelling = false;
   const requestCancel = (): void => {
+    if (cancelling) return;
+    cancelling = true;
     abort.abort();
     handle?.cancel();
   };
+  // A second Ctrl-C still force-quits an interactive session, so SIGINT stays
+  // `once`. SIGTERM stays subscribed: a graceful cancel can take a while
+  // (rsync does not exit instantly), and a second SIGTERM must still reach
+  // this handler rather than falling through to the default disposition and
+  // killing the supervisor before history and the lease are written.
   process.once("SIGINT", requestCancel);
-  process.once("SIGTERM", requestCancel);
+  process.on("SIGTERM", requestCancel);
   const heartbeat = heartbeatOwner(
     () => ownership.lease.heartbeat(),
     () => requestCancel(),
@@ -580,13 +611,23 @@ async function cmdEngineSync(config: Config, token: string): Promise<void> {
         if (item.kind !== "change" || item.flags[1] !== "f") return;
         transferred += 1;
         if (transferred % 25 === 0 || transferred === intent.nFiles) {
-          emit({
-            ...base,
-            type: "job.progress-observed",
-            at: Date.now(),
-            filesSeen: transferred,
-            ...(intent.nFiles === undefined ? {} : { filesTotal: intent.nFiles }),
-          });
+          try {
+            emit({
+              ...base,
+              type: "job.progress-observed",
+              at: Date.now(),
+              filesSeen: transferred,
+              ...(intent.nFiles === undefined ? {} : { filesTotal: intent.nFiles }),
+            });
+          } catch {
+            // The lease is gone — same as a lost heartbeat or a SIGTERM: stop
+            // rsync through the one cancellation path, rather than letting
+            // the error reach pump() inside startSync and abort the transfer
+            // ungracefully (sync.ts's own `done` still copes if it does, but
+            // this is the graceful route and it also earns the "cancelled"
+            // outcome instead of "failed").
+            requestCancel();
+          }
         }
       },
     });
@@ -687,7 +728,7 @@ async function main(): Promise<void> {
   if (cmd === "adopt") {
     if (arg === undefined) fail("usage: syncy adopt <target-path>");
     if (!existsSync(arg)) fail(`no such directory: ${arg}`);
-    const id = await writeSentinel(arg);
+    const id = await withSetupOwnership(() => writeSentinel(arg));
     process.stdout.write(`sentinel ${id} written to ${arg}\n`);
     return;
   }

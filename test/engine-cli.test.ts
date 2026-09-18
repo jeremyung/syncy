@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { acquireJobOwner } from "../src/job-owner.ts";
 import { parseEngineMessage } from "../src/protocol-jsonl.ts";
 import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
@@ -16,6 +17,31 @@ async function runEngine(
   stateHome: string,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const child = Bun.spawn([process.execPath, "run", "src/cli.ts", "engine", ...args], {
+    cwd: join(import.meta.dir, ".."),
+    env: {
+      ...Bun.env,
+      XDG_CONFIG_HOME: configHome,
+      XDG_STATE_HOME: stateHome,
+      SYNCY_ACTOR: "mac",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  return { stdout, stderr, exitCode };
+}
+
+/** Same as `runEngine`, but for a top-level command (no `engine` subcommand). */
+async function runCli(
+  args: readonly string[],
+  configHome: string,
+  stateHome: string,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const child = Bun.spawn([process.execPath, "run", "src/cli.ts", ...args], {
     cwd: join(import.meta.dir, ".."),
     env: {
       ...Bun.env,
@@ -266,4 +292,38 @@ sentinel = "${sentinel}"
       }),
     );
   }, 30_000);
+});
+
+describe("syncy adopt (the bootstrap command)", () => {
+  /**
+   * `syncy adopt <path>` writes a sentinel — a real rsync write into the
+   * destination — and used to do it without taking the job-owner lease at
+   * all, unlike its sibling `engine adopt-destination`. A live owner record
+   * must refuse it with the same message every other command uses.
+   */
+  test("refuses while another job owns work, like its engine sibling", async () => {
+    root = makeFixtureDir("syncy-adopt-bootstrap");
+    const destination = join(root, "destination");
+    const configHome = join(root, "config-home");
+    const stateHome = join(root, "state-home");
+    mkdirSync(destination, { recursive: true });
+
+    // A fresh, live owner record in the same state dir the CLI subprocess
+    // will compute from XDG_STATE_HOME (stateDir() = XDG_STATE_HOME/syncy).
+    const owner = acquireJobOwner("cli", "setup", {
+      root: join(stateHome, "syncy"),
+      pid: process.pid,
+    });
+    expect(owner.acquired).toBe(true);
+
+    try {
+      const result = await runCli(["adopt", destination], configHome, stateHome);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Syncy is already running work");
+      expect(result.stderr).toContain("setup started by cli");
+      expect(existsSync(join(destination, SENTINEL_NAME))).toBe(false);
+    } finally {
+      if (owner.acquired) owner.lease.release();
+    }
+  });
 });
