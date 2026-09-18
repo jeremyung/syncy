@@ -182,6 +182,12 @@ Settings can register the app to open at login and enable local outcome
 notifications. See [`macos/README.md`](macos/README.md) for development and
 Developer ID signing details.
 
+To remove it, turn off "open at login" in Settings first — the app registers
+that through `SMAppService`, so there is no LaunchAgent plist to delete
+separately — then delete `build/Syncy.app`. Its state and configuration live
+in the same places as the terminal app (see Configuration below) and are
+untouched by removing the app bundle.
+
 ## Use
 
 ```
@@ -296,11 +302,19 @@ state.json       current result per folder, destination and method
 history.jsonl    every rsync invocation, with literal argv and exit code
 diffs/           which files differ, per folder and destination
 logs/
+job-owner/       the lease for whichever job is running now, if any
+job-owners/      append-only archive of every past lease and how it ended
 ```
 
 Plain files rather than a database, so the record can be read with `cat`,
 `grep` and `diff`, and backed up without a client. `diffs/` is derived and safe
 to delete; the cost is a re-check.
+
+`job-owners/` is never pruned: it is one small JSON file per past job, named
+by when and how the lease ended — `released` normally, `stale` when its owner
+was judged abandoned and recovered, or `invalid` when the record itself could
+not be read — and recording who ran it. It exists for inspection, not for
+syncy itself to read back.
 
 `SYNCY_DEBUG=1` writes diagnostics to `state/debug.log`, which is where a
 full-screen interface that appears to hang can say why. It is cheap enough to

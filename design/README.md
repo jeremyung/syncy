@@ -4,6 +4,11 @@ Open [`mac-app-mockups.html`](./mac-app-mockups.html) in a browser. It is a
 self-contained static gallery with no dependencies or build step.
 [`mac-app-menubar-mockups.html`](./mac-app-menubar-mockups.html) covers the
 tray panel on its own, at 1:1 with the 360 pt SwiftUI frame.
+[`mac-app-streamlined-mockups.html`](./mac-app-streamlined-mockups.html) is a
+later, tighter pass over the same surfaces.
+[`ledger-density.html`](./ledger-density.html) renders the before/after of a
+ledger density pass from the same values. Unlike the other three, it is not
+self-contained: it loads a Google Fonts stylesheet for its serif face.
 
 ## Direction
 
@@ -39,6 +44,7 @@ The time model separates measurement from inference:
 | Command preview and copy | Evidence inspector and sync plan |
 | Source setup | Settings with native folder picker |
 | Add and inspect destination | Destination settings |
+| Remove a destination | Settings, “Remove &lt;name&gt; from configuration” button (`engine remove-destination`) |
 | Volume identification and probe | Destination evidence and Doctor |
 | Sentinel adoption/repair | Destination inspection is the intended entry point |
 | Doctor | Settings diagnostics section |

@@ -400,9 +400,13 @@ character in it.
 for the same SMB link. Each writes to
 `~/.local/state/syncy/logs/<ts>-<unit>-<dest>.log`; the TUI tails the file
 rather than holding the pipe, so a job survives the TUI being closed and
-reattaches on restart. React state is only ever updated from a drained queue —
-the render loop never blocks on rsync, and log lines commit in batches at
-~20 fps rather than per line.
+reattaches on restart. Ownership itself is a PID recorded in a lease file, not
+a lock the OS enforces, so a dead owner whose PID has been reused by another
+process is briefly indistinguishable from a live one: it can hold the lease
+for up to `DEFAULT_ABANDON_AFTER_MS` (five minutes) before it is judged
+abandoned and the lease recovered. React state is only ever updated from a
+drained queue — the render loop never blocks on rsync, and log lines commit in
+batches at ~20 fps rather than per line.
 
 **Sync guard rails.** `s` opens a full-page confirm — not a floating modal —
 showing the literal argv, the pending change count split into what the transfer

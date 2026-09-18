@@ -16,6 +16,18 @@ sdk_path=$(xcrun --sdk macosx --show-sdk-path)
 deployment_target=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" \
   "$repo_dir/macos/Info.plist")
 
+# scripts/build.ts autodetects the engine's architecture from `process.arch`
+# and embeds whichever binary that produces; match it here so the Swift
+# binary is never built arm64-only on an Intel host running an x64 engine.
+arch=$(uname -m)
+case "$arch" in
+  arm64 | x86_64) ;;
+  *)
+    echo "build-mac-app.sh: unsupported host architecture: $arch" >&2
+    exit 1
+    ;;
+esac
+
 mkdir -p "$build_dir/cache" "$binary_dir" "$resources_dir"
 
 cd "$repo_dir"
@@ -28,7 +40,7 @@ cp "$repo_dir/macos/Info.plist" "$contents_dir/Info.plist"
 swift "$repo_dir/scripts/make-app-icon.swift" "$build_dir/Syncy.iconset" >/dev/null
 iconutil -c icns "$build_dir/Syncy.iconset" -o "$resources_dir/Syncy.icns"
 
-swiftc -swift-version 6 -sdk "$sdk_path" -target "arm64-apple-macosx$deployment_target" \
+swiftc -swift-version 6 -sdk "$sdk_path" -target "$arch-apple-macosx$deployment_target" \
   -module-cache-path "$build_dir/cache" \
   -parse-as-library -emit-library -static -emit-module \
   -emit-module-path "$build_dir/SyncyMacCore.swiftmodule" \
@@ -36,7 +48,7 @@ swiftc -swift-version 6 -sdk "$sdk_path" -target "arm64-apple-macosx$deployment_
   "$repo_dir"/macos/Sources/SyncyMacCore/*.swift \
   -o "$build_dir/libSyncyMacCore.a"
 
-swiftc -swift-version 6 -sdk "$sdk_path" -target "arm64-apple-macosx$deployment_target" \
+swiftc -swift-version 6 -sdk "$sdk_path" -target "$arch-apple-macosx$deployment_target" \
   -module-cache-path "$build_dir/cache" \
   -I "$build_dir" -L "$build_dir" -lSyncyMacCore \
   -module-name SyncyMacApp \

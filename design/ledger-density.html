@@ -190,9 +190,6 @@
   thead th + th { border-left: 1px solid var(--rule-soft); }
   tbody td { padding: 7px var(--space-md); vertical-align: top; font-size: 13px; }
   tbody tr:nth-child(even) { background: color-mix(in oklch, var(--ground) 45%, transparent); }
-  tbody tr.sel { background: var(--select); }
-  tbody tr.sel td, tbody tr.sel .sub, tbody tr.sel .state, tbody tr.sel .why { color: oklch(99% 0 0); }
-  tbody tr.sel .mark { background: oklch(100% 0 0 / 0.22); color: oklch(99% 0 0); }
 
   .name { font-weight: 500; color: var(--ink); }
   .sub { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; margin-top: 2px; }
@@ -209,6 +206,10 @@
   .mark.f { color: var(--fault);   background: color-mix(in oklch, var(--fault) 13%, transparent); }
   .mark.q { color: var(--ink-3);   background: color-mix(in oklch, var(--ink-3) 13%, transparent); }
   .gap { width: 19px; flex: none; }
+
+  tbody tr.sel { background: var(--select); }
+  tbody tr.sel td, tbody tr.sel .sub, tbody tr.sel .state, tbody tr.sel .why { color: oklch(99% 0 0); }
+  tbody tr.sel .mark { background: oklch(100% 0 0 / 0.22); color: oklch(99% 0 0); }
 
   .pagehead { padding: var(--space-xl) var(--space-lg) var(--space-lg); border-bottom: 1px solid var(--rule-soft); display: flex; align-items: flex-end; gap: var(--space-lg); }
   .pagehead h3 { font-family: var(--text); font-size: 26px; font-weight: 600; margin: 0 0 2px; letter-spacing: -0.01em; }

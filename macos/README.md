@@ -14,7 +14,9 @@ completes, or when someone explicitly refreshes.
 
 ## Run
 
-Requires macOS 14 or later and Swift 6.
+Requires macOS 14.4 or later — `TableColumnForEach` needs it — and Swift 6.
+Building also needs Xcode Command Line Tools: the build script shells out to
+`xcrun`, `iconutil`, and `/usr/libexec/PlistBuddy`, not just a Swift toolchain.
 
 ```sh
 cd macos
@@ -32,7 +34,10 @@ swift test
 From the repository root, `scripts/build-mac-app.sh` builds the engine and a
 `build/Syncy.app` bundle, embeds the engine helper, and ad-hoc signs both. Set
 `SYNCY_SIGN_IDENTITY` to use a Developer ID identity. Notarization is a separate
-distribution step and is not needed for a personal local build.
+distribution step and is not needed for a personal local build. The bundle is
+built for the host architecture only (whatever `uname -m` reports), matching
+the engine binary `scripts/build.ts` already embeds; it is not a universal
+binary.
 
 ## Engine seam
 
@@ -47,9 +52,17 @@ job runs, the app consumes the engine's JSON Lines events as they arrive;
 snapshots remain the recovery path when the app opens during work another
 process started. Both paths expose the single process owner, elapsed time,
 current phase, batch position, historical duration estimate, last observed
-file, and only progress rsync actually measured.
+file, and only progress rsync actually measured. Doctor is the one surface
+that shows the engine's plain-text `syncy doctor` output as-is, rather than a
+versioned JSONL message.
 UI code does not infer completion from process silence or scrape the terminal
 renderer.
+
+The app runs with the hardened runtime (`codesign --options runtime`) but no
+App Sandbox and no entitlements file: it execs a bundled engine that drives
+rsync against arbitrary mounted destinations, and the folder picker is a plain
+`NSOpenPanel`. It therefore has the same filesystem access as the person
+running it; the engine, not the app, is what actually touches a destination.
 
 Reader-facing status phrases, difference labels, evidence timestamps, file-only
 counts, and destination provenance are produced by the same presentation and
