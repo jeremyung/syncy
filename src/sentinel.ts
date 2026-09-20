@@ -32,6 +32,27 @@ export function readSentinel(root: string): string | null {
   }
 }
 
+/**
+ * Async twin of `readSentinel`, for the status path.
+ *
+ * `readFileSync` on a network mount that has died without unmounting blocks
+ * the calling thread until the kernel gives up; on the event loop that is
+ * the whole process. This read is issued to the runtime's file IO instead,
+ * where the same stall blocks a worker thread, not the event loop — measured
+ * against a blocking FIFO, the loop kept ticking the whole time — and
+ * `targetReachability` bounds even that. The sync version stays:
+ * `observeTargetSync` and the write boundary need the answer in the same
+ * turn as the decision to spawn.
+ */
+export async function readSentinelAsync(root: string): Promise<string | null> {
+  try {
+    const v = (await Bun.file(sentinelPath(root)).text()).trim();
+    return v === "" ? null : v;
+  } catch {
+    return null;
+  }
+}
+
 export interface WriteSentinelOptions {
   readonly bin?: string;
   /** Provided id, for tests and for re-adopting a known target. */
@@ -81,6 +102,13 @@ export async function writeSentinel(
 
 export function checkSentinel(root: string, expected: string): SentinelStatus {
   const actual = readSentinel(root);
+  if (actual === null) return "missing";
+  return actual === expected ? "ok" : "mismatch";
+}
+
+/** Async twin of `checkSentinel`, mirroring its semantics exactly. */
+export async function checkSentinelAsync(root: string, expected: string): Promise<SentinelStatus> {
+  const actual = await readSentinelAsync(root);
   if (actual === null) return "missing";
   return actual === expected ? "ok" : "mismatch";
 }

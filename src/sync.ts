@@ -6,6 +6,7 @@ import { debug } from "./log.ts";
 import { argvFor, assertDeleteIsDryRun, DEFAULT_RSYNC, RsyncError } from "./rsync.ts";
 import { ensureLogDir, targetReachabilitySync } from "./scan.ts";
 import { appendHistory } from "./state.ts";
+import { timeoutWord } from "./status.ts";
 
 /**
  * Real syncing (DESIGN.md section 6). The first code in syncy that writes to a
@@ -120,8 +121,11 @@ export function startSync(
   assertRuntimeContainment(config, target);
   const reach = targetReachabilitySync(target);
   if (reach !== "ok") {
+    // A hang is not the same fact as an absence, and the refusal must not
+    // read as one: the phrase is the ledger's, derived from the same constant.
+    const why = reach === "timeout" ? timeoutWord() : `is ${reach}`;
     throw new RsyncError(
-      `refusing to sync: destination ${target.name} is ${reach} — refusing to write to ${target.path}`,
+      `refusing to sync: destination ${target.name} ${why} — refusing to write to ${target.path}`,
     );
   }
 

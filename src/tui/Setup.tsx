@@ -9,7 +9,8 @@ import { bytes } from "../format.ts";
 import { type MountEntry, modifyWindowFor } from "../fstype.ts";
 import { configFile } from "../paths.ts";
 import { probeTarget } from "../probe.ts";
-import { identityIsProof, listUnits, targetReachability } from "../scan.ts";
+import { identityIsProof, listUnits, type Reachability, targetReachability } from "../scan.ts";
+import { timeoutWord } from "../status.ts";
 import { describeVolume, identify, type MountedVolume, mountedVolumes } from "../volume.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
@@ -188,7 +189,7 @@ export function Setup({
    * Identifying a volume can spawn `mount` and `diskutil`, which must not
    * happen while drawing a frame.
    */
-  const [reachable, setReachable] = useState<ReadonlyMap<string, string>>(new Map());
+  const [reachable, setReachable] = useState<ReadonlyMap<string, Reachability>>(new Map());
 
   useEffect(() => {
     let live = true;
@@ -440,7 +441,13 @@ export function Setup({
               <Text color={theme.figure}>{padEnd(t.name, 6)}</Text>
               <Text color={theme.ink}>{padEnd(truncatePath(t.path, 44), 46)}</Text>
               <Text color={reach === "ok" ? theme.verified : theme.unchecked}>
-                {reach === "ok" ? "connected" : "not connected"}
+                {reach === "ok"
+                  ? "connected"
+                  : reach === "timeout"
+                    ? // A hang is not a confirmed absence; "not connected"
+                      // would claim more than was established.
+                      timeoutWord()
+                    : "not connected"}
               </Text>
             </Box>
             <Text color={theme.dim}>
