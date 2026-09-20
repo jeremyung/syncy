@@ -11,7 +11,15 @@ import {
   type Reachability,
   TargetCheckError,
 } from "../scan.ts";
-import { appendHistory, estimateMs, type State, saveState, upsertScan } from "../state.ts";
+import {
+  appendHistory,
+  estimateMs,
+  loadState,
+  type Scan,
+  type State,
+  saveState,
+  upsertScan,
+} from "../state.ts";
 import { reachWord } from "../status.ts";
 import type { Row } from "./Ledger.tsx";
 import type { RunProgress } from "./Progress.tsx";
@@ -77,6 +85,22 @@ export function cachedSourceFingerprint(
   const current = read(join(config.source, unit), config.exclude);
   cache.set(unit, current);
   return current;
+}
+
+/**
+ * Records one finished check against what is on disk, not the copy at hand.
+ *
+ * The re-read is structural, not something a caller must remember: the
+ * accumulated in-memory copy may be hours old, and another writer may have
+ * replaced a record in it since it was loaded. Merging the new scan into that
+ * stale copy and writing the whole thing back silently resurrects whatever
+ * that writer superseded — the deep `behind` found overnight is gone again by
+ * the morning's quick `clean`, and the row reads `verified`.
+ */
+export function recordScan(scan: Scan, read: typeof loadState = loadState): State {
+  const merged = upsertScan(read(), scan);
+  saveState(merged);
+  return merged;
 }
 
 /** Counts jobs that were not skipped; displayed skip reasons are deduplicated. */
@@ -259,8 +283,7 @@ export function useJob(facts: JobFacts): Job {
             ? { readMBPerSec: Math.round(job.size / 1e6 / (jobMs / 1000)) }
             : {}),
         });
-        working = upsertScan(working, scan);
-        saveState(working);
+        working = recordScan(scan);
         // The itemized list is accumulated during the rsync stream and capped
         // before it reaches this queue. Saving it here does not retain the
         // full output or map it into a second unbounded array.
