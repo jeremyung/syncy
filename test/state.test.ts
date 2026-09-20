@@ -10,6 +10,7 @@ import {
   latestScan,
   loadState,
   MAX_HISTORY_BYTES,
+  openState,
   type Scan,
   type State,
   saveState,
@@ -68,12 +69,17 @@ describe("persistence", () => {
     expect(text.endsWith("\n")).toBe(true);
   });
 
-  test("a corrupt file is refused loudly, never treated as empty", () => {
-    // Silently starting from empty would mark every unit unchecked, which is
-    // safe; but silently accepting half-parsed state would not be.
+  test("a corrupt file is set aside and named, never silently treated as empty", () => {
+    // Starting from empty marks every unit unchecked, which is safe — but it
+    // must not be silent: the unreadable file is moved, not deleted or
+    // repaired, and the open reports where it went.
     const file = join(dir, "state.json");
     writeFileSync(file, "{not json");
-    expect(() => loadState(file)).toThrow(/corrupt/);
+    const opened = openState(file);
+    expect(opened.state).toEqual(EMPTY_STATE);
+    expect(opened.setAside).not.toBeNull();
+    expect(existsSync(opened.setAside!)).toBe(true);
+    expect(existsSync(file)).toBe(false);
   });
 
   test("an unknown version is refused", () => {
@@ -126,16 +132,95 @@ describe("a malformed scan is dropped, not trusted and not fatal", () => {
     }
   });
 
-  test("malformed JSON still throws — only per-scan validation degrades", () => {
+  test("malformed JSON is set aside, not thrown — only the version check still refuses", () => {
     const file = join(dir, "state.json");
     writeFileSync(file, "{not json");
-    expect(() => loadState(file)).toThrow(/corrupt/);
+    const opened = openState(file);
+    expect(opened.state).toEqual(EMPTY_STATE);
+    expect(opened.setAside).not.toBeNull();
   });
 
   test("a wrong version still throws — only per-scan validation degrades", () => {
     const file = join(dir, "state.json");
     writeFileSync(file, JSON.stringify({ version: 2, scans: [scan()] }));
     expect(() => loadState(file)).toThrow(/unsupported state version/);
+  });
+});
+
+describe("an unreadable state file is set aside, not thrown and not deleted", () => {
+  /**
+   * `loadState` used to throw when the file was not JSON at all, or `scans`
+   * was not an array — and the ledger called it in a useState initializer
+   * with nothing to catch it, so the interface died before it drew. That is
+   * the one failure with no way back in, and it is reachable exactly when the
+   * record is most needed: a hand edit or a half-restored backup. An
+   * unreadable file is now moved aside, byte for byte, and the empty state is
+   * returned with the file's new location.
+   */
+  test("a file that is not JSON is set aside and reads as empty", () => {
+    const file = join(dir, "state.json");
+    writeFileSync(file, "{");
+    const opened = openState(file);
+    expect(opened.state).toEqual(EMPTY_STATE);
+    expect(opened.setAside).not.toBeNull();
+  });
+
+  test("the set-aside file is the original bytes, and the original path is gone", () => {
+    const file = join(dir, "state.json");
+    const corrupt = "{ not json, just a byte";
+    writeFileSync(file, corrupt);
+    const opened = openState(file);
+    const setAside = opened.setAside;
+    expect(setAside).not.toBeNull();
+    expect(readFileSync(setAside!)).toEqual(Buffer.from(corrupt, "utf8"));
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test("a scans that is not an array is set aside the same way", () => {
+    const file = join(dir, "state.json");
+    const body = JSON.stringify({ version: 1, scans: "no" });
+    writeFileSync(file, body);
+    const opened = openState(file);
+    expect(opened.state).toEqual(EMPTY_STATE);
+    expect(opened.setAside).not.toBeNull();
+    expect(readFileSync(opened.setAside!, "utf8")).toBe(body);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test("a whole file that is not an object is set aside", () => {
+    const file = join(dir, "state.json");
+    writeFileSync(file, JSON.stringify([1, 2, 3]));
+    const opened = openState(file);
+    expect(opened.state).toEqual(EMPTY_STATE);
+    expect(opened.setAside).not.toBeNull();
+  });
+
+  test("an unsupported version still throws, and the intact file is not moved", () => {
+    // The file is intact and readable; syncy just does not know the dialect.
+    // Quarantining it would destroy a perfectly good record over a version
+    // it merely has not implemented.
+    const file = join(dir, "state.json");
+    writeFileSync(file, JSON.stringify({ version: 2, scans: [] }));
+    expect(() => openState(file)).toThrow(/unsupported state version/);
+    expect(existsSync(file)).toBe(true);
+    expect(readdirSync(dir)).toEqual(["state.json"]);
+  });
+
+  test("a healthy file loads with nothing set aside", () => {
+    const file = join(dir, "state.json");
+    const state = upsertScan(EMPTY_STATE, scan());
+    saveState(state, file);
+    const opened = openState(file);
+    expect(opened.state).toEqual(state);
+    expect(opened.setAside).toBeNull();
+    expect(readdirSync(dir)).toEqual(["state.json"]);
+  });
+
+  test("loadState still reads a healthy file the same way", () => {
+    const file = join(dir, "state.json");
+    const state = upsertScan(EMPTY_STATE, scan());
+    saveState(state, file);
+    expect(loadState(file)).toEqual(state);
   });
 });
 

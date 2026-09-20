@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { type Config, ConfigError, loadConfig } from "./config.ts";
 import { EMPTY_CONFIG } from "./configio.ts";
 import { fingerprint } from "./fingerprint.ts";
@@ -9,7 +9,7 @@ import { type LedgerRow, renderLedger } from "./render.ts";
 import { checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
 import { allReachability, checkUnit, listUnits } from "./scan.ts";
 import { writeSentinel } from "./sentinel.ts";
-import { appendHistory, loadState, type State, saveState, upsertScan } from "./state.ts";
+import { appendHistory, loadState, openState, type State, saveState, upsertScan } from "./state.ts";
 import { evaluateUnit } from "./status.ts";
 import { startTui } from "./tui/index.tsx";
 
@@ -142,7 +142,14 @@ async function cmdDoctor(config: Config): Promise<void> {
         "  fresh quick check at minimum and a deep verify to reach verified.\n",
     );
   }
-  process.stdout.write(`  state        ${stateFile()}\n`);
+  // The state line says what opening the record actually produced: a file
+  // syncy cannot read is set aside on the way in, and the doctor names it
+  // rather than showing a path that no longer holds the record.
+  const opened = openState();
+  process.stdout.write(
+    `  state        ${opened.setAside === null ? "ok     " : "FAIL   "}${stateFile()}` +
+      `${opened.setAside === null ? "" : ` (unreadable; set aside as ${basename(opened.setAside)})`}\n`,
+  );
 }
 
 function cmdInit(): void {

@@ -115,7 +115,7 @@ export function Ledger(props: LedgerProps): React.ReactElement {
   // What the screen is for, and cannot give up. Counted against `Footer`'s
   // actual output rather than from memory: the summary row, the blank beneath
   // it, and then either the two progress lines plus any refusal notice, or the
-  // single hint/busy line.
+  // single notice/hint/busy line.
   const core =
     2 + (props.running != null ? progressLines(props.running, props.now, props.notice != null) : 1);
 
@@ -350,6 +350,13 @@ function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactEl
           theme={theme}
           notice={props.notice ?? null}
         />
+      ) : props.notice != null ? (
+        // While a check runs the notice rides inside Progress as an extra
+        // line; at rest there is one line only, so the notice takes it, and
+        // the hint returns when the notice clears. A notice that were set but
+        // never drawn here would be the interface knowing what the user does
+        // not.
+        <Text color={theme.missing}>{"  " + truncate(props.notice, width - 2)}</Text>
       ) : busy === null ? (
         <Text color={theme.dim}>{"  " + hintLine(props.width)}</Text>
       ) : (
