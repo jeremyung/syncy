@@ -2,7 +2,7 @@ import { type Dirent, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Config, Target } from "./config.ts";
 import { buildDiffFromAccumulator, createDiffAccumulator, type Diff } from "./diff.ts";
-import { type Fingerprint, fingerprint } from "./fingerprint.ts";
+import { type Fingerprint, fingerprint, fingerprintAsync } from "./fingerprint.ts";
 import { isNew, parseItemizeLine } from "./itemize.ts";
 import { logDir } from "./paths.ts";
 import { argvFor, type Mode, RsyncError, runRsync } from "./rsync.ts";
@@ -342,7 +342,15 @@ export async function checkUnit(
 
   // After rsync, not before: the walk is read-only and cheap next to a check,
   // but doing it first would delay the run for a number only shown afterwards.
-  const targetFingerprint = fingerprint(join(target.path, unit), config.exclude);
+  // It is the async walk, because a destination of a hundred thousand files
+  // over SMB takes minutes to lstat, and a synchronous walk would hold the
+  // event loop the whole time — no paint, and the abort signal unread.
+  const targetFingerprint = await fingerprintAsync(
+    join(target.path, unit),
+    config.exclude,
+    undefined,
+    opts.signal,
+  );
   const diff = buildDiffFromAccumulator(unit, target.name, methodOf(mode), accumulator, {
     ts: now,
     source: fp,
