@@ -8,10 +8,18 @@ import { EMPTY as EMPTY_FINGERPRINT, type Fingerprint, fingerprint } from "../fi
 import { bytes } from "../format.ts";
 import { timed, timedAsync } from "../log.ts";
 import { allReachability, listUnits, type Reachability } from "../scan.ts";
-import { lastSyncAt, loadState, openState, type State, type StateOpen } from "../state.ts";
-import { type CellState, evaluateUnit, type UnitState } from "../status.ts";
+import {
+  findScan,
+  lastSyncAt,
+  loadState,
+  openState,
+  type Scan,
+  type State,
+  type StateOpen,
+} from "../state.ts";
+import { type CellState, evaluateUnit, targetIdentity, type UnitState } from "../status.ts";
 import { setTitle, titleFor } from "../title.ts";
-import { padEnd, truncatePath } from "../width.ts";
+import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Confirm } from "./Confirm.tsx";
 import { Diff as DiffScreen } from "./Diff.tsx";
 import { Job } from "./Job.tsx";
@@ -615,6 +623,14 @@ interface EvidenceProps {
   readonly height: number;
 }
 
+/** What the evidence line says for one method: a record, a foreign-volume note, or nothing. */
+function evidenceFor(scan: Scan | undefined, foreignRecords: boolean): string {
+  if (scan !== undefined) return `${scan.outcome} · ${new Date(scan.ts).toLocaleString()}`;
+  return foreignRecords
+    ? "never on this volume · earlier records were made against a different one"
+    : "never";
+}
+
 /**
  * The evidence view ends at the evidence. No recommendation, no command to
  * copy, nothing organised around deleting.
@@ -641,12 +657,13 @@ export function Evidence({
       </Box>
       <Rule width={width} theme={theme} />
       {config.targets.map((t) => {
-        const deep = state.scans.find(
-          (s) => s.unit === row.status.unit && s.target === t.name && s.method === "deep",
-        );
-        const quick = state.scans.find(
-          (s) => s.unit === row.status.unit && s.target === t.name && s.method === "quick",
-        );
+        const identity = targetIdentity(t);
+        const deep = findScan(state, row.status.unit, t.name, "deep", identity);
+        const quick = findScan(state, row.status.unit, t.name, "quick", identity);
+        const foreignRecords =
+          deep === undefined &&
+          quick === undefined &&
+          state.scans.some((s) => s.unit === row.status.unit && s.target === t.name);
         const cell = row.status.cells.find((c) => c.target === t.name);
         return (
           <Box key={t.name} flexDirection="column">
@@ -659,10 +676,10 @@ export function Evidence({
             </Box>
             <Text color={theme.dim}>{`      path        ${truncatePath(t.path, width - 18)}`}</Text>
             <Text color={theme.dim}>
-              {`      deep        ${deep === undefined ? "never" : `${deep.outcome} · ${new Date(deep.ts).toLocaleString()}`}`}
+              {`      deep        ${truncate(evidenceFor(deep, foreignRecords), width - 18)}`}
             </Text>
             <Text color={theme.dim}>
-              {`      quick       ${quick === undefined ? "never" : `${quick.outcome} · ${new Date(quick.ts).toLocaleString()}`}`}
+              {`      quick       ${truncate(evidenceFor(quick, foreignRecords), width - 18)}`}
             </Text>
             <Text color={theme.dim}>{`      required    ${t.required ? "yes" : "no"}`}</Text>
             <Text> </Text>

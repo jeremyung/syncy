@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import type { Config } from "../src/config.ts";
-import { EMPTY_STATE } from "../src/state.ts";
+import { EMPTY_STATE, type Scan, type State } from "../src/state.ts";
+import { targetIdentity } from "../src/status.ts";
 import { Evidence, Help } from "../src/tui/App.tsx";
 import type { Row } from "../src/tui/Ledger.tsx";
 import { Mark } from "../src/tui/Mark.tsx";
@@ -116,6 +117,142 @@ describe("the evidence screen fits the window it is given", () => {
     // padded by character count the two would collide rather than align.
     expect(named).toContain("unverified");
   });
+});
+
+/**
+ * The evidence screen must not print a foreign volume's records.
+ *
+ * The bug this guards: the cell could read `unchecked · the records here were
+ * made against a different volume` while the lines directly under it printed
+ * that other volume's `deep clean · <date>` — the screen contradicting the
+ * verdict above it, on the one page whose job is to show what the verdict
+ * rests on. A record is evidence only if it was made against the identity the
+ * destination resolves to now; a record made against some other identity must
+ * leave the frame entirely — no outcome, no date.
+ */
+describe("the evidence screen does not print a foreign volume's records", () => {
+  // The shared config's destination is on this volume now, via its `identity`;
+  // this is the value the screen resolves, so it is resolved the same way.
+  const currentIdentity = targetIdentity(config.targets[0]!);
+  /** A different volume, mounted under the same name when the record was made. */
+  const foreignIdentity = "OTHER-VOLUME-UUID";
+  const FOREIGN_TS = Date.UTC(2021, 0, 15);
+  const CURRENT_TS = Date.UTC(2025, 11, 20);
+
+  /** A deep record for the shared row, made against whatever volume `sentinel` names. */
+  const record = (sentinel: string, ts: number): Scan => ({
+    unit: row.status.unit,
+    target: WIDE_NAME,
+    ts,
+    method: "deep",
+    outcome: "clean",
+    nChanges: 0,
+    nExtra: 0,
+    bytesPending: 0,
+    fingerprint: { nfiles: row.files ?? 0, bytes: row.size, maxMtimeNs: "0" },
+    sentinel,
+  });
+
+  /** Only the other volume's record exists; the current volume has none. */
+  const foreignState: State = { version: 1, scans: [record(foreignIdentity, FOREIGN_TS)] };
+
+  test("a record made against a different volume contributes nothing to the frame", () => {
+    // The acceptance criterion, asserted on both halves: the outcome word and
+    // the record's date. The date is computed the way the screen renders it —
+    // toLocaleString — so the absence is checked against exactly what a leak
+    // would print, not a guess at the shape its locale would give it.
+    expect(foreignIdentity).not.toBe(currentIdentity); // the two volumes really differ
+    const { lastFrame } = render(
+      <Evidence
+        row={row}
+        config={config}
+        state={foreignState}
+        theme={THEMES.ansi}
+        now={NOW}
+        width={92}
+        height={24}
+      />,
+    );
+    const frame = plain(lastFrame());
+    expect(frame).not.toContain("clean");
+    expect(frame).not.toContain(new Date(FOREIGN_TS).toLocaleString());
+  });
+
+  test("that case reads never on this volume, not the other volume's record", () => {
+    // 92 is the narrowest width at which the full 72-column phrase survives
+    // the screen's width - 18 budget; at 76 the same line is truncated, which
+    // the width test below still measures.
+    const { lastFrame } = render(
+      <Evidence
+        row={row}
+        config={config}
+        state={foreignState}
+        theme={THEMES.ansi}
+        now={NOW}
+        width={92}
+        height={24}
+      />,
+    );
+    expect(plain(lastFrame())).toContain(
+      "never on this volume · earlier records were made against a different one",
+    );
+  });
+
+  test("a record made against the current volume still prints its outcome and date", () => {
+    // The filter must exclude the foreign record, not evidence itself — a
+    // screen that printed nothing for anyone would pass the absences above.
+    const hereState: State = { version: 1, scans: [record(currentIdentity, CURRENT_TS)] };
+    const { lastFrame } = render(
+      <Evidence
+        row={row}
+        config={config}
+        state={hereState}
+        theme={THEMES.ansi}
+        now={NOW}
+        width={92}
+        height={24}
+      />,
+    );
+    expect(plain(lastFrame())).toContain(`clean · ${new Date(CURRENT_TS).toLocaleString()}`);
+  });
+
+  test("with no records at all it reads never, not the foreign-volume note", () => {
+    // The note explains records that exist elsewhere; with none at all it
+    // would be a claim about where nothing happened.
+    const { lastFrame } = render(
+      <Evidence
+        row={row}
+        config={config}
+        state={EMPTY_STATE}
+        theme={THEMES.ansi}
+        now={NOW}
+        width={92}
+        height={24}
+      />,
+    );
+    const frame = plain(lastFrame());
+    expect(frame).toContain("never");
+    expect(frame).not.toContain("on this volume");
+  });
+
+  for (const width of WIDTHS) {
+    test(`no line exceeds ${width} columns with the foreign-volume note present`, () => {
+      const { lastFrame } = render(
+        <Evidence
+          row={row}
+          config={config}
+          state={foreignState}
+          theme={THEMES.ansi}
+          now={NOW}
+          width={width}
+          height={24}
+        />,
+      );
+      for (const line of linesOf(lastFrame())) {
+        expect(displayWidth(line), `width ${width}: ${line}`).toBeLessThanOrEqual(width + 2);
+      }
+    });
+  }
 });
 
 describe("the help screen fits the window it is given", () => {
