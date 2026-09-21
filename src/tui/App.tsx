@@ -182,6 +182,10 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     void timedAsync("refresh.reachability", 250, () => allReachability(config)).then((reach) =>
       setScan({ fingerprints, reach }),
     );
+    // The ledger's records drift too: a check run from another session, or a
+    // scheduled one, writes state.json without telling this interface. [r] is
+    // what re-reads it, so a row cannot keep showing yesterday's verdict.
+    setState(loadState());
     setNow(Date.now());
   }, [units, config]);
 
@@ -602,7 +606,7 @@ export function Help({
       {line("enter", "which files differ, per destination")}
       {line("e", "evidence for the selected folder")}
       {line("f", "cycle the status filter")}
-      {line("r", "re-read the source, recompute sizes")}
+      {line("r", "re-read the source and the ledger")}
       {line(",", "setup — source root and destinations")}
       {line("ctrl-c", "quit — during a transfer, the first press cancels it")}
       <Text> </Text>
