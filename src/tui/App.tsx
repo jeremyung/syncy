@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { Box, Text, useApp, useStdout } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { copyToClipboard } from "../clipboard.ts";
@@ -8,7 +8,7 @@ import { EMPTY as EMPTY_FINGERPRINT, type Fingerprint, fingerprint } from "../fi
 import { bytes } from "../format.ts";
 import { timed, timedAsync } from "../log.ts";
 import { allReachability, listUnits, type Reachability } from "../scan.ts";
-import { lastSyncAt, loadState, type State } from "../state.ts";
+import { lastSyncAt, loadState, openState, type State, type StateOpen } from "../state.ts";
 import { type CellState, evaluateUnit, type UnitState } from "../status.ts";
 import { setTitle, titleFor } from "../title.ts";
 import { padEnd, truncatePath } from "../width.ts";
@@ -61,7 +61,12 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   const theme = useMemo(() => resolveTheme(), []);
 
   const [config, setConfig] = useState<Config>(initialConfig);
-  const [state, setState] = useState<State>(() => loadState());
+  // The state file opens exactly once, and the open is remembered: a file
+  // that cannot be read is set aside on the way in rather than throwing in
+  // this initializer before the first frame, and the notice below must name
+  // it when the ledger first draws.
+  const [opened] = useState<StateOpen>(() => openState());
+  const [state, setState] = useState<State>(opened.state);
   // Recomputed rather than held, since the setup screen can change the source.
   const units = useMemo(
     () => (config.source === "" ? [] : listUnits(config.source)),
@@ -80,7 +85,11 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
    * is the same failure as a counter frozen at zero: the interface knows
    * something the person watching it does not.
    */
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(() =>
+    opened.setAside === null
+      ? null
+      : `state.json could not be read — set aside as ${basename(opened.setAside)}`,
+  );
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timers = useTimers();
 
@@ -93,6 +102,12 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     },
     [timers],
   );
+  // The set-aside notice starts in the state so it is on the first draw; it
+  // then clears on the same timer as any other notice.
+  useEffect(() => {
+    if (opened.setAside === null) return;
+    timers.later(() => setNotice(null), NOTICE_MS);
+  }, [opened, timers]);
   const [showPlan, setShowPlan] = useState(false);
   // Open straight into setup when there is nothing to show yet.
   const [showSetup, setShowSetup] = useState(() => initialConfig.targets.length === 0);

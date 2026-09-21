@@ -121,3 +121,43 @@ sentinel = "${id}"
     r.unmount();
   });
 });
+
+describe("the ledger opens even when state.json cannot be parsed", () => {
+  /**
+   * `App` called `loadState` in a useState initializer, and a state file that
+   * is not JSON at the top level made it throw there — so the interface died
+   * before it drew, in exactly the situation (a hand edit, a half-restored
+   * backup) in which the ledger is most needed. An unreadable file is now set
+   * aside on the way in, and the first ledger frame says so.
+   */
+  test("a corrupt state file is set aside, and every row still reads unchecked", async () => {
+    const src = join(root, "src");
+    for (let unit = 0; unit < 3; unit++) mkdirSync(join(src, `unit-${unit}`), { recursive: true });
+    mkdirSync(join(root, "dst"), { recursive: true });
+    const id = await writeSentinel(join(root, "dst"));
+    // The state file is under the syncy subdirectory of the state home.
+    mkdirSync(join(root, "state", "syncy"), { recursive: true });
+    writeFileSync(join(root, "state", "syncy", "state.json"), "{");
+    const config = parseConfig(`
+source = "${src}"
+[[target]]
+name = "dst"
+path = "${join(root, "dst")}"
+required = true
+sentinel = "${id}"
+`);
+    // A render that throws in the useState initializer is the bug: this line
+    // is the assertion that the interface draws at all.
+    const r = render(<App config={config} />);
+    await waitFor(() => plain(r.lastFrame()).includes("unit-0"), { what: "the ledger to fill" });
+    const frame = plain(r.lastFrame());
+    expect(frame).toContain("folder");
+    // The unreadable record may only mean unchecked, nothing stronger: all
+    // three rows read it in the status column, and no row carries another
+    // state's word there.
+    expect(frame.match(/unchecked · /g) ?? []).toHaveLength(3);
+    expect(frame).not.toMatch(/\b(verified|unverified|behind|missing|error) · /);
+    expect(frame).toContain("set aside as state.json.corrupt-");
+    r.unmount();
+  });
+});
