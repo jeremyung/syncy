@@ -1,6 +1,6 @@
 import type { Config, Target } from "./config.ts";
 import { type Fingerprint, sameFingerprint } from "./fingerprint.ts";
-import type { SentinelStatus } from "./sentinel.ts";
+import { REACHABILITY_TIMEOUT_MS, type Reachability } from "./scan.ts";
 import { findScan, latestScan, type Scan, type State } from "./state.ts";
 
 /**
@@ -95,7 +95,7 @@ export interface CellInput {
    */
   readonly knownExtras?: number;
   readonly target: Target;
-  readonly sentinel: SentinelStatus | "unreachable";
+  readonly sentinel: Reachability;
   readonly fingerprintNow: Fingerprint;
   readonly deep: Scan | undefined;
   readonly quick: Scan | undefined;
@@ -190,12 +190,16 @@ export function cellState(input: CellInput): Cell {
     const reason =
       input.sentinel === "unreachable"
         ? "not connected"
-        : input.sentinel === "missing"
-          ? "no sentinel here — not mounted, or the wrong volume"
-          : // Two causes, and the message has to cover both: a different volume
-            // mounted at the same path, or the directory recreated since it was
-            // added. Either way this is not the directory that was registered.
-            "not the directory that was registered — re-add it in setup";
+        : input.sentinel === "timeout"
+          ? // A hang is its own fact, not an absence: saying "not connected"
+            // would claim the destination was found to be gone.
+            timeoutWord()
+          : input.sentinel === "missing"
+            ? "no sentinel here — not mounted, or the wrong volume"
+            : // Two causes, and the message has to cover both: a different volume
+              // mounted at the same path, or the directory recreated since it was
+              // added. Either way this is not the directory that was registered.
+              "not the directory that was registered — re-add it in setup";
     return { ...base, state: "unchecked", reason };
   }
 
@@ -331,7 +335,7 @@ export function rollUp(
 export interface UnitEvaluation {
   readonly unit: string;
   readonly fingerprint: Fingerprint;
-  readonly sentinels: ReadonlyMap<string, SentinelStatus | "unreachable">;
+  readonly sentinels: ReadonlyMap<string, Reachability>;
 }
 
 export function evaluateUnit(
@@ -387,13 +391,25 @@ export function evaluateUnit(
   return status;
 }
 
+/**
+ * The one user-visible phrase for a destination that stopped answering.
+ *
+ * The number is derived from `REACHABILITY_TIMEOUT_MS`, never typed: if the
+ * two drifted, the screen would claim a deadline the check did not use.
+ */
+export function timeoutWord(ms: number = REACHABILITY_TIMEOUT_MS): string {
+  return `did not answer within ${Math.round(ms / 1000)}s`;
+}
+
 /** A reachability status in the words the ledger already uses. */
-export function reachWord(r: "ok" | "missing" | "mismatch" | "unreachable"): string {
+export function reachWord(r: Reachability): string {
   return r === "unreachable"
     ? "not connected"
-    : r === "missing"
-      ? "no sentinel found"
-      : r === "mismatch"
-        ? "different volume"
-        : "ok";
+    : r === "timeout"
+      ? timeoutWord()
+      : r === "missing"
+        ? "no sentinel found"
+        : r === "mismatch"
+          ? "different volume"
+          : "ok";
 }

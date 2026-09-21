@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Config, Target } from "../src/config.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
+import { REACHABILITY_TIMEOUT_MS } from "../src/scan.ts";
 import type { Scan, State } from "../src/state.ts";
 import {
   behindReason,
@@ -9,7 +10,9 @@ import {
   evaluateUnit,
   evidencePhrase,
   knownExtras,
+  reachWord,
   rollUp,
+  timeoutWord,
 } from "../src/status.ts";
 
 const NOW = Date.parse("2026-08-20T12:00:00Z");
@@ -56,6 +59,33 @@ const cell = (over: Partial<Parameters<typeof cellState>[0]> = {}): Cell =>
     maxQuickAgeDays: 7,
     ...over,
   });
+
+describe("a destination that stops answering is named as such", () => {
+  test("timeoutWord renders the deadline it is derived from, not a typed literal", () => {
+    // If the constant and the phrase drifted, the screen would claim a
+    // deadline the check did not use: the number comes from the constant.
+    expect(REACHABILITY_TIMEOUT_MS).toBe(5_000);
+    expect(timeoutWord()).toBe("did not answer within 5s");
+    // A different deadline renders its own number.
+    expect(timeoutWord(4_000)).toBe("did not answer within 4s");
+    expect(timeoutWord(7_500)).toBe("did not answer within 8s");
+  });
+
+  test("the cell reason for a timeout is that phrase, not the mismatch wording", () => {
+    // The fall-through to guard: a union member with no branch of its own
+    // would land on the mismatch reason, which claims the check found a
+    // different volume — something a timeout did not establish.
+    const c = cell({ sentinel: "timeout" });
+    expect(c.state).toBe("unchecked");
+    expect(c.reason).toBe(timeoutWord());
+    expect(c.reason).not.toBe("not the directory that was registered — re-add it in setup");
+  });
+
+  test("reachWord uses the same phrase for a timeout", () => {
+    expect(reachWord("timeout")).toBe(timeoutWord());
+    expect(reachWord("timeout")).not.toBe("not connected");
+  });
+});
 
 describe("cell state ladder", () => {
   test("verified when both clocks are fresh and the source is unchanged", () => {

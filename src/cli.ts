@@ -10,7 +10,7 @@ import { checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
 import { allReachability, checkUnit, listUnits } from "./scan.ts";
 import { writeSentinel } from "./sentinel.ts";
 import { appendHistory, loadState, openState, type State, saveState, upsertScan } from "./state.ts";
-import { evaluateUnit } from "./status.ts";
+import { evaluateUnit, timeoutWord } from "./status.ts";
 import { startTui } from "./tui/index.tsx";
 
 /**
@@ -84,7 +84,10 @@ async function cmdCheck(
     for (const target of config.targets) {
       const status = reach.get(target.name);
       if (status !== "ok") {
-        process.stdout.write(`  ${unit} → ${target.name}: skipped (${status})\n`);
+        // The raw member would print "timeout", a value rather than a fact;
+        // the ledger says the same condition in the same words.
+        const why = status === "timeout" ? timeoutWord() : status;
+        process.stdout.write(`  ${unit} → ${target.name}: skipped (${why})\n`);
         continue;
       }
       process.stdout.write(`  ${unit} → ${target.name}: ${mode}…`);
@@ -126,8 +129,11 @@ async function cmdDoctor(config: Config): Promise<void> {
   for (const t of config.targets) {
     const s = reach.get(t.name) ?? "unreachable";
     if (s === "mismatch") mismatched = true;
+    // A timeout would print as the raw value, which names nothing; the doctor
+    // says the condition in the same words the ledger does.
+    const shown = s === "timeout" ? timeoutWord() : s;
     process.stdout.write(
-      `  ${t.name.padEnd(12)} ${s === "ok" ? "ok" : "FAIL"}   ${t.path} (${s})\n`,
+      `  ${t.name.padEnd(12)} ${s === "ok" ? "ok" : "FAIL"}   ${t.path} (${shown})\n`,
     );
   }
   if (mismatched) {

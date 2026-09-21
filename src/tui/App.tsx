@@ -7,7 +7,7 @@ import { type Diff, loadDiff } from "../diff.ts";
 import { EMPTY as EMPTY_FINGERPRINT, type Fingerprint, fingerprint } from "../fingerprint.ts";
 import { bytes } from "../format.ts";
 import { timed, timedAsync } from "../log.ts";
-import { allReachability, listUnits, type Reachability } from "../scan.ts";
+import { allReachability, listUnits, REACHABILITY_TIMEOUT_MS, type Reachability } from "../scan.ts";
 import {
   findScan,
   lastSyncAt,
@@ -101,15 +101,31 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timers = useTimers();
 
-  /** Shows a refusal for a few seconds, replacing any refusal already up. */
+  /**
+   * Shows a refusal for a few seconds, replacing any refusal already up.
+   *
+   * `ms` is for messages that describe something still happening rather than
+   * something that just happened. A wait named for three seconds and then
+   * cleared while the wait continues is the blank screen this line exists to
+   * prevent, so the caller holding the message is the one that knows how long
+   * its subject lasts.
+   */
   const showNotice = useCallback(
-    (text: string) => {
+    (text: string, ms: number = NOTICE_MS) => {
       if (noticeTimer.current !== null) timers.cancel(noticeTimer.current);
       setNotice(text);
-      noticeTimer.current = timers.later(() => setNotice(null), NOTICE_MS);
+      noticeTimer.current = timers.later(() => setNotice(null), ms);
     },
     [timers],
   );
+  // `refresh` keeps a stable identity: its effect re-runs the scan when the
+  // callback changes, and a dependency on `showNotice` — rebuilt every render
+  // because `timers` is a fresh object each time — would re-scan on every
+  // frame. The ref reaches the current helper without adding the dependency.
+  const showNoticeRef = useRef(showNotice);
+  useEffect(() => {
+    showNoticeRef.current = showNotice;
+  }, [showNotice]);
   // The set-aside notice starts in the state so it is on the first draw; it
   // then clears on the same timer as any other notice.
   useEffect(() => {
@@ -179,9 +195,30 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     });
     // Reachability may spawn a process (diskutil, mount), so it is awaited off
     // the render path rather than blocking a frame.
-    void timedAsync("refresh.reachability", 250, () => allReachability(config)).then((reach) =>
-      setScan({ fingerprints, reach }),
-    );
+    // A destination that has not answered in time is named on the notice line
+    // while the wait continues, not only after it settles — a wait with no
+    // name on screen reads as a hang.
+    let waiting: string | null = null;
+    void timedAsync("refresh.reachability", 250, () =>
+      allReachability(config, {
+        onWaiting: (name) => {
+          const text = `waiting on ${name}`;
+          waiting = text;
+          // Held for the whole window the destination still has to answer in,
+          // and cleared below when it does. On the default three seconds the
+          // name vanished a second before the read gave up, leaving the wait
+          // it describes on screen as nothing at all.
+          showNoticeRef.current(text, REACHABILITY_TIMEOUT_MS);
+        },
+      }),
+    ).then((reach) => {
+      // Clear the waiting message only if it is still on screen: a refused
+      // keypress may have replaced it while the refresh was in flight, and
+      // that message keeps its own timer.
+      const was = waiting;
+      if (was !== null) setNotice((current) => (current === was ? null : current));
+      setScan({ fingerprints, reach });
+    });
     // The ledger's records drift too: a check run from another session, or a
     // scheduled one, writes state.json without telling this interface. [r] is
     // what re-reads it, so a row cannot keep showing yesterday's verdict.

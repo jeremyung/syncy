@@ -3,6 +3,7 @@ import type { Config, Target } from "./config.ts";
 import { timed, timedAsync } from "./log.ts";
 import { checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
 import { targetReachability } from "./scan.ts";
+import { timeoutWord } from "./status.ts";
 
 /**
  * Pre-flight checks for a real sync (DESIGN.md section 6).
@@ -96,7 +97,9 @@ export async function preflight(
     detail:
       reach === "ok"
         ? `${target.name} · ${(target.identity ?? target.sentinel ?? "").slice(0, 24)}`
-        : `${reach} — refusing to write to ${target.path}`,
+        : // A hang must not read as the raw value, and not as an absence: the
+          // confirm page says it in the same words the ledger does.
+          `${reach === "timeout" ? timeoutWord() : reach} — refusing to write to ${target.path}`,
   });
 
   const free = timed("preflight.freeSpace", 200, () => freeBytes(target.path));
