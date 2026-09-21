@@ -1,0 +1,9 @@
+# Pinned action SHAs go stale silently: nothing fails, nothing says the pin
+# no longer points at the tag it was resolved from. This is what turns a
+# stale pin into a pull request someone reviews.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
