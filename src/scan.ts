@@ -334,12 +334,20 @@ export async function checkUnit(
   const startedAt = Date.now();
   const fp = opts.fingerprint ?? fingerprint(join(config.source, unit), config.exclude);
 
-  // The reachability map belongs to the ledger refresh and may be stale by
-  // the time this queued check gets its turn. Establish that the destination
-  // is still the recorded volume before even reading its unit. This also keeps
-  // an unmounted path from being mistaken for a legitimate "missing" folder.
-  const initialObservation = observeTargetSync(target);
-  assertTargetReachable(target, initialObservation);
+  // There is deliberately no observation at the entry of the check, even
+  // though the reachability map belongs to the ledger refresh and may be
+  // stale by the time this queued check gets its turn. Both exits re-observe
+  // the destination uncached at the moment they decide, and each asserts
+  // before it produces a record:
+  //   unit absent  -> observed and asserted right after the existence check,
+  //                   so an unmounted destination throws there instead of
+  //                   recording "missing";
+  //   unit present -> observed and asserted as the last destination operation
+  //                   before runRsync, so nothing is spawned against it.
+  // An observation taken here would be strictly older than either, and each
+  // costs a synchronous mount-table read — /sbin/mount was measured at
+  // 1380 ms with an SMB share mounted (see volume.ts) — paid per
+  // unit-destination pair by a check that writes nothing.
 
   const accumulator = createDiffAccumulator();
 
