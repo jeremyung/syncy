@@ -1,9 +1,9 @@
 import type { Config } from "./config.ts";
 import { ageAgo, bytes, stamp } from "./format.ts";
+import { shelfSummary } from "./shelf.ts";
 import type { Scan, State } from "./state.ts";
 import { findScan, latestScan } from "./state.ts";
 import { evidencePhrase, GLYPH, knownExtras, targetIdentity, type UnitStatus } from "./status.ts";
-import { shelfSummary } from "./tui/Shelf.tsx";
 import { displayWidth, fit, padEnd, padStart, truncate } from "./width.ts";
 
 /**

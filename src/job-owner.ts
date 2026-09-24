@@ -470,3 +470,130 @@ export function acquireJobOwner(
 export function jobOwnerExists(root = stateDir()): boolean {
   return readJobOwner(root) !== undefined;
 }
+
+/** How often a held lease is refreshed; well inside the 30s staleness window. */
+const HEARTBEAT_MS = 10_000;
+
+/** Why work could not take ownership, and the sentence every command says it with. */
+export interface JobRefusal {
+  /** Who holds the lease, or undefined when a rival is mid-acquire. */
+  readonly owner?: JobOwnerRecord;
+  readonly message: string;
+}
+
+/** What `withJobOwnership` hands the work it runs. */
+export interface OwnedJob {
+  readonly lease: JobOwnerLease;
+  /** Aborted by `cancel()`: a signal, a lost heartbeat (by default), or the work itself. */
+  readonly signal: AbortSignal;
+  cancel(): void;
+  /**
+   * Stops refreshing the lease without releasing it. For a screen torn down
+   * while the transfer it started runs on and releases when it finishes.
+   */
+  stopHeartbeat(): void;
+  /**
+   * Stops the heartbeat, unhooks the signals and releases the lease. Safe to
+   * call early and more than once; it also runs when the work settles.
+   */
+  release(): void;
+}
+
+export interface JobOwnershipOptions<R> {
+  /** Called, instead of the work, when another process owns work. */
+  readonly onRefused: (refusal: JobRefusal) => R;
+  /** Keep the lease fresh while the work runs. Defaults to true. */
+  readonly heartbeat?: boolean;
+  /** What a heartbeat that finds the lease lost does. Defaults to `cancel()`. */
+  readonly onLost?: () => void;
+  /** Cancel on SIGINT and SIGTERM, for a command that owns its process. */
+  readonly signals?: boolean;
+}
+
+/**
+ * Runs `work` while holding the job-owner lease, and is the only place that
+ * acquires one.
+ *
+ * The acquire, the "already running work" refusal, the heartbeat, the signal
+ * wiring and the release were written out once per command — four times in
+ * the CLI and twice more in the TUI — each with its own copy of the refusal
+ * message, so the six could drift apart without any of them being wrong on
+ * its own.
+ *
+ * Acquisition happens synchronously, before this returns: a caller that runs
+ * inside a React effect still holds the lease (or has been refused) by the
+ * time the effect's body continues. `work` also starts synchronously, up to
+ * its own first await.
+ */
+export function withJobOwnership<T, R>(
+  actor: JobOwnerRecord["actor"],
+  operation: JobOwnerRecord["operation"],
+  work: (job: OwnedJob) => Promise<T> | T,
+  options: JobOwnershipOptions<R>,
+): Promise<T | R> {
+  const ownership = acquireJobOwner(actor, operation);
+  if (!ownership.acquired) {
+    const owner = ownership.owner;
+    const detail =
+      owner === undefined
+        ? "another Syncy process is starting"
+        : `${owner.operation} started by ${owner.actor}`;
+    return Promise.resolve(
+      options.onRefused({
+        ...(owner === undefined ? {} : { owner }),
+        message: `Syncy is already running work: ${detail}`,
+      }),
+    );
+  }
+
+  const { lease } = ownership;
+  const abort = new AbortController();
+  let cancelling = false;
+  const cancel = (): void => {
+    if (cancelling) return;
+    cancelling = true;
+    abort.abort();
+  };
+  const onLost = options.onLost ?? cancel;
+  const signals = options.signals === true;
+  // A second Ctrl-C still force-quits an interactive session, so SIGINT stays
+  // `once`. SIGTERM stays subscribed: a graceful cancel can take a while
+  // (rsync does not exit instantly), and a second SIGTERM must still reach
+  // this handler rather than falling through to the default disposition and
+  // killing the supervisor before history and the lease are written.
+  if (signals) {
+    process.once("SIGINT", cancel);
+    process.on("SIGTERM", cancel);
+  }
+  let heartbeat: ReturnType<typeof setInterval> | undefined =
+    options.heartbeat === false
+      ? undefined
+      : setInterval(() => {
+          try {
+            lease.heartbeat();
+          } catch {
+            onLost();
+          }
+        }, HEARTBEAT_MS);
+  const stopHeartbeat = (): void => {
+    if (heartbeat === undefined) return;
+    clearInterval(heartbeat);
+    heartbeat = undefined;
+  };
+  const release = (): void => {
+    stopHeartbeat();
+    if (signals) {
+      process.off("SIGINT", cancel);
+      process.off("SIGTERM", cancel);
+    }
+    lease.release();
+  };
+  const job: OwnedJob = { lease, signal: abort.signal, cancel, stopHeartbeat, release };
+  return (async () => {
+    try {
+      return await work(job);
+    } finally {
+      release();
+    }
+  })();
+}

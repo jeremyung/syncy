@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { type CheckRunResult, runCheckQueue } from "../check-runner.ts";
+import { runCheckQueue } from "../check-runner.ts";
 import type { Config } from "../config.ts";
 import type { Fingerprint } from "../fingerprint.ts";
-import { acquireJobOwner } from "../job-owner.ts";
+import { withJobOwnership } from "../job-owner.ts";
 import { presentCheckOutcome } from "../presentation.ts";
 import type { Reachability } from "../scan.ts";
 import type { State } from "../state.ts";
@@ -101,87 +101,83 @@ export function useJob(facts: JobFacts): Job {
         : facts.rows.slice(facts.clampedSelection, facts.clampedSelection + 1);
     if (chosen.length === 0) return;
 
-    const ownership = acquireJobOwner("cli", mode);
-    if (!ownership.acquired) {
-      const owner = ownership.owner;
-      facts.notify(
-        owner === undefined
-          ? "check ignored — another Syncy process is starting"
-          : `check ignored — ${owner.actor} ${owner.operation} is still running`,
-      );
-      return;
-    }
-
-    const startedAt = Date.now();
-    const heartbeat = setInterval(() => {
-      try {
-        ownership.lease.heartbeat();
-      } catch {
-        quitting.abort();
-      }
-    }, 10_000);
-    let result: CheckRunResult;
-    try {
-      result = await runCheckQueue(
-        facts.config,
-        facts.state,
-        mode,
-        chosen.map((row) => ({
-          unit: row.status.unit,
-          bytes: row.size,
-          files: row.files ?? 0,
-          ...(facts.scan?.fingerprints.get(row.status.unit) === undefined
-            ? {}
-            : { fingerprint: facts.scan.fingerprints.get(row.status.unit)! }),
-        })),
-        {
-          signal: quitting.signal,
-          ...(facts.scan?.reach === undefined ? {} : { reachability: facts.scan.reach }),
-          onEvent: (event) => {
-            ownership.lease.observe(event);
-            if (event.type === "job.started") {
-              const batch = event.batch;
-              if (batch === undefined) return;
-              setRunning({
-                unit: event.unit,
-                target: event.target,
-                mode,
-                done: batch.position - 1,
-                total: batch.total,
-                bytesDone: batch.bytesDone,
-                bytesTotal: batch.bytesTotal,
-                startedAt,
-                jobStartedAt: event.at,
-                filesSeen: 0,
-                ...(event.unitSize.files === undefined ? {} : { filesTotal: event.unitSize.files }),
-                unitBytes: event.unitSize.bytes,
-                ...(event.estimatedDurationMs === undefined
-                  ? {}
-                  : { estimatedMs: event.estimatedDurationMs }),
-              });
-            } else if (event.type === "job.progress-observed" && event.filesSeen !== undefined) {
-              // The engine reports every observation; Ink renders at a lower
-              // cadence so a large folder cannot make React the bottleneck.
-              if (event.filesSeen % 25 === 0) {
-                const filesSeen = event.filesSeen;
-                setRunning((current) => (current === null ? null : { ...current, filesSeen }));
+    const result = await withJobOwnership(
+      "cli",
+      mode,
+      (job) => {
+        const startedAt = Date.now();
+        return runCheckQueue(
+          facts.config,
+          facts.state,
+          mode,
+          chosen.map((row) => ({
+            unit: row.status.unit,
+            bytes: row.size,
+            files: row.files ?? 0,
+            ...(facts.scan?.fingerprints.get(row.status.unit) === undefined
+              ? {}
+              : { fingerprint: facts.scan.fingerprints.get(row.status.unit)! }),
+          })),
+          {
+            signal: quitting.signal,
+            ...(facts.scan?.reach === undefined ? {} : { reachability: facts.scan.reach }),
+            onEvent: (event) => {
+              job.lease.observe(event);
+              if (event.type === "job.started") {
+                const batch = event.batch;
+                if (batch === undefined) return;
+                setRunning({
+                  unit: event.unit,
+                  target: event.target,
+                  mode,
+                  done: batch.position - 1,
+                  total: batch.total,
+                  bytesDone: batch.bytesDone,
+                  bytesTotal: batch.bytesTotal,
+                  startedAt,
+                  jobStartedAt: event.at,
+                  filesSeen: 0,
+                  ...(event.unitSize.files === undefined
+                    ? {}
+                    : { filesTotal: event.unitSize.files }),
+                  unitBytes: event.unitSize.bytes,
+                  ...(event.estimatedDurationMs === undefined
+                    ? {}
+                    : { estimatedMs: event.estimatedDurationMs }),
+                });
+              } else if (event.type === "job.progress-observed" && event.filesSeen !== undefined) {
+                // The engine reports every observation; Ink renders at a lower
+                // cadence so a large folder cannot make React the bottleneck.
+                if (event.filesSeen % 25 === 0) {
+                  const filesSeen = event.filesSeen;
+                  setRunning((current) => (current === null ? null : { ...current, filesSeen }));
+                }
+              } else if (event.type === "job.failed") {
+                setBusy(`${event.unit} → ${event.target}: failed — ${event.message}`);
               }
-            } else if (event.type === "job.failed") {
-              setBusy(`${event.unit} → ${event.target}: failed — ${event.message}`);
-            }
+            },
+            // Publish after each durable record so the ledger fills in while a
+            // batch runs, preserving the old hook's visible behaviour.
+            onState: (state) => {
+              facts.setState(state);
+              facts.setNow(Date.now());
+            },
           },
-          // Publish after each durable record so the ledger fills in while a
-          // batch runs, preserving the old hook's visible behaviour.
-          onState: (state) => {
-            facts.setState(state);
-            facts.setNow(Date.now());
-          },
+        );
+      },
+      {
+        onRefused: ({ owner }) => {
+          facts.notify(
+            owner === undefined
+              ? "check ignored — another Syncy process is starting"
+              : `check ignored — ${owner.actor} ${owner.operation} is still running`,
+          );
+          return null;
         },
-      );
-    } finally {
-      clearInterval(heartbeat);
-      ownership.lease.release();
-    }
+        onLost: () => quitting.abort(),
+      },
+    );
+    if (result === null) return;
     setRunning(null);
     if (result.status === "cancelled") return;
     // A check can change what is at the target, and the source may have moved

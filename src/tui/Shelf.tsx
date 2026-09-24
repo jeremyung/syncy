@@ -47,25 +47,6 @@ export function verifiedPhrase(
   return `${bytes(verified)} verified of ${bytes(total)}`;
 }
 
-/** A one-line summary of what the shelf shows, for the line beneath it. */
-export function shelfSummary(states: readonly UnitState[]): string {
-  if (states.length === 0) return "no folders yet";
-  const counts = new Map<UnitState, number>();
-  for (const s of states) counts.set(s, (counts.get(s) ?? 0) + 1);
-  // Ordered worst-last, so the reassuring number is not the final word.
-  const order: readonly UnitState[] = [
-    "verified",
-    "unverified",
-    "behind",
-    "missing",
-    "unchecked",
-    "error",
-  ];
-  const parts = order.filter((s) => (counts.get(s) ?? 0) > 0).map((s) => `${counts.get(s)!} ${s}`);
-  const n = states.length;
-  return `${n} folder${n === 1 ? "" : "s"} · ${parts.join(", ")}`;
-}
-
 export function Shelf({ states, theme }: ShelfProps): React.ReactElement {
   const shown = states.slice(0, MAX_BLOCKS);
   const overflow = states.length - shown.length;
