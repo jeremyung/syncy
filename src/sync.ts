@@ -131,7 +131,16 @@ export function startSync(
 
   const logPath = opts.logPath ?? syncLogPath(unit, target.name, now);
   assertLogPath(logPath);
-  appendHistory({ ts: now, unit, target: target.name, argv, exitCode: null, log: logPath });
+  appendHistory({
+    ts: now,
+    unit,
+    target: target.name,
+    argv,
+    exitCode: null,
+    log: logPath,
+    operation: "sync",
+    outcome: "started",
+  });
 
   // No mkdir: rsync creates the destination itself. syncy writes directly
   // only inside its own state directory (DESIGN.md section 2).
@@ -177,7 +186,9 @@ export function startSync(
         opts.onLine?.(line);
         const item = parseItemizeLine(line);
         if (item !== null) {
-          if (item.kind === "change") transferred += 1;
+          // Directory creation is itemized too, but the UI promises a file
+          // count. Count only file transfers so that word remains true.
+          if (item.kind === "change" && item.flags[1] === "f") transferred += 1;
           opts.onItem?.(item);
         }
       }
@@ -189,11 +200,26 @@ export function startSync(
   };
 
   const done = (async (): Promise<SyncResult> => {
-    const [, stderr, exitCode] = await Promise.all([
-      pump(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    // `pump()` runs the caller's `onLine`/`onItem` callbacks synchronously, and
+    // one of them can throw — most notably `onItem` reporting that the job's
+    // ownership lease was lost. That must not orphan rsync: kill the group the
+    // same way `cancel()` does, *before* anything here waits on the process,
+    // so a thrown callback can never leave a detached rsync writing to the
+    // target with nothing left supervising it.
+    let pumpError: unknown;
+    try {
+      await pump();
+    } catch (error) {
+      pumpError = error;
+      if (proc.exitCode === null) {
+        try {
+          process.kill(-proc.pid, "SIGTERM");
+        } catch {
+          proc.kill();
+        }
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
     const exitedAt = Date.now();
     debug("sync.rsyncExited", {
       msTotal: exitedAt - spawnedAt,
@@ -203,8 +229,40 @@ export function startSync(
     });
     if (stderr !== "") writer.write(stderr);
     await writer.end();
-    appendHistory({ ts: Date.now(), unit, target: target.name, argv, exitCode, log: logPath });
+    // `cancelled` may already be true here: a caller whose onItem throws on
+    // lost ownership is expected to call `cancel()` itself before rethrowing
+    // (see cli.ts and Job.tsx), which is what earns the "cancelled" outcome
+    // rather than "failed". Either way the record names what actually
+    // happened instead of silently matching whatever the exit code implies.
+    const errorDetail =
+      pumpError === undefined
+        ? undefined
+        : pumpError instanceof Error
+          ? pumpError.message
+          : String(pumpError);
+    appendHistory({
+      ts: Date.now(),
+      unit,
+      target: target.name,
+      argv,
+      exitCode,
+      log: logPath,
+      operation: "sync",
+      outcome: cancelled
+        ? "cancelled"
+        : pumpError !== undefined
+          ? "failed"
+          : exitCode === 0 || exitCode === 24
+            ? "completed"
+            : "failed",
+      ...(errorDetail !== undefined
+        ? { detail: errorDetail }
+        : stderr === ""
+          ? {}
+          : { detail: stderr.split("\n")[0] }),
+    });
     debug("sync.teardown", { ms: Date.now() - exitedAt });
+    if (pumpError !== undefined) throw pumpError;
     return { exitCode, cancelled, transferred, stderr };
   })();
 

@@ -4,5 +4,7 @@ syncy
 .test-tmp/
 *.bun-build
 testdata/
+macos/.build/
+/build/
 .impeccable.md
 .DS_Store

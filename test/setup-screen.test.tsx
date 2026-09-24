@@ -86,7 +86,7 @@ describe("the setup screen at rest", () => {
       .frame()
       .split("\n")
       .find((l) => l.includes("nothing can reach verified"))!;
-    expect(line).toContain("add 1 more required target");
+    expect(line).toContain("add 1 more required destination");
     // Scoped to the line: "targets" legitimately appears elsewhere on screen.
     expect(line).not.toContain("targets");
   });

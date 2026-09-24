@@ -301,7 +301,7 @@ describe("the ledger fits the window it is given", () => {
     jobStartedAt: NOW - 164_000,
     filesTotal: 935,
     unitBytes: 13e9,
-    priorMs: 720_000,
+    estimatedMs: 720_000,
   };
   const NOTICE = "[d] ignored — the deep check on photos-2019 is still running";
 
@@ -427,7 +427,7 @@ describe("the folder list shows which folder a check is on", () => {
     jobStartedAt: NOW - 292_000,
     filesTotal: 900,
     unitBytes: 78e9,
-    priorMs: 600_000,
+    estimatedMs: 600_000,
   };
   const lines = (selected: number): string[] => {
     const { lastFrame } = render(

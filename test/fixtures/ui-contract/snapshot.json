@@ -1,0 +1,95 @@
+{
+  "protocolVersion": 1,
+  "type": "snapshot",
+  "generatedAt": 1788681600000,
+  "source": "/Source",
+  "configRevision": "fixture-revision",
+  "targets": [
+    {
+      "name": "Archive",
+      "required": true,
+      "reachability": "ok",
+      "reachabilityPhrase": "connected",
+      "usesSentinel": true
+    },
+    {
+      "name": "Studio NAS",
+      "required": true,
+      "reachability": "mismatch",
+      "reachabilityPhrase": "different volume",
+      "usesSentinel": true
+    }
+  ],
+  "units": [
+    {
+      "unit": "photos",
+      "state": "behind",
+      "reason": "Studio NAS: 2 files not copied yet",
+      "fingerprint": { "nfiles": 12, "bytes": 4096, "maxMtimeNs": "1788681600000000000" },
+      "cells": [
+        {
+          "target": "Archive",
+          "state": "verified",
+          "reason": "deep verified Sep 6",
+          "evidence": {
+            "currentTarget": true,
+            "lastCheck": {
+              "method": "deep",
+              "outcome": "clean",
+              "at": 1788681500000,
+              "durationMs": 42000,
+              "nChanges": 0,
+              "nFiles": 0,
+              "nExtra": 0,
+              "bytesPending": 0
+            },
+            "deepCheck": {
+              "method": "deep",
+              "outcome": "clean",
+              "at": 1788681500000,
+              "durationMs": 42000,
+              "nChanges": 0,
+              "nFiles": 0,
+              "nExtra": 0,
+              "bytesPending": 0
+            }
+          },
+          "nChanges": 0,
+          "nFiles": 0,
+          "nNew": 0,
+          "bytesPending": 0,
+          "nExtra": 0,
+          "needsChecksum": false
+        },
+        {
+          "target": "Studio NAS",
+          "state": "behind",
+          "reason": "2 files not copied yet",
+          "evidence": { "currentTarget": false },
+          "nChanges": 3,
+          "nFiles": 2,
+          "nNew": 3,
+          "bytesPending": 2048,
+          "nExtra": 0,
+          "needsChecksum": false
+        }
+      ]
+    }
+  ],
+  "activeJob": {
+    "actor": "scheduler",
+    "operation": "deep",
+    "startedAt": 1788681600000,
+    "heartbeatAt": 1788681602000,
+    "estimatedDurationMs": 42000,
+    "batchPosition": 2,
+    "batchTotal": 4,
+    "activity": {
+      "unit": "photos",
+      "target": "Archive",
+      "phase": "comparing-content",
+      "at": 1788681602000,
+      "lastItem": "rsync started"
+    }
+  }
+}

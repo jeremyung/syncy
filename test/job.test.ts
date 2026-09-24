@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { recordScan, runCheckQueue } from "../src/check-runner.ts";
+import type { Config } from "../src/config.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
-import { findScan, loadState, type Scan, type State } from "../src/state.ts";
-import { cachedSourceFingerprint, jobsRan, recordScan } from "../src/tui/useJob.ts";
+import { TargetCheckError } from "../src/scan.ts";
+import { EMPTY_STATE, findScan, loadState, type Scan, type State } from "../src/state.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 const FP: Fingerprint = {
@@ -12,41 +14,60 @@ const FP: Fingerprint = {
   complete: true,
 };
 
-describe("queued checks cache source fingerprints", () => {
-  test("walks a unit once even when multiple destinations request it", () => {
-    const calls: string[] = [];
-    const cache = new Map<string, Fingerprint>();
-    const config = { source: "/source", exclude: [".DS_Store"] };
-    const read = (path: string): Fingerprint => {
-      calls.push(path);
-      return FP;
-    };
+const target = {
+  name: "archive",
+  path: "/destination/archive",
+  required: true,
+  sentinel: "archive-id",
+  fstype: "apfs",
+  modifyWindow: 0,
+  flagsDrop: [],
+} as const;
 
-    expect(cachedSourceFingerprint(config, "photos", cache, read)).toBe(FP);
-    expect(cachedSourceFingerprint(config, "photos", cache, read)).toBe(FP);
+const config: Config = {
+  source: "/source",
+  maxVerifyAgeDays: 30,
+  maxQuickAgeDays: 7,
+  minTargets: 1,
+  exclude: [],
+  targets: [target],
+};
 
-    expect(calls).toEqual(["/source/photos"]);
-  });
+describe("queued checks revalidate destinations", () => {
+  test("reports a destination lost at the fresh rsync boundary as skipped", async () => {
+    const history: unknown[] = [];
+    const events: string[] = [];
+    const result = await runCheckQueue(
+      config,
+      EMPTY_STATE,
+      "quick",
+      [{ unit: "photos", bytes: 8, files: 2 }],
+      {
+        dependencies: {
+          reachability: async () => new Map([[target.name, "ok"]]),
+          check: async () => {
+            throw new TargetCheckError(target, "unreachable");
+          },
+          loadState: () => EMPTY_STATE,
+          saveState: () => {
+            throw new Error("a skipped check must record no state");
+          },
+          saveDiff: () => {
+            throw new Error("a skipped check must record no diff");
+          },
+          appendHistory: (entry) => history.push(entry),
+        },
+        onEvent: (event) => events.push(event.type),
+        now: () => 1000,
+      },
+    );
 
-  test("walks different units independently", () => {
-    const calls: string[] = [];
-    const cache = new Map<string, Fingerprint>();
-    const config = { source: "/source", exclude: [] as readonly string[] };
-    const read = (path: string): Fingerprint => {
-      calls.push(path);
-      return FP;
-    };
-
-    cachedSourceFingerprint(config, "a", cache, read);
-    cachedSourceFingerprint(config, "b", cache, read);
-
-    expect(calls).toEqual(["/source/a", "/source/b"]);
-  });
-
-  test("counts a completed unit when a later unit shares its skipped target", () => {
-    // Two queued units produce one displayed target reason. The old target
-    // based subtraction called both units skipped; only the second job was.
-    expect(jobsRan(2, 1)).toBe(1);
+    expect(result.ran).toBe(0);
+    expect(result.skipped).toEqual([{ target: "archive", why: "unreachable" }]);
+    expect(events).toEqual(["job.started", "job.skipped"]);
+    expect(history).toEqual([
+      expect.objectContaining({ target: "archive", outcome: "skipped", exitCode: null }),
+    ]);
   });
 });
 

@@ -8,9 +8,9 @@ import { saveConfig, withoutTarget, withTarget } from "../configio.ts";
 import { bytes } from "../format.ts";
 import { type MountEntry, modifyWindowFor } from "../fstype.ts";
 import { configFile } from "../paths.ts";
+import { presentReachability } from "../presentation.ts";
 import { probeTarget } from "../probe.ts";
 import { identityIsProof, listUnits, type Reachability, targetReachability } from "../scan.ts";
-import { timeoutWord } from "../status.ts";
 import { describeVolume, identify, type MountedVolume, mountedVolumes } from "../volume.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Rule, Screen } from "./Screen.tsx";
@@ -354,7 +354,7 @@ export function Setup({
         return;
       }
       if (config.targets.some((t) => t.name === name)) {
-        setStatus(`there is already a target called ${name}`);
+        setStatus(`there is already a destination called ${name}`);
         return;
       }
       setMode("list");
@@ -441,13 +441,7 @@ export function Setup({
               <Text color={theme.figure}>{padEnd(t.name, 6)}</Text>
               <Text color={theme.ink}>{padEnd(truncatePath(t.path, 44), 46)}</Text>
               <Text color={reach === "ok" ? theme.verified : theme.unchecked}>
-                {reach === "ok"
-                  ? "connected"
-                  : reach === "timeout"
-                    ? // A hang is not a confirmed absence; "not connected"
-                      // would claim more than was established.
-                      timeoutWord()
-                    : "not connected"}
+                {presentReachability(reach).phrase}
               </Text>
             </Box>
             <Text color={theme.dim}>
@@ -496,7 +490,7 @@ export function Setup({
         return (
           <Text color={theme.unverified}>
             {`  nothing can reach verified yet — add ${need} more required ${
-              need === 1 ? "target" : "targets"
+              need === 1 ? "destination" : "destinations"
             }`}
           </Text>
         );

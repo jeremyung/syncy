@@ -29,7 +29,9 @@ jobs:
       # runner, not slip through because the other one passed.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        # The app is written in Swift 6. macos-14 currently exposes a Swift 5
+        # compiler even though the produced bundle still targets macOS 14.
+        os: [ubuntu-latest, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -58,6 +60,13 @@ jobs:
         run: shellcheck scripts/*.sh
       - name: Test
         run: bun test
+      - name: Build Mac app bundle
+        if: runner.os == 'macOS'
+        run: ./scripts/build-mac-app.sh
+      - name: Test Mac contract
+        if: runner.os == 'macOS'
+        working-directory: macos
+        run: swift test
 
   build:
     name: build · ${{ matrix.target }}

@@ -78,6 +78,8 @@ describe("no source file writes outside the allowed modules", () => {
     "scan.ts", // creates the log directory
     "diff.ts", // per-folder difference listings, inside the state directory
     "sync.ts", // the per-transfer log, inside the state directory
+    "job-owner.ts", // ownership leases and their archive, inside the state directory
+    "sync-intent.ts", // one-use reviewed sync intents, inside the state directory
     // Permitted for removeProbeDir only, which refuses any path not named
     // `.syncy-probe`. It performs no writes.
     "probe.ts",

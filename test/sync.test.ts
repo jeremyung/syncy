@@ -318,6 +318,56 @@ describeRsync("startSync", () => {
       expect(readFileSync(full, "utf8"), `${name} is truncated`).toBe(expected);
     }
   });
+
+  /**
+   * `onItem` runs synchronously inside `pump()`'s `for await` over rsync's
+   * stdout. A throw from it (a lost job-ownership lease, most notably) used
+   * to make `Promise.all` in `done` reject immediately: `appendHistory` never
+   * ran, nothing killed the process group, and the caller's rejection reached
+   * the top-level unhandled-rejection handler while the detached rsync kept
+   * running unsupervised. `done` must instead cancel the process group,
+   * record an honest history outcome, and only then rethrow.
+   */
+  test("a callback that throws mid-transfer does not orphan rsync, and still records history", async () => {
+    for (let i = 0; i < 200; i += 1) {
+      write(join(root, `src/photos-2019/extra-${i}.txt`), `payload ${i}`);
+    }
+    let calls = 0;
+    const boom = new Error("job ownership was lost");
+    const h = startSync(config, "photos-2019", target(), {
+      onItem: () => {
+        calls += 1;
+        if (calls === 2) throw boom;
+      },
+    });
+
+    let caught: unknown;
+    try {
+      await h.done;
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(boom);
+    expect(calls).toBeGreaterThanOrEqual(2);
+
+    // No rsync process tied to this fixture may still be running — neither
+    // the leader nor a helper it forked (see the same reasoning for
+    // runRsync/rsync.ts). Give an orphan the moment it would need to still be
+    // visible before asserting it is gone.
+    await new Promise((r) => setTimeout(r, 200));
+    const ps = Bun.spawnSync(["ps", "-eo", "pid,args"]);
+    const survivors = new TextDecoder()
+      .decode(ps.stdout)
+      .split("\n")
+      .filter((line) => line.includes("rsync") && line.includes(root));
+    expect(survivors).toEqual([]);
+
+    const lines = readFileSync(join(root, "state/syncy/history.jsonl"), "utf8").trim().split("\n");
+    const last = JSON.parse(lines[lines.length - 1]!);
+    expect(last.exitCode === null || typeof last.exitCode === "number").toBe(true);
+    expect(["failed", "cancelled"]).toContain(last.outcome);
+    expect(last.detail).toContain("job ownership was lost");
+  });
 });
 
 describeRsync("repairing what a deep verify found", () => {

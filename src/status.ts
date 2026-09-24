@@ -1,6 +1,12 @@
 import type { Config, Target } from "./config.ts";
 import { type Fingerprint, sameFingerprint } from "./fingerprint.ts";
-import { REACHABILITY_TIMEOUT_MS, type Reachability } from "./scan.ts";
+import {
+  presentDifference,
+  presentEvidence,
+  presentReachability,
+  timeoutWord,
+} from "./presentation.ts";
+import type { Reachability } from "./scan.ts";
 import { findScan, latestScan, type Scan, type State } from "./state.ts";
 
 /**
@@ -41,6 +47,8 @@ export interface Cell {
   readonly state: CellState;
   readonly reason: string;
   readonly nChanges: number;
+  /** Changed files only; absent only for older scan records. */
+  readonly nFiles?: number;
   /**
    * Of `nChanges`, the ones that are not at the destination at all.
    *
@@ -121,12 +129,7 @@ export interface CellInput {
  * falls back to the older, weaker phrasing rather than inventing a breakdown.
  */
 export function behindReason(latest: Scan): string {
-  const n = latest.nChanges;
-  const isNew = latest.nNew;
-  if (isNew === undefined) return `${n} files pending`;
-  if (isNew === n) return `${n} files not copied yet`;
-  if (isNew === 0) return `${n} files differ by content`;
-  return `${isNew} not copied, ${n - isNew} differ by content`;
+  return presentDifference(latest).summary;
 }
 
 /**
@@ -167,18 +170,7 @@ export function evidencePhrase(
   fmt: { stamp: (ts: number) => string; ageAgo: (ts: number, now: number) => string },
   extras?: number,
 ): string {
-  if (last === undefined) return "never checked";
-  const parts: string[] = [];
-  if (last.method === "quick") parts.push(`quick check ${fmt.ageAgo(last.ts, now)}`);
-  parts.push(
-    deep !== undefined && deep.outcome === "clean"
-      ? `deep verified ${fmt.stamp(deep.ts)}`
-      : "bytes never read",
-  );
-  // Prefer the caller's count, which comes from the check that could see them.
-  const nExtra = extras ?? last.nExtra;
-  if (nExtra > 0) parts.push(`${nExtra} extra at destination`);
-  return parts.join(" · ");
+  return presentEvidence(deep, last, now, fmt, extras).summary;
 }
 
 export function cellState(input: CellInput): Cell {
@@ -228,7 +220,7 @@ export function cellState(input: CellInput): Cell {
   const extra = { ...base, nExtra: input.knownExtras ?? latest.nExtra };
 
   if (latest.outcome === "error") {
-    return { ...extra, state: "error", reason: "last check failed — rerun with SYNCY_DEBUG=1" };
+    return { ...extra, state: "error", reason: presentDifference(latest).summary };
   }
   if (latest.outcome === "missing") {
     // `base`'s nChanges/bytesPending are 0 — true of a check that itemised
@@ -240,8 +232,9 @@ export function cellState(input: CellInput): Cell {
     return {
       ...extra,
       state: "missing",
-      reason: "never copied",
+      reason: presentDifference(latest).summary,
       nChanges: input.fingerprintNow.nfiles,
+      nFiles: input.fingerprintNow.nfiles,
       // Nothing is at the destination, so every file is a creation.
       nNew: input.fingerprintNow.nfiles,
       bytesPending: input.fingerprintNow.bytes,
@@ -262,6 +255,7 @@ export function cellState(input: CellInput): Cell {
       // this does too.
       reason: behindReason(latest),
       nChanges: latest.nChanges,
+      ...(latest.nFiles === undefined ? {} : { nFiles: latest.nFiles }),
       ...(latest.nNew !== undefined ? { nNew: latest.nNew } : {}),
       bytesPending: latest.bytesPending,
       ...(byChecksum ? { needsChecksum: true } : {}),
@@ -392,24 +386,13 @@ export function evaluateUnit(
 }
 
 /**
- * The one user-visible phrase for a destination that stopped answering.
- *
- * The number is derived from `REACHABILITY_TIMEOUT_MS`, never typed: if the
- * two drifted, the screen would claim a deadline the check did not use.
+ * The one user-visible phrase for a destination that stopped answering. It
+ * lives with the other shared words in presentation.ts; re-exported here
+ * because the terminal screens reach for it by this name.
  */
-export function timeoutWord(ms: number = REACHABILITY_TIMEOUT_MS): string {
-  return `did not answer within ${Math.round(ms / 1000)}s`;
-}
+export { timeoutWord };
 
 /** A reachability status in the words the ledger already uses. */
 export function reachWord(r: Reachability): string {
-  return r === "unreachable"
-    ? "not connected"
-    : r === "timeout"
-      ? timeoutWord()
-      : r === "missing"
-        ? "no sentinel found"
-        : r === "mismatch"
-          ? "different volume"
-          : "ok";
+  return presentReachability(r).phrase;
 }

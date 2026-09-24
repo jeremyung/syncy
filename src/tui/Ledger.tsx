@@ -353,9 +353,13 @@ function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactEl
       ) : props.notice != null ? (
         // While a check runs the notice rides inside Progress as an extra
         // line; at rest there is one line only, so the notice takes it, and
-        // the hint returns when the notice clears. A notice that were set but
-        // never drawn here would be the interface knowing what the user does
-        // not.
+        // the hint returns when the notice clears. That includes a refusal
+        // while idle — a key ignored because another process owns the job —
+        // which outranks the last job's summary for the seconds it shows: the
+        // person just pressed a key and needs to know why nothing happened. A
+        // notice that were set but never drawn here would be the interface
+        // knowing what the user does not. Same colour as the notice inside
+        // Progress, so one kind of message looks one way.
         <Text color={theme.missing}>{"  " + truncate(props.notice, width - 2)}</Text>
       ) : busy === null ? (
         <Text color={theme.dim}>{"  " + hintLine(props.width)}</Text>
