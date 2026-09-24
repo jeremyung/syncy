@@ -5,7 +5,12 @@ import { type Config, ConfigError, loadConfig } from "./config.ts";
 import { EMPTY_CONFIG, saveConfig, withoutTarget, withTarget } from "./configio.ts";
 import { loadDiff } from "./diff.ts";
 import { loadHistorySnapshot } from "./engine-history.ts";
-import { buildEngineActivity, buildEngineSnapshot, configRevision } from "./engine-snapshot.ts";
+import {
+  buildEngineActivity,
+  buildEngineSnapshot,
+  configRevision,
+  evaluateUnitCell,
+} from "./engine-snapshot.ts";
 import { fingerprint } from "./fingerprint.ts";
 import { bytes } from "./format.ts";
 import { preflight } from "./guards.ts";
@@ -480,13 +485,13 @@ async function cmdSyncPreflight(
   targetName: string,
 ): Promise<void> {
   const now = Date.now();
-  const snapshot = await buildEngineSnapshot(config, loadState(), now);
-  const unit = snapshot.units.find((candidate) => candidate.unit === unitName);
-  if (unit === undefined) fail(`no such unit: ${unitName}`);
   const target = config.targets.find((candidate) => candidate.name === targetName);
   if (target === undefined) fail(`no such destination: ${targetName}`);
-  const cell = unit.cells.find((candidate) => candidate.target === targetName);
-  if (cell === undefined) fail(`no evidence for ${unitName} at ${targetName}`);
+  if (!listUnits(config.source).includes(unitName)) fail(`no such unit: ${unitName}`);
+  const state = loadState();
+  const evaluation = await evaluateUnitCell(config, state, unitName, target, now);
+  if (evaluation === undefined) fail(`no evidence for ${unitName} at ${targetName}`);
+  const { unit, cell } = evaluation;
   if (cell.state !== "behind" && cell.state !== "missing") {
     fail(`${unitName} → ${targetName} has no recorded files to sync (${cell.reason})`);
   }
@@ -507,7 +512,7 @@ async function cmdSyncPreflight(
       target: targetName,
       argv,
       fingerprint: unit.fingerprint,
-      configRevision: snapshot.configRevision,
+      configRevision: configRevision(config),
       nChanges: cell.nChanges,
       ...(cell.nFiles === undefined ? {} : { nFiles: cell.nFiles }),
       bytesPending: cell.bytesPending,

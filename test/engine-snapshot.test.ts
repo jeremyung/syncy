@@ -4,7 +4,9 @@ import { ENGINE_PROTOCOL_VERSION } from "../src/engine-protocol.ts";
 import {
   buildEngineActivity,
   buildEngineSnapshot,
+  evaluateUnitCell,
   type SnapshotIo,
+  type UnitCellIo,
 } from "../src/engine-snapshot.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import { EMPTY_STATE, type State } from "../src/state.ts";
@@ -223,5 +225,91 @@ describe("engine snapshot", () => {
     });
 
     expect(snapshot.activeJob).toBeUndefined();
+  });
+});
+
+describe("single-cell evaluation for engine preflight", () => {
+  // Three destinations, and evidence in state that several other units exist
+  // and have been checked, so the assertions below cannot pass by accident —
+  // there is real "everything else" for a full snapshot to have touched.
+  const threeTargets: Config = {
+    ...config,
+    targets: [
+      config.targets[0]!,
+      { ...config.targets[0]!, name: "backup", path: "/backup", identity: "volume-2" },
+      { ...config.targets[0]!, name: "offsite", path: "/offsite", identity: "volume-3" },
+    ],
+  };
+  const othersHaveBeenChecked: State = {
+    version: 1,
+    scans: [
+      {
+        unit: "videos-2020",
+        target: "archive",
+        ts: 1,
+        method: "quick",
+        outcome: "clean",
+        nChanges: 0,
+        nExtra: 0,
+        bytesPending: 0,
+        fingerprint: fp,
+        sentinel: "volume-1",
+      },
+      {
+        unit: "docs-2021",
+        target: "backup",
+        ts: 1,
+        method: "quick",
+        outcome: "clean",
+        nChanges: 0,
+        nExtra: 0,
+        bytesPending: 0,
+        fingerprint: fp,
+        sentinel: "volume-2",
+      },
+    ],
+  };
+
+  function spyIo(): {
+    unitCellIo: UnitCellIo;
+    fingerprintCalls: string[];
+    reachabilityCalls: string[];
+  } {
+    const fingerprintCalls: string[] = [];
+    const reachabilityCalls: string[] = [];
+    const unitCellIo: UnitCellIo = {
+      fingerprint: (root) => {
+        fingerprintCalls.push(root);
+        return fp;
+      },
+      targetReachability: async (target) => {
+        reachabilityCalls.push(target.name);
+        return "ok";
+      },
+    };
+    return { unitCellIo, fingerprintCalls, reachabilityCalls };
+  }
+
+  test("fingerprints only the requested unit and reaches only the requested destination", async () => {
+    const { unitCellIo, fingerprintCalls, reachabilityCalls } = spyIo();
+
+    const result = await evaluateUnitCell(
+      threeTargets,
+      othersHaveBeenChecked,
+      "photos-2019",
+      threeTargets.targets[0]!,
+      1_750_000_001_000,
+      unitCellIo,
+    );
+
+    // `videos-2020` and `docs-2021` exist in state, and `backup`/`offsite` are
+    // configured destinations — a full engine snapshot would fingerprint all
+    // three units and resolve all three destinations. Preflight for one cell
+    // must touch exactly the one unit and the one destination it was asked
+    // about, not build the whole ledger to throw most of it away.
+    expect(fingerprintCalls).toEqual(["/source/photos-2019"]);
+    expect(reachabilityCalls).toEqual(["archive"]);
+    expect(result?.unit.unit).toBe("photos-2019");
+    expect(result?.cell.target).toBe("archive");
   });
 });
