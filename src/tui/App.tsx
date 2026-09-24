@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { Box, Text, useApp, useStdout } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { copyToClipboard } from "../clipboard.ts";
@@ -8,11 +8,19 @@ import { EMPTY as EMPTY_FINGERPRINT, type Fingerprint, fingerprint } from "../fi
 import { bytes } from "../format.ts";
 import { isJobOwnerActive, readJobOwner } from "../job-owner.ts";
 import { timed, timedAsync } from "../log.ts";
-import { allReachability, listUnits, type Reachability } from "../scan.ts";
-import { lastSyncAt, loadState, type State } from "../state.ts";
+import { allReachability, listUnits, REACHABILITY_TIMEOUT_MS, type Reachability } from "../scan.ts";
+import {
+  findScan,
+  lastSyncAt,
+  loadState,
+  openState,
+  type Scan,
+  type State,
+  type StateOpen,
+} from "../state.ts";
 import { type CellState, evaluateUnit, targetIdentity, type UnitState } from "../status.ts";
 import { setTitle, titleFor } from "../title.ts";
-import { padEnd, truncatePath } from "../width.ts";
+import { padEnd, truncate, truncatePath } from "../width.ts";
 import { Confirm } from "./Confirm.tsx";
 import { Diff as DiffScreen } from "./Diff.tsx";
 import { Job } from "./Job.tsx";
@@ -62,7 +70,12 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   const theme = useMemo(() => resolveTheme(), []);
 
   const [config, setConfig] = useState<Config>(initialConfig);
-  const [state, setState] = useState<State>(() => loadState());
+  // The state file opens exactly once, and the open is remembered: a file
+  // that cannot be read is set aside on the way in rather than throwing in
+  // this initializer before the first frame, and the notice below must name
+  // it when the ledger first draws.
+  const [opened] = useState<StateOpen>(() => openState());
+  const [state, setState] = useState<State>(opened.state);
   // Recomputed rather than held, since the setup screen can change the source.
   const units = useMemo(
     () => (config.source === "" ? [] : listUnits(config.source)),
@@ -81,19 +94,45 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
    * is the same failure as a counter frozen at zero: the interface knows
    * something the person watching it does not.
    */
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(() =>
+    opened.setAside === null
+      ? null
+      : `state.json could not be read — set aside as ${basename(opened.setAside)}`,
+  );
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timers = useTimers();
 
-  /** Shows a refusal for a few seconds, replacing any refusal already up. */
+  /**
+   * Shows a refusal for a few seconds, replacing any refusal already up.
+   *
+   * `ms` is for messages that describe something still happening rather than
+   * something that just happened. A wait named for three seconds and then
+   * cleared while the wait continues is the blank screen this line exists to
+   * prevent, so the caller holding the message is the one that knows how long
+   * its subject lasts.
+   */
   const showNotice = useCallback(
-    (text: string) => {
+    (text: string, ms: number = NOTICE_MS) => {
       if (noticeTimer.current !== null) timers.cancel(noticeTimer.current);
       setNotice(text);
-      noticeTimer.current = timers.later(() => setNotice(null), NOTICE_MS);
+      noticeTimer.current = timers.later(() => setNotice(null), ms);
     },
     [timers],
   );
+  // `refresh` keeps a stable identity: its effect re-runs the scan when the
+  // callback changes, and a dependency on `showNotice` — rebuilt every render
+  // because `timers` is a fresh object each time — would re-scan on every
+  // frame. The ref reaches the current helper without adding the dependency.
+  const showNoticeRef = useRef(showNotice);
+  useEffect(() => {
+    showNoticeRef.current = showNotice;
+  }, [showNotice]);
+  // The set-aside notice starts in the state so it is on the first draw; it
+  // then clears on the same timer as any other notice.
+  useEffect(() => {
+    if (opened.setAside === null) return;
+    timers.later(() => setNotice(null), NOTICE_MS);
+  }, [opened, timers]);
   const [showPlan, setShowPlan] = useState(false);
   // Open straight into setup when there is nothing to show yet.
   const [showSetup, setShowSetup] = useState(() => initialConfig.targets.length === 0);
@@ -157,9 +196,34 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     });
     // Reachability may spawn a process (diskutil, mount), so it is awaited off
     // the render path rather than blocking a frame.
-    void timedAsync("refresh.reachability", 250, () => allReachability(config)).then((reach) =>
-      setScan({ fingerprints, reach }),
-    );
+    // A destination that has not answered in time is named on the notice line
+    // while the wait continues, not only after it settles — a wait with no
+    // name on screen reads as a hang.
+    let waiting: string | null = null;
+    void timedAsync("refresh.reachability", 250, () =>
+      allReachability(config, {
+        onWaiting: (name) => {
+          const text = `waiting on ${name}`;
+          waiting = text;
+          // Held for the whole window the destination still has to answer in,
+          // and cleared below when it does. On the default three seconds the
+          // name vanished a second before the read gave up, leaving the wait
+          // it describes on screen as nothing at all.
+          showNoticeRef.current(text, REACHABILITY_TIMEOUT_MS);
+        },
+      }),
+    ).then((reach) => {
+      // Clear the waiting message only if it is still on screen: a refused
+      // keypress may have replaced it while the refresh was in flight, and
+      // that message keeps its own timer.
+      const was = waiting;
+      if (was !== null) setNotice((current) => (current === was ? null : current));
+      setScan({ fingerprints, reach });
+    });
+    // The ledger's records drift too: a check run from another session, or a
+    // scheduled one, writes state.json without telling this interface. [r] is
+    // what re-reads it, so a row cannot keep showing yesterday's verdict.
+    setState(loadState());
     setNow(Date.now());
   }, [units, config]);
 
@@ -608,7 +672,7 @@ export function Help({
       {line("enter", "which files differ, per destination")}
       {line("e", "evidence for the selected folder")}
       {line("f", "cycle the status filter")}
-      {line("r", "re-read the source, recompute sizes")}
+      {line("r", "re-read the source and the ledger")}
       {line(",", "setup — source root and destinations")}
       {line("ctrl-c", "quit — during a transfer, the first press cancels it")}
       <Text> </Text>
@@ -627,6 +691,14 @@ interface EvidenceProps {
   readonly now: number;
   readonly width: number;
   readonly height: number;
+}
+
+/** What the evidence line says for one method: a record, a foreign-volume note, or nothing. */
+function evidenceFor(scan: Scan | undefined, foreignRecords: boolean): string {
+  if (scan !== undefined) return `${scan.outcome} · ${new Date(scan.ts).toLocaleString()}`;
+  return foreignRecords
+    ? "never on this volume · earlier records were made against a different one"
+    : "never";
 }
 
 /**
@@ -655,12 +727,13 @@ export function Evidence({
       </Box>
       <Rule width={width} theme={theme} />
       {config.targets.map((t) => {
-        const deep = state.scans.find(
-          (s) => s.unit === row.status.unit && s.target === t.name && s.method === "deep",
-        );
-        const quick = state.scans.find(
-          (s) => s.unit === row.status.unit && s.target === t.name && s.method === "quick",
-        );
+        const identity = targetIdentity(t);
+        const deep = findScan(state, row.status.unit, t.name, "deep", identity);
+        const quick = findScan(state, row.status.unit, t.name, "quick", identity);
+        const foreignRecords =
+          deep === undefined &&
+          quick === undefined &&
+          state.scans.some((s) => s.unit === row.status.unit && s.target === t.name);
         const cell = row.status.cells.find((c) => c.target === t.name);
         return (
           <Box key={t.name} flexDirection="column">
@@ -673,10 +746,10 @@ export function Evidence({
             </Box>
             <Text color={theme.dim}>{`      path        ${truncatePath(t.path, width - 18)}`}</Text>
             <Text color={theme.dim}>
-              {`      deep        ${deep === undefined ? "never" : `${deep.outcome} · ${new Date(deep.ts).toLocaleString()}`}`}
+              {`      deep        ${truncate(evidenceFor(deep, foreignRecords), width - 18)}`}
             </Text>
             <Text color={theme.dim}>
-              {`      quick       ${quick === undefined ? "never" : `${quick.outcome} · ${new Date(quick.ts).toLocaleString()}`}`}
+              {`      quick       ${truncate(evidenceFor(quick, foreignRecords), width - 18)}`}
             </Text>
             <Text color={theme.dim}>{`      required    ${t.required ? "yes" : "no"}`}</Text>
             <Text> </Text>

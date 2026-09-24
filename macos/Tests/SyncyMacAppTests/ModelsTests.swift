@@ -132,6 +132,15 @@ final class ModelsTests: XCTestCase {
     XCTAssertEqual(Reachability.missing.ledgerPhrase, "no sentinel found")
     XCTAssertEqual(Reachability.mismatch.ledgerPhrase, "different volume")
     XCTAssertEqual(Reachability.unreachable.ledgerPhrase, "not connected")
+    XCTAssertEqual(Reachability.timeout.ledgerPhrase, "did not answer in time")
+  }
+
+  func testTimedOutDestinationDecodesAsItsOwnState() throws {
+    let json =
+      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[{"name":"nas","required":true,"reachability":"timeout","reachabilityPhrase":"did not answer within 5s","usesSentinel":false}],"units":[]}"#
+    let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
+    XCTAssertEqual(snapshot.targets.first?.reachability, .timeout)
+    XCTAssertEqual(snapshot.targets.first?.reachabilityPhrase, "did not answer within 5s")
   }
 
   func testDisconnectedClientCannotProduceEvidence() async {

@@ -1,12 +1,18 @@
 import { type Dirent, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { access } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config, Target } from "./config.ts";
 import { buildDiffFromAccumulator, createDiffAccumulator, type Diff } from "./diff.ts";
-import { type Fingerprint, fingerprint } from "./fingerprint.ts";
+import { type Fingerprint, fingerprint, fingerprintAsync } from "./fingerprint.ts";
 import { isNew, parseItemizeLine } from "./itemize.ts";
 import { logDir } from "./paths.ts";
 import { argvFor, type Mode, RsyncError, runRsync } from "./rsync.ts";
-import { checkSentinel, readSentinel, type SentinelStatus } from "./sentinel.ts";
+import {
+  checkSentinel,
+  checkSentinelAsync,
+  readSentinel,
+  type SentinelStatus,
+} from "./sentinel.ts";
 import type { Method, Scan } from "./state.ts";
 import { checkVolume, identifySync } from "./volume.ts";
 
@@ -24,7 +30,39 @@ export function listUnits(source: string): string[] {
     .sort((a, b) => a.localeCompare(b));
 }
 
-export type Reachability = SentinelStatus | "unreachable";
+export type Reachability = SentinelStatus | "unreachable" | "timeout";
+
+/** How long a destination gets to answer a status-path read before it is reported as `timeout`. */
+export const REACHABILITY_TIMEOUT_MS = 5_000;
+
+/** How long before a destination that has not answered is named on screen. */
+export const SLOW_MS = 1_000;
+
+export interface ReachabilityOptions {
+  /** Overridden by tests; defaults to REACHABILITY_TIMEOUT_MS. */
+  readonly timeoutMs?: number;
+  /** Seam: how the destination path is touched. Tests stall this. Resolves true if the path exists. */
+  readonly probe?: (path: string) => Promise<boolean>;
+  /** Fired when a destination has not answered within `slowMs`, so the screen can name it. */
+  readonly onWaiting?: (targetName: string) => void;
+  /** Overridden by tests; defaults to SLOW_MS. */
+  readonly slowMs?: number;
+}
+
+/**
+ * The destination-path touch of a status check, off the event loop.
+ *
+ * Resolves true if the path exists. A failed access is the same answer
+ * `existsSync` would have given — false — not an error.
+ */
+async function defaultProbe(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Reachability is decided by the destination proving it is itself, never by the
@@ -62,21 +100,84 @@ export type Reachability = SentinelStatus | "unreachable";
  * `syncy sentinel` is how someone upgrades it. What this must never do is
  * silently treat it as equal to a uuid, which is what it used to do.
  */
-export async function targetReachability(target: Target): Promise<Reachability> {
-  if (target.identity !== undefined && target.identity !== "") {
-    // Existence first, for the reason spelled out in `observeTargetSync`: an
-    // absent path resolves to the volume owning its mount point, so asking
-    // "is this the right volume?" of a share that is not mounted answers
-    // "wrong drive" when the truth is "no drive".
-    if (!existsSync(target.path)) return "unreachable";
-    const v = await checkVolume(target.path, target.identity);
-    if (v !== "ok") return v === "unreachable" ? "unreachable" : "mismatch";
-    if (identityIsProof(target) || target.sentinel === undefined) return "ok";
-    return checkSentinel(target.path, target.sentinel);
+/**
+ * The destination-touching reads in this function are async and bounded, and
+ * both facts exist for the same reason: the destination can be a network
+ * mount that has died without unmounting. `existsSync` and `readFileSync` on
+ * such a path block the calling thread until the kernel gives up — a minute
+ * or more on macOS SMB — and on the event loop that is the whole process:
+ * Ink stops painting, the heartbeat stops, and an abort signal sits unread
+ * until the kernel answers.
+ *
+ * What this fixes. The reads go through the runtime's async file IO —
+ * node:fs/promises for the path probe, Bun.file for the sentinel — so a
+ * stalled read blocks a worker thread instead of the event loop. Ink keeps
+ * painting and the abort signal is still read, and `within` hands back
+ * "timeout" after REACHABILITY_TIMEOUT_MS instead of waiting for the kernel.
+ *
+ * What it does not. The timeout abandons the stalled syscall; it does not
+ * cancel it. The worker thread stays blocked in the kernel until the kernel
+ * gives up, and the pool of such threads is small (libuv's default is four),
+ * so several hung destinations can hold it and starve other filesystem work
+ * in this process. The abandoned read also keeps the process alive until the
+ * kernel answers — measured against a blocking FIFO — so quitting syncy
+ * while a mount is dead still waits for the kernel. A bounded, painted
+ * answer over an unbounded, silent one: that is the trade, and it is not a
+ * claim that the hang was resolved.
+ */
+export async function targetReachability(
+  target: Target,
+  opts?: ReachabilityOptions,
+): Promise<Reachability> {
+  const timeoutMs = opts?.timeoutMs ?? REACHABILITY_TIMEOUT_MS;
+  const probe = opts?.probe ?? defaultProbe;
+
+  // The one deadline for every destination-touching read. `undefined` is the
+  // timeout winning; a read either settles with its own value or is
+  // abandoned mid-call.
+  const within = <T>(p: Promise<T>): Promise<T | undefined> =>
+    new Promise<T | undefined>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(undefined), timeoutMs);
+      void p.then(
+        (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    });
+
+  // A destination that has not answered in time is named on screen instead
+  // of left to look dead. Cleared on every exit, so a resolved check leaves
+  // no pending timer behind.
+  const waitTimer = setTimeout(() => opts?.onWaiting?.(target.name), opts?.slowMs ?? SLOW_MS);
+  try {
+    if (target.identity !== undefined && target.identity !== "") {
+      // Existence first, for the reason spelled out in `observeTargetSync`: an
+      // absent path resolves to the volume owning its mount point, so asking
+      // "is this the right volume?" of a share that is not mounted answers
+      // "wrong drive" when the truth is "no drive".
+      const exists = await within(probe(target.path));
+      if (exists === undefined) return "timeout";
+      if (!exists) return "unreachable";
+      const v = await checkVolume(target.path, target.identity);
+      if (v !== "ok") return v === "unreachable" ? "unreachable" : "mismatch";
+      if (identityIsProof(target) || target.sentinel === undefined) return "ok";
+      const s = await within(checkSentinelAsync(target.path, target.sentinel));
+      return s === undefined ? "timeout" : s;
+    }
+    const exists = await within(probe(target.path));
+    if (exists === undefined) return "timeout";
+    if (!exists) return "unreachable";
+    if (target.sentinel === undefined) return "missing";
+    const s = await within(checkSentinelAsync(target.path, target.sentinel));
+    return s === undefined ? "timeout" : s;
+  } finally {
+    clearTimeout(waitTimer);
   }
-  if (!existsSync(target.path)) return "unreachable";
-  if (target.sentinel === undefined) return "missing";
-  return checkSentinel(target.path, target.sentinel);
 }
 
 /**
@@ -173,9 +274,14 @@ export function identityIsProof(target: Target): boolean {
   return !id.startsWith("/dev/");
 }
 
-export async function allReachability(config: Config): Promise<Map<string, Reachability>> {
+export async function allReachability(
+  config: Config,
+  opts?: ReachabilityOptions,
+): Promise<Map<string, Reachability>> {
+  // Promise.all, not a loop: one destination that stops answering must not
+  // serialise the rest — the timeout bounds each check individually.
   const entries = await Promise.all(
-    config.targets.map(async (t) => [t.name, await targetReachability(t)] as const),
+    config.targets.map(async (t) => [t.name, await targetReachability(t, opts)] as const),
   );
   return new Map(entries);
 }
@@ -248,12 +354,20 @@ export async function checkUnit(
   opts.onPhase?.("inspecting-source");
   const fp = opts.fingerprint ?? fingerprint(join(config.source, unit), config.exclude);
 
-  // The reachability map belongs to the ledger refresh and may be stale by
-  // the time this queued check gets its turn. Establish that the destination
-  // is still the recorded volume before even reading its unit. This also keeps
-  // an unmounted path from being mistaken for a legitimate "missing" folder.
-  const initialObservation = observeTargetSync(target);
-  assertTargetReachable(target, initialObservation);
+  // There is deliberately no observation at the entry of the check, even
+  // though the reachability map belongs to the ledger refresh and may be
+  // stale by the time this queued check gets its turn. Both exits re-observe
+  // the destination uncached at the moment they decide, and each asserts
+  // before it produces a record:
+  //   unit absent  -> observed and asserted right after the existence check,
+  //                   so an unmounted destination throws there instead of
+  //                   recording "missing";
+  //   unit present -> observed and asserted as the last destination operation
+  //                   before runRsync, so nothing is spawned against it.
+  // An observation taken here would be strictly older than either, and each
+  // costs a synchronous mount-table read — /sbin/mount was measured at
+  // 1380 ms with an SMB share mounted (see volume.ts) — paid per
+  // unit-destination pair by a check that writes nothing.
 
   const accumulator = createDiffAccumulator();
 
@@ -365,8 +479,16 @@ export async function checkUnit(
 
   // After rsync, not before: the walk is read-only and cheap next to a check,
   // but doing it first would delay the run for a number only shown afterwards.
+  // It is the async walk, because a destination of a hundred thousand files
+  // over SMB takes minutes to lstat, and a synchronous walk would hold the
+  // event loop the whole time — no paint, and the abort signal unread.
   opts.onPhase?.("fingerprinting-destination");
-  const targetFingerprint = fingerprint(join(target.path, unit), config.exclude);
+  const targetFingerprint = await fingerprintAsync(
+    join(target.path, unit),
+    config.exclude,
+    undefined,
+    opts.signal,
+  );
   const diff = buildDiffFromAccumulator(unit, target.name, methodOf(mode), accumulator, {
     ts: now,
     source: fp,

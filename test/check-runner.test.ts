@@ -3,7 +3,7 @@ import { type CheckRunnerDependencies, runCheckQueue } from "../src/check-runner
 import type { Config, Target } from "../src/config.ts";
 import type { JobEvent } from "../src/engine-protocol.ts";
 import type { CheckResult } from "../src/scan.ts";
-import { EMPTY_STATE } from "../src/state.ts";
+import { EMPTY_STATE, type State } from "../src/state.ts";
 
 const targets: readonly Target[] = [
   {
@@ -82,6 +82,8 @@ function dependencies(
     return checked(unit, target.name, mode);
   },
 ): CheckRunnerDependencies {
+  // The state file, in memory: every record merges onto what was last saved.
+  let disk: State = EMPTY_STATE;
   return {
     reachability: async () =>
       new Map([
@@ -89,7 +91,11 @@ function dependencies(
         ["offline", "unreachable"],
       ]),
     check,
-    saveState: () => calls.push("state"),
+    loadState: () => disk,
+    saveState: (state) => {
+      calls.push("state");
+      disk = state;
+    },
     saveDiff: () => calls.push("diff"),
     appendHistory: () => calls.push("history"),
   };
@@ -252,6 +258,42 @@ describe("the UI-independent check runner", () => {
       },
     );
     expect(order).toEqual(["recording", "state", "diff", "history", "published", "completed"]);
+  });
+
+  test("records onto the state file as it is now, not the copy the run started with", async () => {
+    // Another writer recorded a deep `behind` after this run was handed its
+    // state. Merging onto the handed copy would write that record away and
+    // leave the row reading as if the deep check had never happened.
+    const foreign = {
+      ...checked("one", "archive", "deep").scan,
+      outcome: "behind" as const,
+      nChanges: 4,
+      ts: 1500,
+    };
+    let disk: State = { version: 1, scans: [foreign] };
+    const published: State[] = [];
+    const result = await runCheckQueue(
+      { ...config, targets: [targets[0]!] },
+      EMPTY_STATE,
+      "quick",
+      [{ unit: "one", bytes: 1, files: 1 }],
+      {
+        dependencies: {
+          ...dependencies([]),
+          reachability: async () => new Map([["archive", "ok"]]),
+          loadState: () => disk,
+          saveState: (state) => {
+            disk = state;
+          },
+        },
+        onState: (state) => published.push(state),
+      },
+    );
+    const outcomes = (state: State) =>
+      state.scans.map((scan) => `${scan.method}:${scan.outcome}`).sort();
+    expect(outcomes(disk)).toEqual(["deep:behind", "quick:clean"]);
+    expect(outcomes(result.state)).toEqual(["deep:behind", "quick:clean"]);
+    expect(published.map(outcomes)).toEqual([["deep:behind", "quick:clean"]]);
   });
 
   test("an abort records no verdict and never drains the remaining queue", async () => {

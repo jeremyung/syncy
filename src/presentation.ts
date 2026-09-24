@@ -1,5 +1,5 @@
 import type { Diff, DiffKind } from "./diff.ts";
-import type { Reachability } from "./scan.ts";
+import { REACHABILITY_TIMEOUT_MS, type Reachability } from "./scan.ts";
 import type { Scan } from "./state.ts";
 
 /**
@@ -14,6 +14,16 @@ export interface ReachabilityPresentation {
   readonly phrase: string;
 }
 
+/**
+ * The one user-visible phrase for a destination that stopped answering.
+ *
+ * The number is derived from `REACHABILITY_TIMEOUT_MS`, never typed: if the
+ * two drifted, the screen would claim a deadline the check did not use.
+ */
+export function timeoutWord(ms: number = REACHABILITY_TIMEOUT_MS): string {
+  return `did not answer within ${Math.round(ms / 1000)}s`;
+}
+
 /** The canonical destination words used by the ledger and job results. */
 export function presentReachability(reachability: Reachability): ReachabilityPresentation {
   return {
@@ -21,11 +31,15 @@ export function presentReachability(reachability: Reachability): ReachabilityPre
     phrase:
       reachability === "unreachable"
         ? "not connected"
-        : reachability === "missing"
-          ? "no sentinel found"
-          : reachability === "mismatch"
-            ? "different volume"
-            : "connected",
+        : reachability === "timeout"
+          ? // A hang is not a confirmed absence; "not connected" would claim
+            // more than was established.
+            timeoutWord()
+          : reachability === "missing"
+            ? "no sentinel found"
+            : reachability === "mismatch"
+              ? "different volume"
+              : "connected",
   };
 }
 

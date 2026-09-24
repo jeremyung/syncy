@@ -115,7 +115,7 @@ export function Ledger(props: LedgerProps): React.ReactElement {
   // What the screen is for, and cannot give up. Counted against `Footer`'s
   // actual output rather than from memory: the summary row, the blank beneath
   // it, and then either the two progress lines plus any refusal notice, or the
-  // single hint/busy line.
+  // single notice/hint/busy line.
   const core =
     2 + (props.running != null ? progressLines(props.running, props.now, props.notice != null) : 1);
 
@@ -351,12 +351,16 @@ function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactEl
           notice={props.notice ?? null}
         />
       ) : props.notice != null ? (
-        // A refusal while idle — a key ignored because another process owns
-        // the job — takes the hint line, since nothing else is on screen to
-        // carry it. It outranks the last job's summary for the seconds it
-        // shows: the person just pressed a key and needs to know why nothing
-        // happened.
-        <Text color={theme.unverified}>{"  " + truncate(props.notice, props.width - 2)}</Text>
+        // While a check runs the notice rides inside Progress as an extra
+        // line; at rest there is one line only, so the notice takes it, and
+        // the hint returns when the notice clears. That includes a refusal
+        // while idle — a key ignored because another process owns the job —
+        // which outranks the last job's summary for the seconds it shows: the
+        // person just pressed a key and needs to know why nothing happened. A
+        // notice that were set but never drawn here would be the interface
+        // knowing what the user does not. Same colour as the notice inside
+        // Progress, so one kind of message looks one way.
+        <Text color={theme.missing}>{"  " + truncate(props.notice, width - 2)}</Text>
       ) : busy === null ? (
         <Text color={theme.dim}>{"  " + hintLine(props.width)}</Text>
       ) : (

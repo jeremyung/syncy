@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { recheckAfterSync, runCheckQueue } from "./check-runner.ts";
 import { type Config, ConfigError, loadConfig } from "./config.ts";
 import { EMPTY_CONFIG, saveConfig, withoutTarget, withTarget } from "./configio.ts";
@@ -17,8 +17,8 @@ import { type LedgerRow, renderLedger } from "./render.ts";
 import { argvFor, checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
 import { allReachability, listUnits } from "./scan.ts";
 import { writeSentinel } from "./sentinel.ts";
-import { appendHistory, loadState, type State } from "./state.ts";
-import { evaluateUnit } from "./status.ts";
+import { appendHistory, loadState, openState, type State } from "./state.ts";
+import { evaluateUnit, timeoutWord } from "./status.ts";
 import { startSync } from "./sync.ts";
 import { claimSyncIntent, saveSyncIntent } from "./sync-intent.ts";
 import { startTui } from "./tui/index.tsx";
@@ -141,7 +141,10 @@ async function cmdCheck(
           if (event.type === "job.started") {
             process.stdout.write(`  ${event.unit} → ${event.target}: ${mode}…`);
           } else if (event.type === "job.skipped") {
-            process.stdout.write(` skipped (${event.reachability})\n`);
+            // The raw member would print "timeout", a value rather than a fact;
+            // the ledger says the same condition in the same words.
+            const why = event.reachability === "timeout" ? timeoutWord() : event.reachability;
+            process.stdout.write(` skipped (${why})\n`);
           } else if (event.type === "job.completed" && event.operation !== "sync") {
             const detail =
               event.result.outcome === "clean"
@@ -208,8 +211,11 @@ async function cmdDoctor(config: Config): Promise<void> {
   for (const t of config.targets) {
     const s = reach.get(t.name) ?? "unreachable";
     if (s === "mismatch") mismatched = true;
+    // A timeout would print as the raw value, which names nothing; the doctor
+    // says the condition in the same words the ledger does.
+    const shown = s === "timeout" ? timeoutWord() : s;
     process.stdout.write(
-      `  ${t.name.padEnd(12)} ${s === "ok" ? "ok" : "FAIL"}   ${t.path} (${s})\n`,
+      `  ${t.name.padEnd(12)} ${s === "ok" ? "ok" : "FAIL"}   ${t.path} (${shown})\n`,
     );
   }
   if (mismatched) {
@@ -224,7 +230,14 @@ async function cmdDoctor(config: Config): Promise<void> {
         "  fresh quick check at minimum and a deep verify to reach verified.\n",
     );
   }
-  process.stdout.write(`  state        ${stateFile()}\n`);
+  // The state line says what opening the record actually produced: a file
+  // syncy cannot read is set aside on the way in, and the doctor names it
+  // rather than showing a path that no longer holds the record.
+  const opened = openState();
+  process.stdout.write(
+    `  state        ${opened.setAside === null ? "ok     " : "FAIL   "}${stateFile()}` +
+      `${opened.setAside === null ? "" : ` (unreadable; set aside as ${basename(opened.setAside)})`}\n`,
+  );
 }
 
 async function cmdEngine(

@@ -226,6 +226,29 @@ describe("engine JSON Lines protocol", () => {
     expect(() => parseEngineMessage(bad)).toThrow(/cannot be "ok"/);
   });
 
+  test("carries a destination that did not answer as its own value, not as absent", () => {
+    // The engine reports a hung mount as `timeout`; a decoder that refused it
+    // would leave a client blank at exactly the moment it needs to explain.
+    const skipped = JSON.stringify({
+      ...started,
+      type: "job.skipped",
+      reachability: "timeout",
+      reason: "did not answer within 5s",
+    });
+    expect(parseEngineMessage(skipped)).toMatchObject({ reachability: "timeout" });
+    const hung = {
+      ...snapshot,
+      targets: [
+        {
+          ...snapshot.targets[0]!,
+          reachability: "timeout" as const,
+          reachabilityPhrase: "did not answer within 5s",
+        },
+      ],
+    };
+    expect(parseEngineMessage(serializeEngineMessage(hung))).toEqual(hung);
+  });
+
   test("rejects progress with no observable measurement", () => {
     const bad = JSON.stringify({ ...started, type: "job.progress-observed" });
     expect(() => parseEngineMessage(bad)).toThrow(/must contain an observation/);

@@ -3,9 +3,12 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Config, parseConfig, type Target } from "../src/config.ts";
 import { MAX_ENTRIES } from "../src/diff.ts";
-import { checkUnit } from "../src/scan.ts";
+import { checkBuild, DEFAULT_RSYNC } from "../src/rsync.ts";
+import { checkUnit, observeTargetSync } from "../src/scan.ts";
 import { SENTINEL_NAME } from "../src/sentinel.ts";
-import { appendHistory } from "../src/state.ts";
+import { appendHistory, type Scan } from "../src/state.ts";
+import { type SyncResult, startSync } from "../src/sync.ts";
+import { forgetMountTable, identifySync, mountTableReads } from "../src/volume.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 /**
@@ -18,6 +21,9 @@ import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
  * what the test says, and a small, static fixture cannot be relied on to make
  * the real binary return 23 or 24 on demand.
  */
+
+const build = await checkBuild(DEFAULT_RSYNC);
+const describeRsync = build.ok ? describe : describe.skip;
 
 let root: string;
 beforeEach(() => {
@@ -148,5 +154,142 @@ describe("itemize output is accumulated with bounded memory", () => {
     expect(result.diff.totals?.new).toBe(total);
     expect(result.scan.nChanges).toBe(total);
     expect(result).not.toHaveProperty("items");
+  });
+});
+
+/** How many times `fn` caused the mount table to be read from the system. */
+async function reads(fn: () => Promise<unknown>): Promise<number> {
+  const before = mountTableReads();
+  await fn();
+  return mountTableReads() - before;
+}
+
+/**
+ * A destination wired the way a real one is: the identity the OS actually
+ * reports for the fixture path, resolved at test time rather than invented,
+ * plus a sentinel at the target root for machines whose identity is only a
+ * device path.
+ *
+ * Both matters. A wrong identity makes the observation come back `mismatch`
+ * and the check throw; and a target that carries only a sentinel takes the
+ * readSentinel branch and reads no mount table at all, so a test built on one
+ * would count zero reads and pass vacuously.
+ */
+function realTarget(): { config: Config; target: Target; id: string } {
+  const src = join(root, "src");
+  const dst = join(root, "dst");
+  mkdirSync(join(src, "photos"), { recursive: true });
+  writeFileSync(join(src, "photos/a.txt"), "aaa");
+  mkdirSync(dst, { recursive: true });
+  writeFileSync(join(dst, SENTINEL_NAME), "s1\n");
+
+  const found = identifySync(dst);
+  if (found === null || found.id === "") {
+    throw new Error("cannot identify the fixture volume");
+  }
+
+  const config = parseConfig(`
+source = "${src}"
+
+[[target]]
+name = "ext"
+path = "${dst}"
+identity = "${found.id}"
+identity_kind = "${found.kind}"
+sentinel = "s1"
+`);
+  return { config, target: config.targets[0]!, id: found.id };
+}
+
+/** Copies a unit to the destination with real rsync, the way a sync would. */
+async function replicate(config: Config, target: Target, unit: string): Promise<void> {
+  const dst = join(target.path, unit);
+  mkdirSync(dst, { recursive: true });
+  const proc = Bun.spawn([DEFAULT_RSYNC, "-a", join(config.source, unit) + "/", dst + "/"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await proc.exited;
+}
+
+/**
+ * One uncached destination observation per decision point, and nowhere else.
+ *
+ * checkUnit used to take two — one at entry, one at its real decision point.
+ * The entry one was strictly older than the observation that decided, so it
+ * bought nothing, and it cost a synchronous mount-table read (measured at
+ * 1380 ms per /sbin/mount with a share mounted) for every unit-destination
+ * pair of a job that writes nothing. It was removed: the missing-folder path
+ * now observes right after the existence check, and the rsync path observes
+ * as the last destination operation before runRsync. startSync still takes
+ * its own observation immediately before the only spawn that can write.
+ *
+ * The count is mount-table reads, not spawns: on Linux the table is a file,
+ * so a spawn count says 1 on macOS and 0 here for the same correct behaviour.
+ *
+ * Every assertion below runs against a destination that carries the identity
+ * the OS reports for the fixture path (realTarget): a destination carrying
+ * only a sentinel reads no mount table at all, and a test built on one would
+ * assert 0 === 1, or pass vacuously.
+ */
+describeRsync("every decision point pays for exactly one destination observation", () => {
+  test("one uncached observation is exactly one mount-table read", async () => {
+    // The arithmetic the toBe(1) below rests on: before the change a job took
+    // an entry observation in addition to the one at its decision point, so
+    // the same job read the table twice and toBe(1) would have been red.
+    const { target } = realTarget();
+    forgetMountTable();
+    const n = await reads(() => Promise.resolve(observeTargetSync(target)));
+    expect(n).toBe(1);
+  });
+
+  test("the missing-folder path reads the table once", async () => {
+    const { config, target, id } = realTarget();
+    forgetMountTable();
+    let scan: Scan | undefined;
+    const n = await reads(async () => {
+      scan = (await checkUnit(config, "photos", target, "quick")).scan;
+    });
+    expect(n).toBe(1);
+    expect(scan?.outcome).toBe("missing");
+    // The field is named sentinel, but on an identity target it carries the
+    // identity actually observed for this invocation — the OS's answer for
+    // the fixture path, not a value read back from the config.
+    expect(scan?.sentinel).toBe(id);
+  });
+
+  test("the rsync path reads the table once", async () => {
+    const { config, target, id } = realTarget();
+    await replicate(config, target, "photos");
+    forgetMountTable();
+    let scan: Scan | undefined;
+    const n = await reads(async () => {
+      scan = (await checkUnit(config, "photos", target, "quick")).scan;
+    });
+    expect(n).toBe(1);
+    expect(scan?.outcome).toBe("clean");
+    expect(scan?.sentinel).toBe(id);
+  });
+
+  test("startSync takes its own read at the write boundary", async () => {
+    // Without the observation this call would read the table zero times and
+    // the assertion below would go red: that read is what stands between the
+    // spawn and the destination.
+    const { config, target } = realTarget();
+    const prev = process.env["XDG_STATE_HOME"];
+    process.env["XDG_STATE_HOME"] = join(root, "state");
+    let result: SyncResult | undefined;
+    try {
+      forgetMountTable();
+      const n = await reads(async () => {
+        result = await startSync(config, "photos", target).done;
+      });
+      expect(n).toBeGreaterThanOrEqual(1);
+      expect(result?.exitCode).toBe(0);
+      expect(readFileSync(join(target.path, "photos/a.txt"), "utf8")).toBe("aaa");
+    } finally {
+      if (prev === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = prev;
+    }
   });
 });

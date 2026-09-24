@@ -1,10 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { render } from "ink-testing-library";
 import { type Config, parseConfig } from "../src/config.ts";
+import { fingerprint } from "../src/fingerprint.ts";
 import { acquireJobOwner } from "../src/job-owner.ts";
+import { stateFile } from "../src/paths.ts";
 import { SENTINEL_NAME, writeSentinel } from "../src/sentinel.ts";
+import {
+  EMPTY_STATE,
+  findScan,
+  loadState,
+  type Scan,
+  saveState,
+  upsertScan,
+} from "../src/state.ts";
 import { App } from "../src/tui/App.tsx";
 import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
 
@@ -19,6 +29,20 @@ import { makeFixtureDir, removeFixtureDir, waitFor } from "./helpers.ts";
 const ESC = "\u001B";
 const plain = (s: string | undefined): string => (s ?? "").replace(/\[[0-9;]*m/g, "");
 const tick = (ms = 120): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * One unit's ledger row.
+ *
+ * Asserting against the whole frame is wrong: the legend line always contains
+ * every state word, and the footer phrases its own count of verified bytes, so
+ * `frame.includes("verified")` is true even when nothing is verified. Leader
+ * dots identify a data row.
+ */
+function rowFor(frame: string, unit: string): string {
+  const line = frame.split("\n").find((l) => l.includes(unit) && l.includes("....."));
+  if (line === undefined) throw new Error(`no ledger row for ${unit} in:\n${frame}`);
+  return line;
+}
 
 let root: string;
 let config: Config;
@@ -314,6 +338,116 @@ describe("a check that could not run says so", () => {
     expect(frame).toMatch(/nothing checked|skipped/);
     // And it must not claim to have finished a check it never ran.
     expect(frame).not.toMatch(/deep check finished · \d+ folders/);
+    s.unmount();
+  });
+});
+
+describe("a finished check does not resurrect superseded evidence", () => {
+  /**
+   * The ledger used to hold state.json in a useState initializer, and a check
+   * run accumulated onto that copy, writing the whole thing back after every
+   * job. An overnight deep `behind` recorded on disk was silently replaced by
+   * the morning's quick `clean` applied to the stale copy, and the row read
+   * `verified`. Losing evidence would be conservative; resurrecting
+   * superseded evidence is not.
+   *
+   * So: the pre-state is a deep `clean` the row reads as `verified`; the
+   * newer deep `behind` is then written into state.json behind the
+   * interface's back, the way another session's overnight check would have;
+   * and the morning's quick check is driven with `q`. The wait is on the
+   * recorded scan in state.json, which cannot be stale — the row still shows
+   * the previous pass's verdict while a check runs, so a text condition
+   * would be satisfied instantly and the next keypress could land mid-check.
+   */
+  test("an overnight deep behind survives the morning's quick check", async () => {
+    // The destination matches the source, timestamps preserved so rsync's
+    // size-and-date comparison finds nothing to do: the quick check is a
+    // real `clean` — exactly the record that used to clobber the deep one.
+    cpSync(join(root, "src/photos-2019"), join(root, "dst/photos-2019"), {
+      recursive: true,
+      preserveTimestamps: true,
+    });
+
+    // On disk before the interface opens: a deep verify an hour ago that
+    // found the unit clean. The fingerprint is the source's real one, so the
+    // row reading `verified` is legitimate evidence, not a lie to be caught.
+    const deepClean: Scan = {
+      unit: "photos-2019",
+      target: "dst",
+      ts: Date.now() - 3_600_000,
+      method: "deep",
+      outcome: "clean",
+      nChanges: 0,
+      nExtra: 0,
+      bytesPending: 0,
+      fingerprint: fingerprint(join(root, "src/photos-2019"), config.exclude),
+      sentinel: config.targets[0]!.sentinel!,
+    };
+    saveState(upsertScan(EMPTY_STATE, deepClean), stateFile());
+
+    const s = mount();
+    await s.ready();
+    await waitFor(() => /\bverified\b/.test(rowFor(s.frame(), "photos-2019")), {
+      what: "the row to read verified from the pre-seeded deep verify",
+    });
+
+    // Behind the interface's back: the overnight deep check, recorded by
+    // another session, found the unit behind and replaced the clean record.
+    // The interface still holds the clean one in memory.
+    saveState(
+      upsertScan(loadState(stateFile()), {
+        ...deepClean,
+        ts: Date.now(),
+        outcome: "behind",
+        nChanges: 1,
+        nNew: 1,
+        bytesPending: 3,
+      }),
+      stateFile(),
+    );
+
+    const quickTs = (): number =>
+      loadState(stateFile())
+        .scans.filter(
+          (sc) => sc.unit === "photos-2019" && sc.target === "dst" && sc.method === "quick",
+        )
+        .reduce((a, sc) => Math.max(a, sc.ts), 0);
+    const quickBefore = quickTs();
+    await s.press("q");
+    await waitFor(() => quickTs() > quickBefore, {
+      what: "the quick check to be recorded in state.json",
+      timeout: 45_000,
+    });
+    // Then, separately, for the render to reflect the merge: the first frame
+    // after the record is the recorded verdict, and in the code this guards
+    // against it would stay `verified` — so the wait is what turns that into
+    // a failure rather than a flake.
+    await waitFor(
+      () => {
+        const row = rowFor(s.frame(), "photos-2019");
+        return !row.includes("check running") && !/\bverified\b/.test(row);
+      },
+      {
+        what: "the row to stop reading verified for a folder a deep check found behind",
+        timeout: 15_000,
+      },
+    );
+
+    // The row does not read verified: the surviving deep record is `behind`,
+    // and a quick clean cannot verify what a deep check just found changed.
+    const row = rowFor(s.frame(), "photos-2019");
+    expect(row).not.toMatch(/\bverified\b/);
+
+    // And the deep record is still in state.json, next to the quick record
+    // that superseded nothing.
+    const onDisk = loadState(stateFile());
+    const deepOnDisk = findScan(onDisk, "photos-2019", "dst", "deep", config.targets[0]!.sentinel!);
+    expect(deepOnDisk?.outcome).toBe("behind");
+    expect(
+      onDisk.scans.some(
+        (sc) => sc.unit === "photos-2019" && sc.target === "dst" && sc.method === "quick",
+      ),
+    ).toBe(true);
     s.unmount();
   });
 });

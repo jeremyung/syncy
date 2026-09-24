@@ -12,7 +12,15 @@ import {
   type Reachability,
   TargetCheckError,
 } from "./scan.ts";
-import { appendHistory, estimateMs, type State, saveState, upsertScan } from "./state.ts";
+import {
+  appendHistory,
+  estimateMs,
+  loadState,
+  type Scan,
+  type State,
+  saveState,
+  upsertScan,
+} from "./state.ts";
 import { reachWord } from "./status.ts";
 
 export type CheckMode = "quick" | "deep";
@@ -48,6 +56,8 @@ export interface CheckRunResult {
 export interface CheckRunnerDependencies {
   readonly reachability: typeof allReachability;
   readonly check: typeof checkUnit;
+  /** The merge base for every record: the state file as it is at record time. */
+  readonly loadState: typeof loadState;
   readonly saveState: typeof saveState;
   readonly saveDiff: typeof saveDiff;
   readonly appendHistory: typeof appendHistory;
@@ -56,6 +66,7 @@ export interface CheckRunnerDependencies {
 const DEFAULT_DEPENDENCIES: CheckRunnerDependencies = {
   reachability: allReachability,
   check: checkUnit,
+  loadState,
   saveState,
   saveDiff,
   appendHistory,
@@ -84,6 +95,27 @@ export interface CheckRunOptions {
   readonly jobId?: (unit: string, target: string, position: number) => string;
   /** Test seam. Production callers should use the guarded defaults. */
   readonly dependencies?: CheckRunnerDependencies;
+}
+
+/**
+ * Records one finished check against what is on disk, not the copy at hand.
+ *
+ * The re-read is structural, not something a caller must remember: the
+ * accumulated in-memory copy may be hours old, and another writer — the Mac
+ * app, a scheduled run, a second terminal — may have replaced a record in it
+ * since it was loaded. Merging the new scan into that stale copy and writing
+ * the whole thing back silently resurrects whatever that writer superseded —
+ * the deep `behind` found overnight is gone again by the morning's quick
+ * `clean`, and the row reads `verified`.
+ */
+export function recordScan(
+  scan: Scan,
+  read: typeof loadState = loadState,
+  write: typeof saveState = saveState,
+): State {
+  const merged = upsertScan(read(), scan);
+  write(merged);
+  return merged;
 }
 
 interface PlannedCheck extends CheckRunUnit {
@@ -233,14 +265,14 @@ export async function runCheckQueue(
       // If the caller did not already measure it, checkUnit's first source
       // walk becomes the shared value for this unit's remaining destinations.
       if (!fingerprints.has(job.unit)) fingerprints.set(job.unit, result.scan.fingerprint);
-      working = upsertScan(working, result.scan);
       options.onEvent?.({
         ...base,
         type: "job.phase-changed",
         at: now(),
         phase: "recording-evidence",
       });
-      deps.saveState(working);
+      // Merged onto the file as it is now, never onto `working`: see recordScan.
+      working = recordScan(result.scan, deps.loadState, deps.saveState);
       deps.saveDiff(result.diff);
       deps.appendHistory({
         ts: result.scan.ts,

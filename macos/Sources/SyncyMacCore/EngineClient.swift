@@ -344,6 +344,9 @@ public enum Reachability: String, Codable, Sendable {
   case missing
   case mismatch
   case unreachable
+  /// The destination did not answer within the engine's deadline — a hung
+  /// mount, not a confirmed absence, so it must never read as "not connected".
+  case timeout
 
   public var ledgerPhrase: String {
     switch self {
@@ -351,6 +354,9 @@ public enum Reachability: String, Codable, Sendable {
     case .missing: "no sentinel found"
     case .mismatch: "different volume"
     case .unreachable: "not connected"
+    // The engine's `reachabilityPhrase` carries the deadline in seconds; this
+    // fallback cannot know it, so it names the condition without a number.
+    case .timeout: "did not answer in time"
     }
   }
 }

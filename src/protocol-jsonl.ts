@@ -42,7 +42,7 @@ const PHASES = new Set<JobPhase>([
   "cancelling",
 ]);
 const ACTIVE_PHASES = new Set([...PHASES, "completed", "skipped", "failed", "cancelled"]);
-const REACHABILITY = new Set(["ok", "missing", "mismatch", "unreachable"]);
+const REACHABILITY = new Set(["ok", "missing", "mismatch", "unreachable", "timeout"]);
 const CELL_STATES = new Set(["verified", "unverified", "behind", "missing", "unchecked", "error"]);
 const OUTCOMES = new Set(["clean", "behind", "missing", "error"]);
 const DIFF_KINDS = new Set(["new", "changed", "metadata", "extra"]);

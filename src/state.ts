@@ -66,7 +66,7 @@ export const EMPTY_STATE: State = { version: 1, scans: [] };
  * trusted just because it type-checked in a `.json` file that anyone can hand
  * edit or half-restore from a backup.
  *
- * Returns the reason as a string on failure rather than throwing — `loadState`
+ * Returns the reason as a string on failure rather than throwing — `openState`
  * drops a bad record instead of raising, so the caller needs the reason for a
  * debug line, not an exception to catch.
  */
@@ -147,33 +147,79 @@ function validateScan(raw: unknown): Scan | string {
   };
 }
 
-export function loadState(file: string = stateFile()): State {
+/** What opening the state file produced, including anything set aside to get there. */
+export interface StateOpen {
+  readonly state: State;
+  /** Where an unreadable state file was moved, or null when there was nothing to move. */
+  readonly setAside: string | null;
+}
+
+/**
+ * Opens the state file, and reports what it had to set aside to get there.
+ *
+ * A file that cannot be parsed at the top level, or whose shape is wrong, is
+ * quarantined and an empty state is returned with the file's new location.
+ * The ledger must open even when the record it keeps cannot be read: that is
+ * exactly the situation — a hand edit, a half-restored backup — in which the
+ * record is most needed, and a program that dies before it draws gives no way
+ * back in.
+ *
+ * The quarantine is a move, not a delete and not an in-place repair. Delete
+ * would destroy the only record of what was verified — this file is the
+ * product. Repair in place would have to guess what the bytes meant and write
+ * the guess over the evidence, and a repair written by code that could not
+ * even parse the file is not a repair. `renameSync` in the same directory is
+ * atomic and preserves every byte: the corrupt file is evidence. The
+ * timestamp in the name keeps a second corruption from overwriting the first.
+ * If the rename itself fails, the empty state is still returned, with
+ * `setAside: null` — the ledger opening matters more than the move
+ * succeeding.
+ *
+ * An unsupported version is deliberately not quarantined: that file is intact
+ * and readable, syncy just does not know the dialect, and silently
+ * reinterpreting it would be worse than refusing. It still throws.
+ */
+export function openState(file: string = stateFile()): StateOpen {
   let text: string;
   try {
     text = readFileSync(file, "utf8");
   } catch {
-    return EMPTY_STATE;
+    return { state: EMPTY_STATE, setAside: null };
   }
+
+  const quarantine = (): StateOpen => {
+    let setAside: string | null = null;
+    try {
+      setAside = `${file}.corrupt-${Date.now()}`;
+      renameSync(file, setAside);
+    } catch {
+      setAside = null; // A failed move still must not keep the ledger closed.
+    }
+    return { state: EMPTY_STATE, setAside };
+  };
+
   let raw: unknown;
   try {
     raw = JSON.parse(text);
-  } catch (e) {
-    throw new Error(`state file is corrupt (${file}): ${(e as Error).message}`);
+  } catch {
+    return quarantine();
   }
-  if (typeof raw !== "object" || raw === null) throw new Error(`state file is corrupt (${file})`);
+  // An array is an object in the type sense, but it is not a state file in any
+  // sense: it declares no version, so it is a malformed shape, not a dialect
+  // syncy has not implemented, and it is quarantined rather than thrown.
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return quarantine();
   const obj = raw as Record<string, unknown>;
   if (obj["version"] !== 1) {
     throw new Error(`unsupported state version in ${file}: ${String(obj["version"])}`);
   }
-  if (!Array.isArray(obj["scans"])) {
-    throw new Error(`state file is corrupt (${file}): scans is not an array`);
-  }
+  if (!Array.isArray(obj["scans"])) return quarantine();
 
   // Per-scan validation degrades gracefully where the checks above do not: a
   // corrupt individual record must cost a re-check, never a program that will
   // not start — a state file syncy cannot open is the one failure with no way
   // back in. Dropped records are reported through debug() rather than thrown
-  // or returned, because there is no UI channel out of loadState; this is
+  // or returned: the whole-file failure names itself through `setAside`, but
+  // one dropped scan among good ones is a record, not a headline —
   // deliberately quiet-but-recorded, not silent.
   const scans: Scan[] = [];
   (obj["scans"] as readonly unknown[]).forEach((entry, i) => {
@@ -184,7 +230,11 @@ export function loadState(file: string = stateFile()): State {
     }
     scans.push(result);
   });
-  return { version: 1, scans };
+  return { state: { version: 1, scans }, setAside: null };
+}
+
+export function loadState(file: string = stateFile()): State {
+  return openState(file).state;
 }
 
 /**
