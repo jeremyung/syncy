@@ -1,11 +1,11 @@
 import type { Config, Target } from "./config.ts";
-import { evaluateUnitCell, configRevision, type UnitCellIo } from "./engine-snapshot.ts";
+import { configRevision, evaluateUnitCell, type UnitCellIo } from "./engine-snapshot.ts";
 import { type Preflight, preflight } from "./guards.ts";
 import { serializeEngineMessage } from "./protocol-jsonl.ts";
 import { argvFor } from "./rsync.ts";
 import { listUnits } from "./scan.ts";
 import { loadState, type State } from "./state.ts";
-import { saveSyncIntent, type SyncIntent } from "./sync-intent.ts";
+import { type SyncIntent, saveSyncIntent } from "./sync-intent.ts";
 
 /**
  * Read-side and effect seams for `cmdSyncPreflight`, injectable so a test can
