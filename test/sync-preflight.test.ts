@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../src/config.ts";
-import type { UnitCellIo } from "../src/engine-snapshot.ts";
+import { configRevision, type UnitCellIo } from "../src/engine-snapshot.ts";
 import type { Fingerprint } from "../src/fingerprint.ts";
 import type { Preflight } from "../src/guards.ts";
 import { parseEngineMessage } from "../src/protocol-jsonl.ts";
 import { argvFor } from "../src/rsync.ts";
-import type { State } from "../src/state.ts";
+import type { HistoryEntry, State } from "../src/state.ts";
 import type { SyncIntent } from "../src/sync-intent.ts";
 import { cmdSyncPreflight, type SyncPreflightIo } from "../src/sync-preflight.ts";
 
@@ -177,6 +177,7 @@ describe("engine preflight reads exactly one cell", () => {
       unit: "photos-2019",
       target: "archive",
       argv: expectedArgv,
+      configRevision: configRevision(config),
       checks: [{ name: "rsync", ok: true, detail: "rsync found" }],
       ok: true,
       nChanges: 3,
@@ -210,5 +211,80 @@ describe("engine preflight reads exactly one cell", () => {
     expect(failure).toBe("no such unit: no-such-unit");
     expect(fingerprintCalls).toEqual([]);
     expect(reachabilityCalls).toEqual([]);
+  });
+});
+
+describe("a scheduled sync that does not run is recorded as skipped", () => {
+  function scheduledIo(
+    overrides: Partial<SyncPreflightIo>,
+    reach: "ok" | "unreachable" = "ok",
+  ): { io: SyncPreflightIo; history: HistoryEntry[] } {
+    const { preflightIo, unitCell } = spyIo();
+    const history: HistoryEntry[] = [];
+    return {
+      history,
+      io: {
+        ...preflightIo,
+        unitCell: { ...unitCell, targetReachability: async () => reach },
+        actor: "scheduler",
+        appendHistory: (entry) => history.push(entry),
+        ...overrides,
+      },
+    };
+  }
+
+  test("names an unplugged destination and why", async () => {
+    const { io, history } = scheduledIo({}, "unreachable");
+
+    await expect(cmdSyncPreflight(config, "photos-2019", "archive", io)).rejects.toThrow(
+      /no recorded files to sync/,
+    );
+    expect(history).toEqual([
+      {
+        ts: 1_750_000_001_000,
+        unit: "photos-2019",
+        target: "archive",
+        argv: [],
+        exitCode: null,
+        operation: "sync",
+        outcome: "skipped",
+        detail: "not connected",
+      },
+    ]);
+  });
+
+  test("names a folder with nothing recorded as behind", async () => {
+    const { io, history } = scheduledIo({});
+
+    await expect(cmdSyncPreflight(config, "videos-2020", "archive", io)).rejects.toThrow();
+    expect(history.map((entry) => [entry.unit, entry.target, entry.outcome])).toEqual([
+      ["videos-2020", "archive", "skipped"],
+    ]);
+    expect(history[0]?.detail).toStartWith("no recorded files to sync · ");
+  });
+
+  test("names the guard that refused", async () => {
+    const { io, history } = scheduledIo({
+      preflight: async () => ({
+        checks: [
+          { name: "rsync", ok: true, detail: "rsync found" },
+          { name: "space", ok: false, detail: "needs 2 GB, 1 GB free" },
+        ],
+        ok: false,
+        freeAfter: 0,
+      }),
+    });
+
+    await cmdSyncPreflight(config, "photos-2019", "archive", io);
+    expect(history.map((entry) => [entry.outcome, entry.detail])).toEqual([
+      ["skipped", "needs 2 GB, 1 GB free"],
+    ]);
+  });
+
+  test("a sync reviewed by hand records nothing: the refusal is on screen", async () => {
+    const { io, history } = scheduledIo({ actor: "mac" }, "unreachable");
+
+    await expect(cmdSyncPreflight(config, "photos-2019", "archive", io)).rejects.toThrow();
+    expect(history).toEqual([]);
   });
 });

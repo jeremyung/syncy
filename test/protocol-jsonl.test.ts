@@ -92,6 +92,7 @@ const preflight: SyncPreflightMessage = {
   unit: "photos-2019",
   target: "archive",
   argv: ["-a", "/source/photos-2019/", "/destination/photos-2019/"],
+  configRevision: "revision-1",
   checks: [
     { name: "volume", ok: true, detail: "archive · volume-1" },
     { name: "dry run", ok: true, warn: true, detail: "no — this writes to the target" },
@@ -188,6 +189,11 @@ describe("engine JSON Lines protocol", () => {
     };
 
     expect(parseEngineMessage(serializeEngineMessage(noRecord))).toEqual(noRecord);
+  });
+
+  test("a preflight cannot omit the configuration it was evaluated against", () => {
+    const invalid = { ...preflight, configRevision: undefined };
+    expect(() => parseEngineMessage(JSON.stringify(invalid))).toThrow(/configRevision/);
   });
 
   test("a successful preflight cannot omit its confirmation", () => {

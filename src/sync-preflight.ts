@@ -4,7 +4,8 @@ import { type Preflight, preflight } from "./guards.ts";
 import { serializeEngineMessage } from "./protocol-jsonl.ts";
 import { argvFor } from "./rsync.ts";
 import { listUnits } from "./scan.ts";
-import { loadState, type State } from "./state.ts";
+import { appendHistory, type HistoryEntry, loadState, type State } from "./state.ts";
+import { reachWord } from "./status.ts";
 import { type SyncIntent, saveSyncIntent } from "./sync-intent.ts";
 
 /**
@@ -32,6 +33,9 @@ export interface SyncPreflightIo {
   readonly randomToken?: () => string;
   readonly saveSyncIntent?: (intent: SyncIntent) => void;
   readonly write?: (chunk: string) => void;
+  /** Who asked; defaults to `SYNCY_ACTOR`, which the Mac app sets per launch. */
+  readonly actor?: string;
+  readonly appendHistory?: (entry: HistoryEntry) => void;
 }
 
 /**
@@ -66,8 +70,32 @@ export async function cmdSyncPreflight(
   const state = (io.loadState ?? loadState)();
   const evaluation = await evaluateUnitCell(config, state, unitName, target, now, io.unitCell);
   if (evaluation === undefined) fail(`no evidence for ${unitName} at ${targetName}`);
-  const { unit, cell } = evaluation;
+  const { unit, cell, reachability } = evaluation;
+  // A scheduled sync that does not run is a skipped sync, and says so in
+  // history by name. Without this, a scheduled sync to an unplugged drive
+  // left no record at all — the preflight refused, the app said "failed",
+  // and the history that outlives both said nothing had been attempted.
+  // A person reviewing a sync by hand sees the refusal on screen instead.
+  const scheduled = (io.actor ?? process.env.SYNCY_ACTOR) === "scheduler";
+  const recordSkipped = (detail: string): void => {
+    if (!scheduled) return;
+    (io.appendHistory ?? appendHistory)({
+      ts: now,
+      unit: unitName,
+      target: targetName,
+      argv: [],
+      exitCode: null,
+      operation: "sync",
+      outcome: "skipped",
+      detail,
+    });
+  };
   if (cell.state !== "behind" && cell.state !== "missing") {
+    recordSkipped(
+      reachability === "ok"
+        ? `no recorded files to sync · ${cell.reason}`
+        : reachWord(reachability),
+    );
     fail(`${unitName} → ${targetName} has no recorded files to sync (${cell.reason})`);
   }
   const needsChecksum = cell.needsChecksum === true;
@@ -77,6 +105,9 @@ export async function cmdSyncPreflight(
   const result = await (io.preflight ?? preflight)(config, target, argv, cell.bytesPending);
   const token = (io.randomToken ?? (() => crypto.randomUUID()))();
   const expiresAt = now + 5 * 60_000;
+  if (!result.ok) {
+    recordSkipped(result.checks.find((check) => !check.ok)?.detail ?? "a guard refused the sync");
+  }
   if (result.ok) {
     (io.saveSyncIntent ?? saveSyncIntent)({
       version: 1,
@@ -102,6 +133,7 @@ export async function cmdSyncPreflight(
       unit: unitName,
       target: targetName,
       argv,
+      configRevision: configRevision(config),
       checks: result.checks,
       ok: result.ok,
       nChanges: cell.nChanges,

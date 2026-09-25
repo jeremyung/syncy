@@ -378,4 +378,119 @@ final class ModelsTests: XCTestCase {
     XCTAssertTrue(decoded.isApproved(forConfigRevision: "revision-1"))
     XCTAssertFalse(decoded.isApproved(forConfigRevision: "revision-2"))
   }
+
+  func testScheduleStatesDestinationCadencePowerNetworkAndSkips() throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+    calendar.locale = Locale(identifier: "en_US")
+    let sync = CheckSchedule(
+      operation: .sync, unit: "photos", target: "Archive", cadence: .weekly, weekday: 1,
+      hour: 2, minute: 0)
+    let check = CheckSchedule(operation: .quick, unit: nil, cadence: .daily, hour: 3, minute: 0)
+
+    let syncLines = sync.statement(destinations: ["Archive", "Studio NAS"], calendar: calendar)
+    XCTAssertEqual(syncLines.first, "Destination · Archive")
+    XCTAssertTrue(syncLines.contains { $0.hasPrefix("Every Sunday at") })
+    XCTAssertTrue(syncLines.contains { $0.hasPrefix("Power · ") })
+    XCTAssertTrue(syncLines.contains { $0.hasPrefix("Network · ") })
+    XCTAssertTrue(syncLines.contains { $0.contains("Archive is not connected") })
+    XCTAssertTrue(syncLines.contains { $0.contains("suspended after any configuration change") })
+
+    let checkLines = check.statement(destinations: ["Archive", "Studio NAS"], calendar: calendar)
+    XCTAssertEqual(
+      checkLines.first, "Destinations · every configured destination (Archive, Studio NAS)")
+    XCTAssertTrue(checkLines.contains { $0.hasPrefix("Every day at") })
+    XCTAssertTrue(checkLines.contains { $0.contains("not connected is skipped") })
+    XCTAssertFalse(checkLines.contains { $0.contains("suspended") })
+  }
+
+  private func recorded(
+    _ ts: Double, _ unit: String, _ target: String, _ operation: String, _ outcome: String,
+    _ detail: String? = nil
+  ) -> HistorySnapshotEntry {
+    HistorySnapshotEntry(
+      ts: ts, unit: unit, target: target, operation: operation, outcome: outcome,
+      exitCode: nil, detail: detail, log: nil)
+  }
+
+  /// One destination skipped and one failed in the same batch: the
+  /// notification names both, and what did complete, not only the first skip.
+  func testScheduledOutcomeNamesEveryPartOfAPartialRun() {
+    let schedule = CheckSchedule(operation: .quick, unit: nil, cadence: .daily, hour: 3, minute: 0)
+    let started = Date(timeIntervalSince1970: 1_000)
+    let outcome = ScheduledOutcome.summarize(
+      schedule: schedule, startedAt: started,
+      recorded: [
+        recorded(999_000, "photos", "Archive", "quick", "failed", "from an earlier run"),
+        recorded(1_000_500, "photos", "Archive", "quick", "completed"),
+        recorded(1_001_000, "photos", "Studio NAS", "quick", "skipped", "not connected"),
+        recorded(1_002_000, "videos", "Archive", "quick", "failed", "rsync exited 23"),
+      ],
+      failure: "Scheduled work failed · engine exited 1")
+
+    XCTAssertTrue(outcome.needsAttention)
+    XCTAssertEqual(
+      outcome.message,
+      "1 of 3 completed · photos → Studio NAS skipped · not connected · videos → Archive failed · rsync exited 23"
+    )
+  }
+
+  /// The engine records a scheduled sync to an unplugged drive as skipped and
+  /// exits non-zero. That is a skip by name, not a failure.
+  func testScheduledSyncToAnUnpluggedDriveReadsAsSkippedNotFailed() {
+    let schedule = CheckSchedule(
+      operation: .sync, unit: "photos", target: "Archive", cadence: .daily, hour: 3, minute: 0)
+    let outcome = ScheduledOutcome.summarize(
+      schedule: schedule, startedAt: Date(timeIntervalSince1970: 1_000),
+      recorded: [recorded(1_000_100, "photos", "Archive", "sync", "skipped", "not connected")],
+      failure: "Scheduled work failed · photos → Archive has no recorded files to sync")
+
+    XCTAssertTrue(outcome.needsAttention)
+    XCTAssertEqual(outcome.message, "0 of 1 completed · photos → Archive skipped · not connected")
+  }
+
+  func testRoutineFullSuccessDoesNotNeedAttention() {
+    let schedule = CheckSchedule(operation: .deep, unit: "photos", cadence: .daily, hour: 3, minute: 0)
+    let outcome = ScheduledOutcome.summarize(
+      schedule: schedule, startedAt: Date(timeIntervalSince1970: 1_000),
+      recorded: [
+        recorded(1_000_100, "photos", "Archive", "deep", "completed"),
+        recorded(1_000_200, "photos", "Studio NAS", "deep", "completed"),
+      ],
+      failure: nil)
+
+    XCTAssertFalse(outcome.needsAttention)
+    XCTAssertEqual(outcome.message, "Scheduled deep verify completed · 2 recorded")
+  }
+
+  /// Nothing recorded is never success, even when the engine exited cleanly.
+  func testScheduledRunThatRecordedNothingNeedsAttention() {
+    let schedule = CheckSchedule(operation: .quick, unit: nil, cadence: .daily, hour: 3, minute: 0)
+    let outcome = ScheduledOutcome.summarize(
+      schedule: schedule, startedAt: Date(timeIntervalSince1970: 1_000),
+      recorded: [recorded(900_000, "photos", "Archive", "quick", "missed")],
+      failure: nil)
+
+    XCTAssertTrue(outcome.needsAttention)
+    XCTAssertEqual(outcome.message, "Scheduled quick check recorded no outcome")
+  }
+
+  func testSyncPreflightCarriesTheRevisionItWasEvaluatedAgainst() throws {
+    let json = """
+      {"protocolVersion":1,"type":"sync.preflight","generatedAt":1,"unit":"photos",
+      "target":"Archive","argv":["-a"],"configRevision":"revision-2","checks":[],"ok":false,
+      "nChanges":1,"nExtra":0,"bytesPending":10,"needsChecksum":false}
+      """
+    let preflight = try JSONDecoder().decode(SyncPreflight.self, from: Data(json.utf8))
+    let schedule = CheckSchedule(
+      operation: .sync, unit: "photos", target: "Archive", cadence: .daily, hour: 3,
+      minute: 0, approvedConfigRevision: "revision-1")
+
+    XCTAssertFalse(schedule.isApproved(forConfigRevision: preflight.configRevision))
+    XCTAssertThrowsError(
+      try JSONDecoder().decode(
+        SyncPreflight.self,
+        from: Data(json.replacingOccurrences(of: "\"configRevision\":\"revision-2\",", with: "").utf8)))
+  }
 }
+

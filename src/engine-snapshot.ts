@@ -183,13 +183,20 @@ export async function evaluateUnitCell(
   target: Target,
   now: number = Date.now(),
   io: UnitCellIo = REAL_UNIT_CELL_IO,
-): Promise<{ readonly unit: UnitSnapshot; readonly cell: CellSnapshot } | undefined> {
+): Promise<
+  | {
+      readonly unit: UnitSnapshot;
+      readonly cell: CellSnapshot;
+      readonly reachability: Reachability;
+    }
+  | undefined
+> {
   const current = io.fingerprint(join(config.source, unitName), config.exclude);
   const reachability = await io.targetReachability(target);
   const reach = new Map([[target.name, reachability]]);
   const unit = buildUnitSnapshot(config, state, unitName, current, reach, now);
   const cell = unit.cells.find((candidate) => candidate.target === target.name);
-  return cell === undefined ? undefined : { unit, cell };
+  return cell === undefined ? undefined : { unit, cell, reachability };
 }
 
 export async function buildEngineSnapshot(
