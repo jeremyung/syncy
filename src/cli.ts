@@ -20,7 +20,8 @@ import { writeSentinel } from "./sentinel.ts";
 import { appendHistory, loadState, openState, type State } from "./state.ts";
 import { evaluateUnit, timeoutWord } from "./status.ts";
 import { startSync } from "./sync.ts";
-import { claimSyncIntent, saveSyncIntent } from "./sync-intent.ts";
+import { claimSyncIntent } from "./sync-intent.ts";
+import { cmdSyncPreflight } from "./sync-preflight.ts";
 import { startTui } from "./tui/index.tsx";
 import { resolveTarget, validateTargetPath } from "./tui/Setup.tsx";
 
@@ -261,7 +262,7 @@ async function cmdEngine(
     if (detail === undefined || extra === undefined) {
       fail("usage: syncy engine preflight <unit> <destination>");
     }
-    await cmdSyncPreflight(config, detail, extra);
+    await cmdSyncPreflight(config, detail, extra, {}, fail);
     return;
   }
   if (action === "sync") {
@@ -472,67 +473,6 @@ async function cmdEngine(
     process.off("SIGTERM", requestCancel);
     ownership.lease.release();
   }
-}
-
-async function cmdSyncPreflight(
-  config: Config,
-  unitName: string,
-  targetName: string,
-): Promise<void> {
-  const now = Date.now();
-  const snapshot = await buildEngineSnapshot(config, loadState(), now);
-  const unit = snapshot.units.find((candidate) => candidate.unit === unitName);
-  if (unit === undefined) fail(`no such unit: ${unitName}`);
-  const target = config.targets.find((candidate) => candidate.name === targetName);
-  if (target === undefined) fail(`no such destination: ${targetName}`);
-  const cell = unit.cells.find((candidate) => candidate.target === targetName);
-  if (cell === undefined) fail(`no evidence for ${unitName} at ${targetName}`);
-  if (cell.state !== "behind" && cell.state !== "missing") {
-    fail(`${unitName} → ${targetName} has no recorded files to sync (${cell.reason})`);
-  }
-  const needsChecksum = cell.needsChecksum === true;
-  const argv = argvFor(config, unitName, target, "sync", {
-    ...(needsChecksum ? { checksum: true } : {}),
-  });
-  const result = await preflight(config, target, argv, cell.bytesPending);
-  const token = crypto.randomUUID();
-  const expiresAt = now + 5 * 60_000;
-  if (result.ok) {
-    saveSyncIntent({
-      version: 1,
-      token,
-      createdAt: now,
-      expiresAt,
-      unit: unitName,
-      target: targetName,
-      argv,
-      fingerprint: unit.fingerprint,
-      configRevision: snapshot.configRevision,
-      nChanges: cell.nChanges,
-      ...(cell.nFiles === undefined ? {} : { nFiles: cell.nFiles }),
-      bytesPending: cell.bytesPending,
-      needsChecksum,
-    });
-  }
-  process.stdout.write(
-    serializeEngineMessage({
-      protocolVersion: 1,
-      type: "sync.preflight",
-      generatedAt: now,
-      unit: unitName,
-      target: targetName,
-      argv,
-      checks: result.checks,
-      ok: result.ok,
-      nChanges: cell.nChanges,
-      ...(cell.nFiles === undefined ? {} : { nFiles: cell.nFiles }),
-      ...(cell.nNew === undefined ? {} : { nNew: cell.nNew }),
-      nExtra: cell.nExtra,
-      bytesPending: cell.bytesPending,
-      needsChecksum,
-      ...(result.ok ? { confirmationToken: token, expiresAt } : {}),
-    }),
-  );
 }
 
 async function cmdEngineSync(config: Config, token: string): Promise<void> {

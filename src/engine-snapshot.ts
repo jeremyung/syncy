@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { Config } from "./config.ts";
+import type { Config, Target } from "./config.ts";
 import {
   type ActivityMessage,
+  type CellSnapshot,
   ENGINE_PROTOCOL_VERSION,
   type SnapshotMessage,
+  type UnitSnapshot,
 } from "./engine-protocol.ts";
 import { type Fingerprint, fingerprint } from "./fingerprint.ts";
 import type { JobOwnerRecord } from "./job-owner.ts";
 import { isJobOwnerActive, readJobOwner } from "./job-owner.ts";
 import { presentReachability } from "./presentation.ts";
-import { allReachability, listUnits, type Reachability } from "./scan.ts";
+import { allReachability, listUnits, type Reachability, targetReachability } from "./scan.ts";
 import { findScan, latestScan, type Scan, type State } from "./state.ts";
 import { evaluateUnit, targetIdentity } from "./status.ts";
 
@@ -102,6 +104,94 @@ export function configRevision(config: Config): string {
   return createHash("sha256").update(JSON.stringify(config)).digest("hex");
 }
 
+/**
+ * Evaluate one unit's cells against a fingerprint already taken and a
+ * reachability observation already made.
+ *
+ * Shared by the full snapshot, which fingerprints every unit and resolves
+ * every destination up front, and `engine preflight`'s single-cell read,
+ * which does neither — this function itself never walks a source or
+ * destination tree.
+ */
+function buildUnitSnapshot(
+  config: Config,
+  state: State,
+  unit: string,
+  currentFingerprint: Fingerprint,
+  reach: ReadonlyMap<string, Reachability>,
+  now: number,
+): UnitSnapshot {
+  const status = evaluateUnit(
+    config,
+    state,
+    { unit, fingerprint: currentFingerprint, sentinels: reach },
+    now,
+  );
+  return {
+    unit,
+    state: status.state,
+    reason: status.reason,
+    fingerprint: currentFingerprint,
+    cells: status.cells.map((cell) => {
+      const target = config.targets.find((candidate) => candidate.name === cell.target)!;
+      const identity = targetIdentity(target);
+      const last = latestScan(state, unit, cell.target, identity);
+      const deep = findScan(state, unit, cell.target, "deep", identity);
+      const quick = findScan(state, unit, cell.target, "quick", identity);
+      return {
+        ...cell,
+        evidence: {
+          currentTarget: (reach.get(cell.target) ?? "unreachable") === "ok",
+          ...(last === undefined ? {} : { lastCheck: evidenceSnapshot(last) }),
+          ...(deep === undefined ? {} : { deepCheck: evidenceSnapshot(deep) }),
+          ...(quick === undefined ? {} : { extrasObservedAt: quick.ts }),
+        },
+      };
+    }),
+  };
+}
+
+/**
+ * Read-side dependencies for evaluating a single unit against a single
+ * destination. Injectable for the same reason `SnapshotIo` is: a test proves
+ * `engine preflight` walks exactly one unit by instrumenting this seam and
+ * counting calls, not by inspecting the result.
+ */
+export interface UnitCellIo {
+  readonly fingerprint: (root: string, exclude: readonly string[]) => Fingerprint;
+  readonly targetReachability: (target: Target) => Promise<Reachability>;
+}
+
+const REAL_UNIT_CELL_IO: UnitCellIo = { fingerprint, targetReachability };
+
+/**
+ * Evaluate one unit against one destination: one fingerprint, one
+ * reachability check, one cell — not the whole engine snapshot.
+ *
+ * `engine preflight` used to call `buildEngineSnapshot`, which fingerprints
+ * every unit and resolves every destination to read a single cell, then
+ * `engine sync` fingerprinted the same unit again. This reads only what that
+ * one cell needs. Returns `undefined` when the unit evaluates to no cell for
+ * `targetName` (never happens in practice: `evaluateUnit` always produces one
+ * cell per configured target, and the caller is expected to have already
+ * confirmed both the unit and the target exist).
+ */
+export async function evaluateUnitCell(
+  config: Config,
+  state: State,
+  unitName: string,
+  target: Target,
+  now: number = Date.now(),
+  io: UnitCellIo = REAL_UNIT_CELL_IO,
+): Promise<{ readonly unit: UnitSnapshot; readonly cell: CellSnapshot } | undefined> {
+  const current = io.fingerprint(join(config.source, unitName), config.exclude);
+  const reachability = await io.targetReachability(target);
+  const reach = new Map([[target.name, reachability]]);
+  const unit = buildUnitSnapshot(config, state, unitName, current, reach, now);
+  const cell = unit.cells.find((candidate) => candidate.target === target.name);
+  return cell === undefined ? undefined : { unit, cell };
+}
+
 export async function buildEngineSnapshot(
   config: Config,
   state: State,
@@ -111,34 +201,7 @@ export async function buildEngineSnapshot(
   const reach = await io.reachability(config);
   const units = io.listUnits(config.source).map((unit) => {
     const current = io.fingerprint(join(config.source, unit), config.exclude);
-    const status = evaluateUnit(
-      config,
-      state,
-      { unit, fingerprint: current, sentinels: reach },
-      now,
-    );
-    return {
-      unit,
-      state: status.state,
-      reason: status.reason,
-      fingerprint: current,
-      cells: status.cells.map((cell) => {
-        const target = config.targets.find((candidate) => candidate.name === cell.target)!;
-        const identity = targetIdentity(target);
-        const last = latestScan(state, unit, cell.target, identity);
-        const deep = findScan(state, unit, cell.target, "deep", identity);
-        const quick = findScan(state, unit, cell.target, "quick", identity);
-        return {
-          ...cell,
-          evidence: {
-            currentTarget: (reach.get(cell.target) ?? "unreachable") === "ok",
-            ...(last === undefined ? {} : { lastCheck: evidenceSnapshot(last) }),
-            ...(deep === undefined ? {} : { deepCheck: evidenceSnapshot(deep) }),
-            ...(quick === undefined ? {} : { extrasObservedAt: quick.ts }),
-          },
-        };
-      }),
-    };
+    return buildUnitSnapshot(config, state, unit, current, reach, now);
   });
   // A lease is a live-work signal, not durable history. A crashed owner can
   // remain on disk until the next contender archives it, so publishing it as
