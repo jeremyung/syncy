@@ -14,7 +14,7 @@ public protocol EngineClient: Sendable {
     onEvent: @escaping JobEventHandler
   ) async throws
   func doctor() async throws -> String
-  func prepareSync(unit: String, target: String) async throws -> SyncPreflight
+  func prepareSync(unit: String, target: String, actor: EngineActor) async throws -> SyncPreflight
   func runSync(
     confirmationToken: String, actor: EngineActor, onEvent: @escaping JobEventHandler
   ) async throws
@@ -28,6 +28,10 @@ public protocol EngineClient: Sendable {
 }
 
 extension EngineClient {
+  public func prepareSync(unit: String, target: String) async throws -> SyncPreflight {
+    try await prepareSync(unit: unit, target: target, actor: .mac)
+  }
+
   public func runCheck(_ operation: EngineCheckOperation, unit: String?) async throws {
     try await runCheck(operation, unit: unit, actor: .mac, onEvent: { _ in })
   }
@@ -244,6 +248,7 @@ public struct SyncPreflight: Decodable, Sendable {
   public let unit: String
   public let target: String
   public let argv: [String]
+  public let configRevision: String
   public let checks: [SyncGuardCheck]
   public let ok: Bool
   public let nChanges: Int64
@@ -749,12 +754,16 @@ public struct ProcessEngineClient: EngineClient {
     }.value
   }
 
-  public func prepareSync(unit: String, target: String) async throws -> SyncPreflight {
+  public func prepareSync(
+    unit: String, target: String, actor: EngineActor
+  ) async throws -> SyncPreflight {
     let executableURL = executableURL
     return try await Task.detached(priority: .userInitiated) {
+      // The actor tells the engine a scheduled preflight that refuses is a
+      // skipped sync, to be recorded as one; a reviewed-by-hand refusal is not.
       let text = try await Self.runText(
         executableURL: executableURL,
-        arguments: ["engine", "preflight", unit, target])
+        arguments: ["engine", "preflight", unit, target], actor: actor)
       do {
         let prepared = try JSONDecoder().decode(SyncPreflight.self, from: Data(text.utf8))
         guard prepared.protocolVersion == 1, prepared.type == "sync.preflight" else {
@@ -980,12 +989,19 @@ public struct ProcessEngineClient: EngineClient {
     }
   }
 
-  private static func runText(executableURL: URL, arguments: [String]) async throws -> String {
+  private static func runText(
+    executableURL: URL, arguments: [String], actor: EngineActor? = nil
+  ) async throws -> String {
     let process = Process()
     let stdout = Pipe()
     let stderr = Pipe()
     process.executableURL = executableURL
     process.arguments = arguments
+    if let actor {
+      process.environment = ProcessInfo.processInfo.environment.merging(
+        ["SYNCY_ACTOR": actor.rawValue]
+      ) { _, requested in requested }
+    }
     process.standardOutput = stdout
     process.standardError = stderr
     do {
@@ -1032,7 +1048,9 @@ public struct DisconnectedEngineClient: EngineClient {
     throw EngineClientError.engineNotFound
   }
 
-  public func prepareSync(unit _: String, target _: String) async throws -> SyncPreflight {
+  public func prepareSync(
+    unit _: String, target _: String, actor _: EngineActor
+  ) async throws -> SyncPreflight {
     throw EngineClientError.engineNotFound
   }
 

@@ -3,7 +3,7 @@ import { type CheckRunnerDependencies, runCheckQueue } from "../src/check-runner
 import type { Config, Target } from "../src/config.ts";
 import type { JobEvent } from "../src/engine-protocol.ts";
 import type { CheckResult } from "../src/scan.ts";
-import { EMPTY_STATE, type State } from "../src/state.ts";
+import { EMPTY_STATE, type HistoryEntry, type State } from "../src/state.ts";
 
 const targets: readonly Target[] = [
   {
@@ -300,6 +300,7 @@ describe("the UI-independent check runner", () => {
     const controller = new AbortController();
     const calls: string[] = [];
     const events: JobEvent[] = [];
+    const history: HistoryEntry[] = [];
     let checks = 0;
     const check: CheckRunnerDependencies["check"] = async (_config, unit, target, mode) => {
       checks += 1;
@@ -319,6 +320,7 @@ describe("the UI-independent check runner", () => {
         dependencies: {
           ...dependencies(calls, check),
           reachability: async () => new Map([["archive", "ok"]]),
+          appendHistory: (entry) => history.push(entry),
         },
         onEvent: (event) => events.push(event),
       },
@@ -326,7 +328,18 @@ describe("the UI-independent check runner", () => {
 
     expect(result.status).toBe("cancelled");
     expect(checks).toBe(1);
+    // No verdict: neither state nor a diff. But the check that was running is
+    // named in history as cancelled, and the one never started is not.
     expect(calls).toEqual([]);
+    expect(history).toEqual([
+      expect.objectContaining({
+        unit: "one",
+        target: "archive",
+        operation: "quick",
+        outcome: "cancelled",
+        exitCode: null,
+      }),
+    ]);
     expect(result.state).toEqual(EMPTY_STATE);
     expect(events.some((event) => event.type === "job.cancelled")).toBe(true);
     expect(events.some((event) => event.type === "job.completed")).toBe(false);
@@ -334,6 +347,7 @@ describe("the UI-independent check runner", () => {
 
   test("a thrown check is visible and does not prevent the next job", async () => {
     const events: JobEvent[] = [];
+    const history: HistoryEntry[] = [];
     let checks = 0;
     const check: CheckRunnerDependencies["check"] = async (_config, unit, target, mode) => {
       checks += 1;
@@ -352,12 +366,17 @@ describe("the UI-independent check runner", () => {
         dependencies: {
           ...dependencies([], check),
           reachability: async () => new Map([["archive", "ok"]]),
+          appendHistory: (entry) => history.push(entry),
         },
         onEvent: (event) => events.push(event),
       },
     );
 
     expect(checks).toBe(2);
+    expect(history.map((entry) => [entry.unit, entry.outcome, entry.detail])).toEqual([
+      ["one", "failed", "rsync unavailable"],
+      ["two", "completed", undefined],
+    ]);
     expect(result.failed).toEqual([
       { unit: "one", target: "archive", message: "rsync unavailable" },
     ]);

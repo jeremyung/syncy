@@ -248,6 +248,7 @@ function validateSyncPreflight(message: RecordValue): void {
   message["argv"].forEach((part, index) => {
     string(part, `sync.preflight.argv[${index}]`);
   });
+  string(message["configRevision"], "sync.preflight.configRevision");
   array(message["checks"], "sync.preflight.checks");
   message["checks"].forEach((value, index) => {
     const check = record(value, `sync.preflight.checks[${index}]`);
