@@ -16,7 +16,7 @@ import {
   mountEntryFor,
   parseMount,
 } from "../src/fstype.ts";
-import { completions, resolveTarget, validateTargetPath } from "../src/tui/Setup.tsx";
+import { completions, resolveTarget, validateTargetPath } from "../src/target.ts";
 import { makeFixtureDir, removeFixtureDir } from "./helpers.ts";
 
 let root: string;

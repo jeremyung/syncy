@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { recheckAfterSync } from "../check-runner.ts";
 import type { Config, Target } from "../config.ts";
 import { bytes, count } from "../format.ts";
-import { acquireJobOwner, type JobOwnerLease } from "../job-owner.ts";
+import { type JobOwnerLease, type OwnedJob, withJobOwnership } from "../job-owner.ts";
 import { PARTIAL_DIR } from "../rsync.ts";
 import { loadState } from "../state.ts";
 import { type SyncHandle, type SyncResult, startSync } from "../sync.ts";
@@ -96,8 +96,9 @@ export function Job(props: JobProps): React.ReactElement {
   // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   useEffect(() => {
     let live = true;
-    let ownerHeartbeat: ReturnType<typeof setInterval> | null = null;
-    const ownership = acquireJobOwner("cli", "sync");
+    // The lease the transfer runs under, once held; unmounting stops its
+    // heartbeat, and the transfer's own completion releases it.
+    let owned: OwnedJob | null = null;
 
     // The batch: lines accumulate in a ref and are committed on a timer, so a
     // fast stream cannot drive one React render per line.
@@ -110,175 +111,168 @@ export function Job(props: JobProps): React.ReactElement {
       if (live) setElapsed(Date.now() - started);
     }, 500);
 
-    try {
-      if (!ownership.acquired) {
-        const message = ownership.owner
-          ? `${ownership.owner.actor} ${ownership.owner.operation} is already running`
+    const run = (job: OwnedJob): Promise<void> | undefined => {
+      owned = job;
+      try {
+        const jobId = `${started}-${unit}-${target.name}`;
+        const base = {
+          protocolVersion: 1,
+          jobId,
+          operation: "sync",
+          unit,
+          target: target.name,
+        } as const;
+        job.lease.observe({
+          ...base,
+          type: "job.started",
+          at: started,
+          phase: "queued",
+          unitSize: {
+            ...(props.nFiles === undefined ? {} : { files: props.nFiles }),
+            bytes: props.bytesPending,
+          },
+        });
+        job.lease.observe({
+          ...base,
+          type: "job.phase-changed",
+          at: Date.now(),
+          phase: "transferring",
+        });
+
+        /**
+         * The trailing quick check, run under the sync's own lease.
+         *
+         * Reads state from disk rather than from a prop: the transfer may have
+         * taken hours, and the copy of state this screen mounted with is the one
+         * that still says these files are missing.
+         */
+        const runRecheck = async (lease: JobOwnerLease): Promise<void> => {
+          const abort = new AbortController();
+          recheck.current = abort;
+          setChecking(true);
+          try {
+            await recheckAfterSync(config, loadState(), unit, target.name, {
+              signal: abort.signal,
+              onEvent: (event) => {
+                lease.observe(event);
+                if (event.type === "job.completed" && "outcome" in event.result) {
+                  setChecked({ outcome: event.result.outcome, nChanges: event.result.nChanges });
+                }
+              },
+            });
+          } catch {
+            // A check that will not run is not a reason to lose the transfer's
+            // own outcome. The footer says the row is unchecked, which is true.
+          } finally {
+            recheck.current = null;
+            if (live) setChecking(false);
+          }
+        };
+
+        let seen = 0;
+        const h = startSync(config, unit, target, {
+          onLine: (line) => pending.current.push(line),
+          onItem: (item) => {
+            if (item.kind !== "change" || item.flags[1] !== "f") return;
+            seen += 1;
+            if (seen % 25 === 0 || seen === props.nFiles) {
+              try {
+                job.lease.observe({
+                  ...base,
+                  type: "job.progress-observed",
+                  at: Date.now(),
+                  filesSeen: seen,
+                  ...(props.nFiles === undefined ? {} : { filesTotal: props.nFiles }),
+                });
+              } catch {
+                // The lease is gone — same as a lost heartbeat: stop rsync
+                // through the one cancellation path (`h.cancel()`) rather than
+                // letting the error reach pump() inside startSync.
+                h.cancel();
+              }
+            }
+          },
+          ...(props.needsChecksum === true ? { checksum: true } : {}),
+          ...(props.bin !== undefined ? { bin: props.bin } : {}),
+        });
+        handle.current = h;
+        return h.done
+          .then(async (r) => {
+            job.lease.observe(
+              r.cancelled
+                ? { ...base, type: "job.cancelled", at: Date.now(), transferred: r.transferred }
+                : // 24 is "some files vanished before they could be transferred",
+                  // routine on a live archive. The same run's history record and
+                  // the recheck below both count it as a completed transfer.
+                  r.exitCode === 0 || r.exitCode === 24
+                  ? {
+                      ...base,
+                      type: "job.completed",
+                      at: Date.now(),
+                      result: { exitCode: r.exitCode, transferred: r.transferred },
+                    }
+                  : {
+                      ...base,
+                      type: "job.failed",
+                      at: Date.now(),
+                      message: r.stderr || `rsync exited ${String(r.exitCode)}`,
+                      exitCode: r.exitCode,
+                    },
+            );
+            // Before the lease is released and before the parent re-reads state,
+            // so the ledger it returns to is reading the check's record rather
+            // than the pre-sync one it would otherwise still be rendering. The
+            // heartbeat keeps running: a quick check over a large folder easily
+            // outlasts the 30s staleness window, and a lease that expired here
+            // would let a second job start against a tree this one is reading.
+            if (live && !r.cancelled && (r.exitCode === 0 || r.exitCode === 24)) {
+              await runRecheck(job.lease);
+            }
+            job.release();
+            if (!live) return;
+            setLines((prev) => [...prev, ...pending.current.splice(0)].slice(-tail));
+            setDone(r);
+            props.onDone(r);
+          })
+          .catch((e: unknown) => {
+            job.stopHeartbeat();
+            job.lease.observe({
+              ...base,
+              type: "job.failed",
+              at: Date.now(),
+              message: String(e),
+              exitCode: null,
+            });
+            job.release();
+            // Explicit catch at the subprocess boundary; a swallowed rejection
+            // would leave the view claiming a transfer is still running.
+            if (live) {
+              setDone({ exitCode: null, cancelled: false, transferred: 0, stderr: String(e) });
+            }
+          });
+      } catch (e) {
+        job.release();
+        setDone({ exitCode: null, cancelled: false, transferred: 0, stderr: String(e) });
+        return undefined;
+      }
+    };
+    void withJobOwnership("cli", "sync", run, {
+      onRefused: ({ owner }) => {
+        const message = owner
+          ? `${owner.actor} ${owner.operation} is already running`
           : "another Syncy process is starting";
         setDone({ exitCode: null, cancelled: false, transferred: 0, stderr: message });
-        return () => {
-          live = false;
-          clearInterval(flush);
-          clearInterval(ticker);
-        };
-      }
-      const jobId = `${started}-${unit}-${target.name}`;
-      const base = {
-        protocolVersion: 1,
-        jobId,
-        operation: "sync",
-        unit,
-        target: target.name,
-      } as const;
-      ownership.lease.observe({
-        ...base,
-        type: "job.started",
-        at: started,
-        phase: "queued",
-        unitSize: {
-          ...(props.nFiles === undefined ? {} : { files: props.nFiles }),
-          bytes: props.bytesPending,
-        },
-      });
-      ownership.lease.observe({
-        ...base,
-        type: "job.phase-changed",
-        at: Date.now(),
-        phase: "transferring",
-      });
-
-      /**
-       * The trailing quick check, run under the sync's own lease.
-       *
-       * Reads state from disk rather than from a prop: the transfer may have
-       * taken hours, and the copy of state this screen mounted with is the one
-       * that still says these files are missing.
-       */
-      const runRecheck = async (lease: JobOwnerLease): Promise<void> => {
-        const abort = new AbortController();
-        recheck.current = abort;
-        setChecking(true);
-        try {
-          await recheckAfterSync(config, loadState(), unit, target.name, {
-            signal: abort.signal,
-            onEvent: (event) => {
-              lease.observe(event);
-              if (event.type === "job.completed" && "outcome" in event.result) {
-                setChecked({ outcome: event.result.outcome, nChanges: event.result.nChanges });
-              }
-            },
-          });
-        } catch {
-          // A check that will not run is not a reason to lose the transfer's
-          // own outcome. The footer says the row is unchecked, which is true.
-        } finally {
-          recheck.current = null;
-          if (live) setChecking(false);
-        }
-      };
-
-      let seen = 0;
-      const h = startSync(config, unit, target, {
-        onLine: (line) => pending.current.push(line),
-        onItem: (item) => {
-          if (item.kind !== "change" || item.flags[1] !== "f") return;
-          seen += 1;
-          if (seen % 25 === 0 || seen === props.nFiles) {
-            try {
-              ownership.lease.observe({
-                ...base,
-                type: "job.progress-observed",
-                at: Date.now(),
-                filesSeen: seen,
-                ...(props.nFiles === undefined ? {} : { filesTotal: props.nFiles }),
-              });
-            } catch {
-              // The lease is gone — same as a lost heartbeat: stop rsync
-              // through the one cancellation path (`h.cancel()`) rather than
-              // letting the error reach pump() inside startSync.
-              h.cancel();
-            }
-          }
-        },
-        ...(props.needsChecksum === true ? { checksum: true } : {}),
-        ...(props.bin !== undefined ? { bin: props.bin } : {}),
-      });
-      handle.current = h;
-      ownerHeartbeat = setInterval(() => {
-        try {
-          ownership.lease.heartbeat();
-        } catch {
-          h.cancel();
-        }
-      }, 10_000);
-      h.done
-        .then(async (r) => {
-          ownership.lease.observe(
-            r.cancelled
-              ? { ...base, type: "job.cancelled", at: Date.now(), transferred: r.transferred }
-              : // 24 is "some files vanished before they could be transferred",
-                // routine on a live archive. The same run's history record and
-                // the recheck below both count it as a completed transfer.
-                r.exitCode === 0 || r.exitCode === 24
-                ? {
-                    ...base,
-                    type: "job.completed",
-                    at: Date.now(),
-                    result: { exitCode: r.exitCode, transferred: r.transferred },
-                  }
-                : {
-                    ...base,
-                    type: "job.failed",
-                    at: Date.now(),
-                    message: r.stderr || `rsync exited ${String(r.exitCode)}`,
-                    exitCode: r.exitCode,
-                  },
-          );
-          // Before the lease is released and before the parent re-reads state,
-          // so the ledger it returns to is reading the check's record rather
-          // than the pre-sync one it would otherwise still be rendering. The
-          // heartbeat keeps running: a quick check over a large folder easily
-          // outlasts the 30s staleness window, and a lease that expired here
-          // would let a second job start against a tree this one is reading.
-          if (live && !r.cancelled && (r.exitCode === 0 || r.exitCode === 24)) {
-            await runRecheck(ownership.lease);
-          }
-          if (ownerHeartbeat !== null) clearInterval(ownerHeartbeat);
-          ownership.lease.release();
-          if (!live) return;
-          setLines((prev) => [...prev, ...pending.current.splice(0)].slice(-tail));
-          setDone(r);
-          props.onDone(r);
-        })
-        .catch((e: unknown) => {
-          if (ownerHeartbeat !== null) clearInterval(ownerHeartbeat);
-          ownership.lease.observe({
-            ...base,
-            type: "job.failed",
-            at: Date.now(),
-            message: String(e),
-            exitCode: null,
-          });
-          ownership.lease.release();
-          // Explicit catch at the subprocess boundary; a swallowed rejection
-          // would leave the view claiming a transfer is still running.
-          if (live) {
-            setDone({ exitCode: null, cancelled: false, transferred: 0, stderr: String(e) });
-          }
-        });
-    } catch (e) {
-      if (ownership.acquired) {
-        if (ownerHeartbeat !== null) clearInterval(ownerHeartbeat);
-        ownership.lease.release();
-      }
-      setDone({ exitCode: null, cancelled: false, transferred: 0, stderr: String(e) });
-    }
+      },
+      // A lease that can no longer be refreshed stops rsync through the one
+      // cancellation path, the same one ctrl-c takes.
+      onLost: () => handle.current?.cancel(),
+    });
 
     return () => {
       live = false;
       clearInterval(flush);
       clearInterval(ticker);
-      if (ownerHeartbeat !== null) clearInterval(ownerHeartbeat);
+      owned?.stopHeartbeat();
       // The check outlives the screen otherwise: it is a plain async call with
       // no tie to React's lifecycle, the same way the transfer queue was.
       recheck.current?.abort();
