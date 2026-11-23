@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "ink-testing-library";
 import { type Config, parseConfig } from "../src/config.ts";
+import { shelfSummary } from "../src/shelf.ts";
 import type { CellState, UnitState } from "../src/status.ts";
 import { forkliftRows } from "../src/tui/Forklift.tsx";
 import { Mark } from "../src/tui/Mark.tsx";
-import { MAX_BLOCKS, Shelf, shelfSummary } from "../src/tui/Shelf.tsx";
+import { MAX_BLOCKS, Shelf } from "../src/tui/Shelf.tsx";
 import { THEMES } from "../src/tui/theme.ts";
 import { displayWidth } from "../src/width.ts";
 

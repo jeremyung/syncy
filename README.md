@@ -298,12 +298,13 @@ compatibility with existing configs.
 State lives in `~/.local/state/syncy`:
 
 ```
-state.json       current result per folder, destination and method
-history.jsonl    every rsync invocation, with literal argv and exit code
-diffs/           which files differ, per folder and destination
+state.json           current result per folder, destination and method
+history.jsonl        every rsync invocation, with literal argv and exit code
+diffs/               which files differ, per folder and destination
 logs/
-job-owner/       the lease for whichever job is running now, if any
-job-owners/      append-only archive of every past lease and how it ended
+job-owner/           the lease for whichever job is running now, if any
+job-owners/          append-only archive of every past lease and how it ended
+job-owner-proposals/ unpublished ownership proposals retained for inspection
 ```
 
 Plain files rather than a database, so the record can be read with `cat`,
@@ -315,6 +316,11 @@ by when and how the lease ended — `released` normally, `stale` when its owner
 was judged abandoned and recovered, or `invalid` when the record itself could
 not be read — and recording who ran it. It exists for inspection, not for
 syncy itself to read back.
+
+`job-owner-proposals/` holds private claims that were never published, including
+claims refused because another process owned the work. They are retained for
+inspection and never treated as active ownership. A successful claim moves its
+complete directory into `job-owner/` atomically.
 
 `SYNCY_DEBUG=1` writes diagnostics to `state/debug.log`, which is where a
 full-screen interface that appears to hang can say why. It is cheap enough to
@@ -338,7 +344,7 @@ own palette.
 ## Development
 
 ```
-bun test               # 1057 tests
+bun test               # 1075 tests
 bunx tsc --noEmit
 bun run build
 bun run audit          # no machine-specific data in the tree or the history

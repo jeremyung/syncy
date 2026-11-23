@@ -128,6 +128,12 @@ interface PlannedCheck extends CheckRunUnit {
  * This owns the same persistence order the TUI historically did: state, diff,
  * history, then publication. An abort records no verdict for the interrupted
  * check and stops the rest of the queue.
+ *
+ * Every check that started leaves a history line, whatever became of it. A
+ * cancelled or thrown check used to emit its event and write nothing, so the
+ * record a scheduled run is judged by showed that work as never having
+ * happened: the history could say completed and skipped, but not cancelled or
+ * failed, for exactly the runs that most need saying.
  */
 export async function runCheckQueue(
   config: Config,
@@ -159,6 +165,28 @@ export async function runCheckQueue(
   const skipped: SkippedDestination[] = [];
   const failed: FailedCheck[] = [];
   const isAborted = (): boolean => options.signal?.aborted === true;
+  const recordedEndings = new Set<PlannedCheck>();
+
+  const recordEnded = (
+    job: PlannedCheck,
+    outcome: "cancelled" | "failed",
+    detail: string,
+  ): void => {
+    // Terminal observers can throw (for example after losing the job lease).
+    // Persist before calling them, once per job even if the catch path retries.
+    if (recordedEndings.has(job)) return;
+    deps.appendHistory({
+      ts: now(),
+      unit: job.unit,
+      target: job.target.name,
+      argv: [],
+      exitCode: null,
+      operation: mode,
+      outcome,
+      detail,
+    });
+    recordedEndings.add(job);
+  };
 
   const cancelled = (): CheckRunResult => ({
     status: "cancelled",
@@ -200,13 +228,6 @@ export async function runCheckQueue(
         skipped.push({ target: job.target.name, why: status });
       }
       debug("check.skipped", { unit: job.unit, target: job.target.name, reach: status });
-      options.onEvent?.({
-        ...base,
-        type: "job.skipped",
-        at: now(),
-        reachability: status,
-        reason: reachWord(status),
-      });
       deps.appendHistory({
         ts: now(),
         unit: job.unit,
@@ -216,6 +237,13 @@ export async function runCheckQueue(
         operation: mode,
         outcome: "skipped",
         detail: reachWord(status),
+      });
+      options.onEvent?.({
+        ...base,
+        type: "job.skipped",
+        at: now(),
+        reachability: status,
+        reason: reachWord(status),
       });
       done += 1;
       bytesDone += job.bytes;
@@ -257,6 +285,7 @@ export async function runCheckQueue(
         },
       });
       if (isAborted()) {
+        recordEnded(job, "cancelled", "no verification was recorded");
         options.onEvent?.({ ...base, type: "job.cancelled", at: now() });
         return cancelled();
       }
@@ -283,6 +312,7 @@ export async function runCheckQueue(
         operation: mode,
         outcome: result.scan.outcome === "error" ? "failed" : "completed",
       });
+      recordedEndings.add(job);
       options.onState?.(working);
       options.onEvent?.({
         ...base,
@@ -301,6 +331,7 @@ export async function runCheckQueue(
       });
     } catch (error) {
       if (isAborted()) {
+        recordEnded(job, "cancelled", "no verification was recorded");
         options.onEvent?.({ ...base, type: "job.cancelled", at: now() });
         return cancelled();
       }
@@ -316,13 +347,6 @@ export async function runCheckQueue(
           reach: error.reachability,
           fresh: true,
         });
-        options.onEvent?.({
-          ...base,
-          type: "job.skipped",
-          at: now(),
-          reachability: error.reachability,
-          reason,
-        });
         deps.appendHistory({
           ts: now(),
           unit: job.unit,
@@ -332,6 +356,13 @@ export async function runCheckQueue(
           operation: mode,
           outcome: "skipped",
           detail: reason,
+        });
+        options.onEvent?.({
+          ...base,
+          type: "job.skipped",
+          at: now(),
+          reachability: error.reachability,
+          reason,
         });
         done += 1;
         bytesDone += job.bytes;
@@ -345,6 +376,7 @@ export async function runCheckQueue(
         error: message,
       });
       failed.push({ unit: job.unit, target: job.target.name, message });
+      recordEnded(job, "failed", message);
       options.onEvent?.({ ...base, type: "job.failed", at: now(), message, exitCode: null });
     }
     done += 1;

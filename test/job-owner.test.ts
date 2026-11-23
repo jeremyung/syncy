@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { acquireJobOwner, jobOwnerExists, readJobOwner } from "../src/job-owner.ts";
 import { makeFixtureDir, PROJECT_ROOT, removeFixtureDir } from "./helpers.ts";
@@ -287,43 +287,29 @@ describe("cross-process job ownership", () => {
     expect(jobOwnerExists(root)).toBe(false);
   });
 
-  test("a write that lands after a rival rmdir's our still-empty directory retries instead of returning two owners", () => {
-    // Hooks `token()`, which acquireJobOwner calls right after its own mkdir
-    // succeeds but before it writes its record — exactly the window a rival
-    // could act in. The first call simulates that rival: it rmdir's the
-    // directory out from under us (still empty, so the rmdir genuinely
-    // succeeds), which must make our subsequent write fail with ENOENT and
-    // retry, rather than silently landing in whatever directory happens to
-    // exist by the time the write runs.
-    const root = fixture("job-owner-write-race");
-    let calls = 0;
+  test("a complete proposal can replace an abandoned empty ownership directory", () => {
+    const root = fixture("job-owner-empty-before-publication");
     const result = acquireJobOwner("cli", "quick", {
       root,
       now: () => 3_000,
       pid: 1010,
       token: () => {
-        calls += 1;
-        if (calls === 1) {
-          rmdirSync(join(root, "job-owner"));
-          return "should-not-be-used";
-        }
-        return "won-the-retry";
+        // A legacy claimant can leave an empty directory while our complete
+        // proposal is being prepared. It is not an owner and cannot block the
+        // atomic publication of our nonempty directory.
+        mkdirSync(join(root, "job-owner"));
+        return "published";
       },
     });
     expect(result.acquired).toBe(true);
-    if (result.acquired) expect(result.lease.record.token).toBe("won-the-retry");
-    expect(readdirSync(join(root, "job-owner"))).toEqual(["owner.won-the-retry.json"]);
+    if (result.acquired) expect(result.lease.record.token).toBe("published");
+    expect(readdirSync(join(root, "job-owner"))).toEqual(["owner.published.json"]);
   });
 
-  test("a write that lands in a rival's freshly re-mkdir'd directory backs itself out", () => {
-    // Same hook point as above, but this time the rival doesn't just rmdir —
-    // it rmdir's, re-mkdirs, and publishes its OWN record before we resume,
-    // so our directory still exists by the time we write (no ENOENT). Our
-    // write succeeds too (different filename), landing two records in one
-    // directory. The post-write self-check must catch that and back out —
-    // the rival's record is fresh, so we must end up correctly reporting
-    // "owned" by the rival, never a lease of our own that shares a
-    // directory with theirs.
+  test("a rival that publishes before our proposal keeps ownership", () => {
+    // Pause before preparing our proposal and let a real nested claimant win.
+    // Its nonempty live directory must refuse our later rename; neither its
+    // record nor its ownership can be replaced by our delayed proposal.
     const root = fixture("job-owner-write-race-collision");
     const result = acquireJobOwner("cli", "quick", {
       root,
@@ -345,7 +331,7 @@ describe("cross-process job ownership", () => {
       owner: expect.objectContaining({ token: "rival" }),
       reason: "owned",
     });
-    // Exactly one record remains — the rival's — never our "loser" write.
+    // Exactly one live record remains; our losing proposal stays private.
     expect(readdirSync(join(root, "job-owner")).filter((name) => name.endsWith(".json"))).toEqual([
       "owner.rival.json",
     ]);
@@ -354,6 +340,85 @@ describe("cross-process job ownership", () => {
 });
 
 describe("two real processes racing for the same dead owner", () => {
+  test("a delayed invalid-record sweep cannot reclaim a newly published owner", async () => {
+    const root = fixture("job-owner-partial-publication");
+    const worker = join(root, "worker.ts");
+    // Force the OS-valid interleaving between opening the initial record and
+    // writing its contents. The mock exists only in the publisher subprocess;
+    // both claimants run the real acquire/recovery algorithm on real files.
+    writeFileSync(
+      worker,
+      `
+import { mock } from "bun:test";
+import * as fs from "node:fs";
+import { join } from "node:path";
+const original = { ...fs };
+const root = process.argv[2];
+const role = process.argv[3];
+function waitFor(name) {
+  const deadline = Date.now() + 5_000;
+  while (!original.existsSync(join(root, name))) {
+    if (Date.now() > deadline) throw new Error("missing barrier: " + name);
+    Bun.sleepSync(1);
+  }
+}
+if (role === "A") {
+  let delayed = false;
+  mock.module("node:fs", () => ({ ...original, writeFileSync(path, data, options) {
+    if (!delayed && String(path).includes("owner.A.")) {
+      delayed = true;
+      original.writeFileSync(path, "", options);
+      original.writeFileSync(join(root, "initial-open"), "ready");
+      waitFor("sweep-planned");
+      original.writeFileSync(path, data, "utf8");
+    } else original.writeFileSync(path, data, options);
+  }}));
+} else waitFor("initial-open");
+const { acquireJobOwner } = await import(${JSON.stringify(join(PROJECT_ROOT, "src", "job-owner.ts"))});
+let planned = false;
+const result = acquireJobOwner("cli", "quick", {
+  root, token: () => role, pidAlive: () => false,
+  now: () => {
+    if (role === "B" && !planned) {
+      planned = true;
+      original.writeFileSync(join(root, "sweep-planned"), "ready");
+      waitFor("publisher-acquired");
+    }
+    return Date.now();
+  },
+});
+if (role === "A") {
+  if (!result.acquired) throw new Error("publisher did not acquire");
+  original.writeFileSync(join(root, "publisher-acquired"), "ready");
+  waitFor("recoverer-finished");
+} else original.writeFileSync(join(root, "recoverer-finished"), "ready");
+process.stdout.write(JSON.stringify({ acquired: result.acquired }));
+`,
+      "utf8",
+    );
+    const spawn = (role: string) =>
+      Bun.spawn([process.execPath, "run", worker, root, role], {
+        cwd: PROJECT_ROOT,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    const a = spawn("A");
+    const b = spawn("B");
+    const [outA, outB, errA, errB, exitA, exitB] = await Promise.all([
+      new Response(a.stdout).text(),
+      new Response(b.stdout).text(),
+      new Response(a.stderr).text(),
+      new Response(b.stderr).text(),
+      a.exited,
+      b.exited,
+    ]);
+    expect(exitA, errA).toBe(0);
+    expect(exitB, errB).toBe(0);
+    expect(JSON.parse(outA)).toEqual({ acquired: true });
+    expect(JSON.parse(outB)).toEqual({ acquired: false });
+    expect(readJobOwner(root)?.token).toBe("A");
+  }, 15_000);
+
   const WORKER_SOURCE = `
 import { acquireJobOwner } from ${JSON.stringify(join(PROJECT_ROOT, "src", "job-owner.ts"))};
 

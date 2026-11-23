@@ -1,0 +1,111 @@
+# Personal Mac build acceptance
+
+The Mac app is implemented. Release acceptance still requires a clean-machine
+smoke test; a successful build or a resident process cannot establish that the
+interface launches, cancels work, or recovers its ledger correctly.
+
+## Integration checked on 2026-11-23
+
+The scheduling changes in PR #55 and engine ownership refactor in PR #54 were
+combined against the same main revision. Their only merge conflict was the
+README test count, updated to the measured combined count.
+
+| Gate | Observed result |
+|---|---|
+| `bun test` | 1,075 passed, zero failed |
+| `bunx tsc --noEmit` | Passed |
+| `bun run lint` | Passed |
+| `swift test` in `macos/` | 37 passed, zero failed (33 core and four app scheduler tests) |
+| `./scripts/build-mac-app.sh` | Built the engine and Mac bundle; signature verification passed |
+| `bun run audit` | Working tree, commit messages, and all reachable blobs clean |
+
+The process-cleanup tests require permission to run `ps`. In an earlier restricted
+sandbox, 1,068 passed and two failed because `ps` could not run. The complete
+suite was then rerun with process inspection allowed and all 1,070 passed.
+Apple's icon compiler likewise needed to run outside the restricted sandbox.
+Swift module caches were redirected into the build directory.
+
+Two guards were independently checked by restoring their bugs: an engine
+import from the interface made the layering test fail, and removing the
+preflight configuration-revision validator made its required-field test fail.
+Both changes were restored; all 24 layering and protocol tests then passed.
+
+Review of the app scheduler found two further cleanup bugs: cancellation left
+the next job showing “Cancelling…”, and releasing the busy state before the
+final refresh let another due schedule start while the older run could still
+clear its activity. Cleanup now runs after the refresh, in `defer`. Both app
+tests failed when the old cleanup was restored, then passed with the fix.
+A third app test confirms that a changed preflight revision suspends a sync
+without running it or consuming its due occurrence. The app tests use in-memory
+preferences and controlled engine responses; they do not access real schedules,
+notification settings, or source/destination files.
+
+Self-review found that an older refresh in flight could swallow a scheduled
+run's final refresh. Refresh requests now wait for the older read and then read
+again. The fourth app test holds that older read across a completed check and
+asserts that the final snapshot comes from the new read. Restoring the previous
+refresh implementation made this test fail.
+
+Self-review also checked terminal-event observers throwing after ownership is
+lost. Cancellation, failure, and skip records were missing because notification
+preceded persistence. Terminal outcomes now reach history before their events;
+the error path cannot duplicate an ending or relabel a recorded completion.
+Three observer tests failed before the ordering fix. Disabling the duplicate
+guard separately made the cancellation and completion tests fail. All four
+observer cases pass with the fix.
+
+macOS CI then exposed overlapping successful ownership claims. A deterministic
+two-process test reproduced a delayed invalid-record sweep removing a record
+after its publisher had acquired it. Claims are now prepared in private,
+nonempty proposal directories and published with a single directory rename.
+An existing nonempty owner cannot be replaced. Unpublished proposals remain
+under the state directory for inspection; they are not live owners. The
+deterministic regression failed before the fix and passed after it, alongside
+the existing real-process contention test.
+Twenty additional rounds passed 800 simultaneous stale-owner races and 20
+forced publication interleavings locally.
+
+The desktop inspection tool timed out without returning an app window state.
+An attempted sandboxed launch exited with status 134 and supplied no diagnostic
+output. Neither observation establishes a successful visual launch or proves a
+production launch defect. The smoke test below remains outstanding.
+
+## Remaining smoke test for issue #32
+
+Use a clean Mac account with supported macOS and rsync 3.x installed. Use only
+synthetic files under this repository's `.test-tmp/` directory. Keep both XDG
+config and state directories there as well. Retain the fixture and its records
+for inspection.
+
+1. Build and sign the app using the documented personal build path. Put a copy
+   in Applications. Launch with `SYNCY_ENGINE` unset so engine discovery must
+   find the bundled helper. Ensure the app process receives the isolated XDG
+   directories; do not use a live archive for this test.
+2. Confirm the menu-bar item and ledger window appear. Configure the fixture's
+   source and destination through setup. Confirm the displayed folder and
+   destination match the fixture, and Doctor reports the rsync build and
+   destination identity.
+3. Run a quick check. Wait for a newly recorded scan in the fixture's
+   `state.json`, then compare the displayed verdict and history with that
+   record. A previously displayed verdict is not completion evidence.
+4. Prepare matching synthetic large files at both sides, copying to the
+   destination through rsync. Start a deep verify. Wait for recorded live job
+   ownership before pressing Stop. Confirm cancellation appears in history,
+   ownership is released, and no rsync process associated with the fixture
+   survives. Cancellation must not create a successful deep verification.
+5. Start another check, quit using **Quit and Keep Running**, then relaunch.
+   Confirm the app discovers the existing owner or the newly recorded outcome,
+   and cannot launch conflicting work. Closing only the ledger window must
+   leave the menu-bar app and owned work available.
+6. Record the macOS and rsync versions, signing mode, exact build revision,
+   observed outcomes, and any failure diagnostics. Close #32 only after every
+   step has been observed. Umbrella #25 was closed as superseded by the focused
+   issues; that does not waive this acceptance work.
+
+## Separate scheduling decision
+
+PR #55 makes a scheduled sync's refusal visible. It does not add a quick check
+before that sync. Once the recorded backlog has been copied, later occurrences
+can skip with “no recorded files to sync” until another check finds changes.
+Deciding whether a sync schedule should discover new work first is a separate
+product change, with its own ownership, cancellation, and outcome requirements.

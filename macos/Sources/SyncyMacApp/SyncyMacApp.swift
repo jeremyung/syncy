@@ -161,7 +161,7 @@ final class AppModel: ObservableObject {
   private let client: any EngineClient
   private var attemptedInitialLoad = false
   private var lastFullRefreshAt: Date?
-  private var snapshotRefreshInFlight = false
+  private var snapshotRefreshTask: Task<Void, Never>?
   private var checkTask: Task<Void, Error>?
   private var syncTask: Task<Void, Never>?
   private var scheduleTask: Task<Void, Never>?
@@ -169,19 +169,17 @@ final class AppModel: ObservableObject {
   private var liveJobID: String?
   private var differencesRequestID = UUID()
   private var suppressSnapshotJob = false
-  private let scheduleDefaultsKey = "syncy.check-schedules.v1"
+  private let preferences: any AppPreferences
 
-  init(client: (any EngineClient)? = nil) {
+  init(client: (any EngineClient)? = nil, preferences: (any AppPreferences)? = nil) {
+    let preferences = preferences ?? DefaultsAppPreferences()
+    self.preferences = preferences
     if let client {
       self.client = client
     } else {
       self.client = (try? ProcessEngineClient.located()) ?? DisconnectedEngineClient()
     }
-    if let data = UserDefaults.standard.data(forKey: scheduleDefaultsKey),
-      let decoded = try? JSONDecoder().decode([CheckSchedule].self, from: data)
-    {
-      schedules = decoded
-    }
+    schedules = preferences.schedules
   }
 
   var selectedUnit: UnitSnapshot? {
@@ -298,12 +296,24 @@ final class AppModel: ObservableObject {
   }
 
   func refresh() async {
-    guard !snapshotRefreshInFlight else { return }
-    snapshotRefreshInFlight = true
+    // A snapshot already being read may predate the check that requested
+    // this refresh. Wait for it, then read again; silently returning here
+    // left the ledger showing the evidence from before that check finished.
+    while let current = snapshotRefreshTask {
+      await current.value
+    }
+    let refresh = Task {
+      await self.loadSnapshot()
+      self.snapshotRefreshTask = nil
+    }
+    snapshotRefreshTask = refresh
+    await refresh.value
+  }
+
+  private func loadSnapshot() async {
     isRefreshing = true
     isLoading = true
     defer {
-      snapshotRefreshInFlight = false
       isRefreshing = false
       isLoading = false
     }
@@ -572,9 +582,7 @@ final class AppModel: ObservableObject {
   }
 
   private func saveSchedules() {
-    if let data = try? JSONEncoder().encode(schedules) {
-      UserDefaults.standard.set(data, forKey: scheduleDefaultsKey)
-    }
+    preferences.schedules = schedules
   }
 
   private func startDueScheduleIfNeeded(now: Date = Date()) {
@@ -586,6 +594,7 @@ final class AppModel: ObservableObject {
       })
     else { return }
     let due = schedules[index].latestDueDate(at: now)
+    let previousAttempt = schedules[index].lastAttemptAt
     schedules[index].lastAttemptAt = now
     let schedule = schedules[index]
     saveSchedules()
@@ -596,23 +605,46 @@ final class AppModel: ObservableObject {
     let events = eventHandler(actor: .scheduler)
     scheduleTask = Task { [weak self] in
       guard let self else { return }
+      // A run still owns the app's busy state while its final snapshot is
+      // loading. Releasing it before that await let another schedule start,
+      // then the older run cleared the newer run's live activity. Cancellation
+      // also left the next job displaying a disabled "Cancelling…" button.
+      defer {
+        self.isLaunchingJob = false
+        self.isCancellingJob = false
+        self.scheduleTask = nil
+      }
       var outcomeMessage: String?
-      do {
+      var suspended = false
+      // Once per occurrence: a sync found suspended at preflight is not an
+      // attempt, and records its missed time only when it does run.
+      let recordMissedIfLate = {
         if let due, now.timeIntervalSince(due) > 90 {
           try? await self.client.recordMissed(schedule: schedule, due: due)
         }
+      }
+      do {
         switch schedule.operation {
         case .quick, .deep:
           guard let operation = schedule.operation.engineOperation else {
             throw ScheduleRunError.incompleteCheckOperation
           }
+          await recordMissedIfLate()
           try await self.client.runCheck(
             operation, unit: schedule.unit, actor: .scheduler, onEvent: events)
         case .sync:
           guard let unit = schedule.unit, let target = schedule.target else {
             throw ScheduleRunError.incompleteSyncScope
           }
-          let preflight = try await self.client.prepareSync(unit: unit, target: target)
+          let preflight = try await self.client.prepareSync(
+            unit: unit, target: target, actor: .scheduler)
+          // Approval was checked against the app's snapshot, which can be
+          // hours old: a hand-edited config.toml changes nothing the app would
+          // notice. The preflight's revision is the engine's, read just now.
+          guard schedule.isApproved(forConfigRevision: preflight.configRevision) else {
+            throw ScheduleRunError.suspended
+          }
+          await recordMissedIfLate()
           guard preflight.ok, let token = preflight.confirmationToken else {
             throw ScheduleRunError.preflightRefused(
               preflight.checks.first(where: { !$0.ok })?.detail ?? "guard checks did not pass")
@@ -625,17 +657,38 @@ final class AppModel: ObservableObject {
           self.jobOutcomeProblems.isEmpty
           ? "Scheduled work cancelled"
           : self.jobOutcomeProblems.joined(separator: " · ")
+      } catch ScheduleRunError.suspended {
+        // Not an attempt: the occurrence stays due, so reviewing the schedule
+        // runs it once, exactly as it would had the snapshot been current.
+        // The approval is withdrawn outright rather than left for the next
+        // snapshot to contradict: if that refresh failed, the stale revision
+        // would still match and this would retry every poll.
+        if let index = self.schedules.firstIndex(where: { $0.id == schedule.id }) {
+          self.schedules[index].lastAttemptAt = previousAttempt
+          self.schedules[index].approvedConfigRevision = nil
+          self.saveSchedules()
+        }
+        suspended = true
+        outcomeMessage =
+          "\(self.scheduleSummary(schedule)) suspended · configuration changed since it was reviewed"
       } catch {
         outcomeMessage = "Scheduled work failed · \(error.localizedDescription)"
       }
-      await self.notifyScheduledOutcome(schedule: schedule, failure: outcomeMessage)
-      self.isLaunchingJob = false
-      self.scheduleTask = nil
+      let recorded = (try? await self.client.history()) ?? []
+      let outcome =
+        suspended
+        ? ScheduledOutcome(needsAttention: true, message: outcomeMessage ?? "")
+        : ScheduledOutcome.summarize(
+          schedule: schedule, startedAt: now, recorded: recorded, failure: outcomeMessage)
+      await self.notifyScheduledOutcome(outcome)
       await self.refresh()
-      if outcomeMessage == nil {
-        self.finishJob(success: "Scheduled work completed · evidence recorded")
+      self.liveActiveJob = nil
+      self.liveJobID = nil
+      if outcome.needsAttention {
+        self.errorMessage = outcome.message
+      } else {
+        self.jobOutcomeMessage = outcome.message
       }
-      if let outcomeMessage { self.errorMessage = outcomeMessage }
     }
   }
 
@@ -714,19 +767,14 @@ final class AppModel: ObservableObject {
     }
   }
 
-  private func notifyScheduledOutcome(schedule: CheckSchedule, failure: String?) async {
-    let entries = (try? await client.history()) ?? []
-    let matching = entries.filter {
-      $0.operation == schedule.operation.rawValue &&
-        (schedule.unit == nil || $0.unit == schedule.unit) &&
-        $0.ts >= (schedule.lastAttemptAt?.timeIntervalSince1970 ?? 0) * 1_000
-    }
-    let hasProblem = failure != nil || matching.contains { $0.outcome != "completed" }
-    let defaults = UserDefaults.standard
+  /// Problems notify by default and name every destination that did not
+  /// complete; routine full success stays quiet unless asked for.
+  private func notifyScheduledOutcome(_ outcome: ScheduledOutcome) async {
+    let hasProblem = outcome.needsAttention
     let shouldNotify =
       hasProblem
-      ? defaults.object(forKey: "notify-problems") as? Bool ?? true
-      : defaults.object(forKey: "notify-success") as? Bool ?? false
+      ? preferences.notifyProblems
+      : preferences.notifySuccess
     guard shouldNotify else { return }
 
     let center = UNUserNotificationCenter.current()
@@ -738,13 +786,7 @@ final class AppModel: ObservableObject {
     guard refreshed.authorizationStatus == .authorized else { return }
     let content = UNMutableNotificationContent()
     content.title = hasProblem ? "Syncy scheduled work needs attention" : "Syncy work completed"
-    if let failure {
-      content.body = failure
-    } else if let skipped = matching.first(where: { $0.outcome == "skipped" }) {
-      content.body = "\(skipped.unit) → \(skipped.target) skipped · \(skipped.detail ?? "not run")"
-    } else {
-      content.body = scheduleSummary(schedule)
-    }
+    content.body = outcome.message
     try? await center.add(
       UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
   }
@@ -761,12 +803,14 @@ private enum ScheduleRunError: LocalizedError {
   case incompleteCheckOperation
   case incompleteSyncScope
   case preflightRefused(String)
+  case suspended
 
   var errorDescription: String? {
     switch self {
     case .incompleteCheckOperation: "scheduled check has no check operation"
     case .incompleteSyncScope: "scheduled sync has no exact unit and destination"
     case .preflightRefused(let detail): "scheduled sync preflight refused · \(detail)"
+    case .suspended: "scheduled sync suspended · configuration changed since it was reviewed"
     }
   }
 }

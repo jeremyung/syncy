@@ -25,11 +25,19 @@ SYNCY_ENGINE=/absolute/path/to/syncy swift run SyncyMac
 
 ## Build and test
 
+See [personal build acceptance](VALIDATION.md) for the measured integration
+checks and the remaining clean-machine launch, cancellation, and relaunch test.
+
 ```sh
 cd macos
 swift build
 swift test
 ```
+
+The test suite covers the shared engine contract and the app's scheduler state
+machine. Scheduler tests use in-memory preferences and controlled engine
+completion, so cancellation, final refresh, and configuration-change suspension
+can be exercised without changing real schedules or requesting notifications.
 
 From the repository root, `scripts/build-mac-app.sh` builds the engine and a
 `build/Syncy.app` bundle, embeds the engine helper, and ad-hoc signs both. Set
@@ -76,10 +84,16 @@ Daily and weekly schedules can run quick checks, deep verifies, or an explicitly
 enabled sync for one exact folder and destination. Scheduled sync always obtains
 a new, short-lived preflight token immediately before running; it cannot reuse a
 previous review. A source or destination configuration change suspends that sync
-schedule until the person reviews it again. Missed occurrences and skipped
-destinations are literal history outcomes, and local notifications default to
-problems only. The app must be running to start work; opening it at login is
-available from Settings. After sleep, only the latest missed occurrence runs.
+schedule until the person reviews it again; the check is made against the
+revision the engine reports at preflight, not the app's last snapshot. Each
+schedule in Settings states its destination, cadence, power and network
+expectations, and what skips it. Missed occurrences, skipped destinations
+(including a scheduled sync whose destination is not connected), and cancelled
+or failed checks are literal history outcomes. Local notifications default to
+problems only, and a problem notification names every destination that did not
+complete and how many did. The app must be running to start work; opening it at
+login is available from Settings. After sleep, only the latest missed occurrence
+runs.
 
 ## Developer ID and optional notarization
 

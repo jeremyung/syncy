@@ -1,10 +1,10 @@
 import {
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmdirSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -15,9 +15,9 @@ import { stateDir } from "./paths.ts";
  * One process owns work that can read a source, invoke rsync, or record evidence.
  * Other interfaces observe this record instead of starting duplicate work.
  *
- * Ownership directories are moved into an append-only archive on release or
- * recovery. That makes crash recovery inspectable and avoids deleting Syncy's
- * own operational history.
+ * Ownership records are moved into an append-only archive on release or
+ * recovery. Unpublished proposals stay under job-owner-proposals for inspection.
+ * Neither path deletes Syncy's operational history.
  */
 export interface JobOwnerRecord {
   readonly version: 1;
@@ -183,9 +183,9 @@ function tryParseRecordFile(path: string): JobOwnerRecord | undefined {
 
 /**
  * The live record is whichever single `owner.*.json` file sits in `job-owner/`.
- * Zero files (nobody has published yet) and more than one file (an
- * in-progress claim collision resolving itself, see archiveFile) both read as
- * "no usable owner" rather than guessing.
+ * Zero files and more than one file (legacy or inconsistent state) both read
+ * as "no usable owner" rather than guessing. New claims publish one complete
+ * directory atomically, so observers cannot see their partial records.
  */
 export function readJobOwner(root = stateDir()): JobOwnerRecord | undefined {
   const { current } = ownerPaths(root);
@@ -269,60 +269,40 @@ export function acquireJobOwner(
   const abandonAfterMs = options.abandonAfterMs ?? DEFAULT_ABANDON_AFTER_MS;
   const paths = ownerPaths(root);
   mkdirSync(dirname(paths.current), { recursive: true });
+  let proposal: { directory: string; record: JobOwnerRecord } | undefined;
 
   for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt += 1) {
     try {
-      mkdirSync(paths.current);
-      // `mkdirSync` succeeding only proves we created *a* directory at this
-      // path just now; it is not a lock on everything that happens next. A
-      // rival can still see it as empty, decide it is abandoned (below),
-      // rmdir it, and re-mkdir a fresh one before our write below lands — in
-      // which case our write would silently succeed into THEIR directory.
-      // The self-check after the write (not the mkdir) is what actually
-      // closes that window: see the comment there.
-      const token = makeToken();
-      const at = now();
-      const record: JobOwnerRecord = {
-        version: 1,
-        token,
-        pid,
-        actor,
-        operation,
-        startedAt: at,
-        heartbeatAt: at,
-      };
-      const path = join(paths.current, recordName(token));
-      try {
-        writeFileSync(path, `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "wx" });
-      } catch (error) {
-        // Our directory was rmdir'd (and not yet recreated) in the
-        // microsecond window between our mkdir and this write.
-        if (vanished(error)) continue;
-        throw error;
+      if (proposal === undefined) {
+        const token = makeToken();
+        const at = now();
+        const record: JobOwnerRecord = {
+          version: 1,
+          token,
+          pid,
+          actor,
+          operation,
+          startedAt: at,
+          heartbeatAt: at,
+        };
+        // Prepare the entire nonempty directory privately. Publishing an empty
+        // live directory, or an empty JSON file opened before its write,
+        // let recovery mistake an in-flight claim for abandoned work. A delayed
+        // sweep could then archive an owner that had already started running.
+        const proposals = join(root, "job-owner-proposals");
+        mkdirSync(proposals, { recursive: true });
+        const directory = mkdtempSync(join(proposals, "claim-"));
+        writeFileSync(join(directory, recordName(token)), `${JSON.stringify(record)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        proposal = { directory, record };
       }
-      // Confirm the directory we just wrote into still holds only our
-      // record. If a rival rmdir'd our directory and re-mkdir'd its own
-      // between our mkdir and our write (above), our write above would have
-      // landed in THEIR directory instead of failing — this is what catches
-      // that: a second file appearing means we lost a race we can't win
-      // retroactively, so we back out instead of returning a lease that
-      // shares its directory with someone else's.
-      let siblings: string[];
-      try {
-        siblings = readdirSync(paths.current).filter(isRecordName);
-      } catch (error) {
-        if (vanished(error)) continue;
-        throw error;
-      }
-      if (siblings.length !== 1 || siblings[0] !== recordName(token)) {
-        try {
-          rmSync(path, { force: true });
-        } catch (error) {
-          if (!vanished(error)) throw error;
-        }
-        rmdirIgnoringNonEmpty(paths.current);
-        continue;
-      }
+      // rename can replace an empty abandoned directory, but cannot replace
+      // the nonempty directory another claimant has already published. There
+      // is no interval in which recovery can see an incomplete live claim.
+      renameSync(proposal.directory, paths.current);
+      const record = proposal.record;
 
       let active = record;
       let released = false;
@@ -414,7 +394,7 @@ export function acquireJobOwner(
       };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") throw error;
+      if (code !== "EEXIST" && code !== "ENOTEMPTY" && !vanished(error)) throw error;
     }
 
     const observed = readJobOwner(root);
@@ -438,17 +418,15 @@ export function acquireJobOwner(
     try {
       entries = readdirSync(paths.current);
     } catch {
-      continue; // Already gone; next attempt's mkdir will just recreate it.
+      continue; // Already gone; next attempt can publish the prepared proposal.
     }
     const hasLiveCandidate = entries.some(
       (name) => isRecordName(name) && tryParseRecordFile(join(paths.current, name)) !== undefined,
     );
     if (hasLiveCandidate) {
-      // At least one file here still parses as a real record even though
-      // `readJobOwner` above declined to pick it (most likely more than one
-      // candidate present — a self-check above, in another process, is in
-      // the middle of backing itself out of a collision). Leave the files
-      // alone; the next attempt will see a clean, single record.
+      // An owner was published after the earlier read, or legacy state holds
+      // multiple valid records. Never sweep a valid record based on that older
+      // snapshot, and never guess which of multiple records represents work.
       continue;
     }
     // Nothing here is a usable record — empty directory, stray `.pending`
@@ -469,4 +447,131 @@ export function acquireJobOwner(
 
 export function jobOwnerExists(root = stateDir()): boolean {
   return readJobOwner(root) !== undefined;
+}
+
+/** How often a held lease is refreshed; well inside the 30s staleness window. */
+const HEARTBEAT_MS = 10_000;
+
+/** Why work could not take ownership, and the sentence every command says it with. */
+export interface JobRefusal {
+  /** Who holds the lease, or undefined when a rival is mid-acquire. */
+  readonly owner?: JobOwnerRecord;
+  readonly message: string;
+}
+
+/** What `withJobOwnership` hands the work it runs. */
+export interface OwnedJob {
+  readonly lease: JobOwnerLease;
+  /** Aborted by `cancel()`: a signal, a lost heartbeat (by default), or the work itself. */
+  readonly signal: AbortSignal;
+  cancel(): void;
+  /**
+   * Stops refreshing the lease without releasing it. For a screen torn down
+   * while the transfer it started runs on and releases when it finishes.
+   */
+  stopHeartbeat(): void;
+  /**
+   * Stops the heartbeat, unhooks the signals and releases the lease. Safe to
+   * call early and more than once; it also runs when the work settles.
+   */
+  release(): void;
+}
+
+export interface JobOwnershipOptions<R> {
+  /** Called, instead of the work, when another process owns work. */
+  readonly onRefused: (refusal: JobRefusal) => R;
+  /** Keep the lease fresh while the work runs. Defaults to true. */
+  readonly heartbeat?: boolean;
+  /** What a heartbeat that finds the lease lost does. Defaults to `cancel()`. */
+  readonly onLost?: () => void;
+  /** Cancel on SIGINT and SIGTERM, for a command that owns its process. */
+  readonly signals?: boolean;
+}
+
+/**
+ * Runs `work` while holding the job-owner lease, and is the only place that
+ * acquires one.
+ *
+ * The acquire, the "already running work" refusal, the heartbeat, the signal
+ * wiring and the release were written out once per command — four times in
+ * the CLI and twice more in the TUI — each with its own copy of the refusal
+ * message, so the six could drift apart without any of them being wrong on
+ * its own.
+ *
+ * Acquisition happens synchronously, before this returns: a caller that runs
+ * inside a React effect still holds the lease (or has been refused) by the
+ * time the effect's body continues. `work` also starts synchronously, up to
+ * its own first await.
+ */
+export function withJobOwnership<T, R>(
+  actor: JobOwnerRecord["actor"],
+  operation: JobOwnerRecord["operation"],
+  work: (job: OwnedJob) => Promise<T> | T,
+  options: JobOwnershipOptions<R>,
+): Promise<T | R> {
+  const ownership = acquireJobOwner(actor, operation);
+  if (!ownership.acquired) {
+    const owner = ownership.owner;
+    const detail =
+      owner === undefined
+        ? "another Syncy process is starting"
+        : `${owner.operation} started by ${owner.actor}`;
+    return Promise.resolve(
+      options.onRefused({
+        ...(owner === undefined ? {} : { owner }),
+        message: `Syncy is already running work: ${detail}`,
+      }),
+    );
+  }
+
+  const { lease } = ownership;
+  const abort = new AbortController();
+  let cancelling = false;
+  const cancel = (): void => {
+    if (cancelling) return;
+    cancelling = true;
+    abort.abort();
+  };
+  const onLost = options.onLost ?? cancel;
+  const signals = options.signals === true;
+  // A second Ctrl-C still force-quits an interactive session, so SIGINT stays
+  // `once`. SIGTERM stays subscribed: a graceful cancel can take a while
+  // (rsync does not exit instantly), and a second SIGTERM must still reach
+  // this handler rather than falling through to the default disposition and
+  // killing the supervisor before history and the lease are written.
+  if (signals) {
+    process.once("SIGINT", cancel);
+    process.on("SIGTERM", cancel);
+  }
+  let heartbeat: ReturnType<typeof setInterval> | undefined =
+    options.heartbeat === false
+      ? undefined
+      : setInterval(() => {
+          try {
+            lease.heartbeat();
+          } catch {
+            onLost();
+          }
+        }, HEARTBEAT_MS);
+  const stopHeartbeat = (): void => {
+    if (heartbeat === undefined) return;
+    clearInterval(heartbeat);
+    heartbeat = undefined;
+  };
+  const release = (): void => {
+    stopHeartbeat();
+    if (signals) {
+      process.off("SIGINT", cancel);
+      process.off("SIGTERM", cancel);
+    }
+    lease.release();
+  };
+  const job: OwnedJob = { lease, signal: abort.signal, cancel, stopHeartbeat, release };
+  return (async () => {
+    try {
+      return await work(job);
+    } finally {
+      release();
+    }
+  })();
 }

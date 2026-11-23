@@ -21,5 +21,9 @@ let package = Package(
       name: "SyncyMacAppTests",
       dependencies: ["SyncyMacCore"]
     ),
+    .testTarget(
+      name: "SyncyMacAppModelTests",
+      dependencies: ["SyncyMacApp", "SyncyMacCore"]
+    ),
   ]
 )
