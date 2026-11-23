@@ -12,7 +12,7 @@ README test count, updated to the measured combined count.
 
 | Gate | Observed result |
 |---|---|
-| `bun test` | 1,074 passed, zero failed |
+| `bun test` | 1,075 passed, zero failed |
 | `bunx tsc --noEmit` | Passed |
 | `bun run lint` | Passed |
 | `swift test` in `macos/` | 37 passed, zero failed (33 core and four app scheduler tests) |
@@ -54,6 +54,17 @@ Three observer tests failed before the ordering fix. Disabling the duplicate
 guard separately made the cancellation and completion tests fail. All four
 observer cases pass with the fix.
 
+macOS CI then exposed overlapping successful ownership claims. A deterministic
+two-process test reproduced a delayed invalid-record sweep removing a record
+after its publisher had acquired it. Claims are now prepared in private,
+nonempty proposal directories and published with a single directory rename.
+An existing nonempty owner cannot be replaced. Unpublished proposals remain
+under the state directory for inspection; they are not live owners. The
+deterministic regression failed before the fix and passed after it, alongside
+the existing real-process contention test.
+Twenty additional rounds passed 800 simultaneous stale-owner races and 20
+forced publication interleavings locally.
+
 The desktop inspection tool timed out without returning an app window state.
 An attempted sandboxed launch exited with status 134 and supplied no diagnostic
 output. Neither observation establishes a successful visual launch or proves a
@@ -88,7 +99,8 @@ for inspection.
    leave the menu-bar app and owned work available.
 6. Record the macOS and rsync versions, signing mode, exact build revision,
    observed outcomes, and any failure diagnostics. Close #32 only after every
-   step has been observed. Reconcile umbrella issue #25 with that evidence.
+   step has been observed. Umbrella #25 was closed as superseded by the focused
+   issues; that does not waive this acceptance work.
 
 ## Separate scheduling decision
 

@@ -1,10 +1,10 @@
 import {
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmdirSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -15,9 +15,9 @@ import { stateDir } from "./paths.ts";
  * One process owns work that can read a source, invoke rsync, or record evidence.
  * Other interfaces observe this record instead of starting duplicate work.
  *
- * Ownership directories are moved into an append-only archive on release or
- * recovery. That makes crash recovery inspectable and avoids deleting Syncy's
- * own operational history.
+ * Ownership records are moved into an append-only archive on release or
+ * recovery. Unpublished proposals stay under job-owner-proposals for inspection.
+ * Neither path deletes Syncy's operational history.
  */
 export interface JobOwnerRecord {
   readonly version: 1;
@@ -183,9 +183,9 @@ function tryParseRecordFile(path: string): JobOwnerRecord | undefined {
 
 /**
  * The live record is whichever single `owner.*.json` file sits in `job-owner/`.
- * Zero files (nobody has published yet) and more than one file (an
- * in-progress claim collision resolving itself, see archiveFile) both read as
- * "no usable owner" rather than guessing.
+ * Zero files and more than one file (legacy or inconsistent state) both read
+ * as "no usable owner" rather than guessing. New claims publish one complete
+ * directory atomically, so observers cannot see their partial records.
  */
 export function readJobOwner(root = stateDir()): JobOwnerRecord | undefined {
   const { current } = ownerPaths(root);
@@ -269,60 +269,40 @@ export function acquireJobOwner(
   const abandonAfterMs = options.abandonAfterMs ?? DEFAULT_ABANDON_AFTER_MS;
   const paths = ownerPaths(root);
   mkdirSync(dirname(paths.current), { recursive: true });
+  let proposal: { directory: string; record: JobOwnerRecord } | undefined;
 
   for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt += 1) {
     try {
-      mkdirSync(paths.current);
-      // `mkdirSync` succeeding only proves we created *a* directory at this
-      // path just now; it is not a lock on everything that happens next. A
-      // rival can still see it as empty, decide it is abandoned (below),
-      // rmdir it, and re-mkdir a fresh one before our write below lands — in
-      // which case our write would silently succeed into THEIR directory.
-      // The self-check after the write (not the mkdir) is what actually
-      // closes that window: see the comment there.
-      const token = makeToken();
-      const at = now();
-      const record: JobOwnerRecord = {
-        version: 1,
-        token,
-        pid,
-        actor,
-        operation,
-        startedAt: at,
-        heartbeatAt: at,
-      };
-      const path = join(paths.current, recordName(token));
-      try {
-        writeFileSync(path, `${JSON.stringify(record)}\n`, { encoding: "utf8", flag: "wx" });
-      } catch (error) {
-        // Our directory was rmdir'd (and not yet recreated) in the
-        // microsecond window between our mkdir and this write.
-        if (vanished(error)) continue;
-        throw error;
+      if (proposal === undefined) {
+        const token = makeToken();
+        const at = now();
+        const record: JobOwnerRecord = {
+          version: 1,
+          token,
+          pid,
+          actor,
+          operation,
+          startedAt: at,
+          heartbeatAt: at,
+        };
+        // Prepare the entire nonempty directory privately. Publishing an empty
+        // live directory, or an empty JSON file opened before its write,
+        // let recovery mistake an in-flight claim for abandoned work. A delayed
+        // sweep could then archive an owner that had already started running.
+        const proposals = join(root, "job-owner-proposals");
+        mkdirSync(proposals, { recursive: true });
+        const directory = mkdtempSync(join(proposals, "claim-"));
+        writeFileSync(join(directory, recordName(token)), `${JSON.stringify(record)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        proposal = { directory, record };
       }
-      // Confirm the directory we just wrote into still holds only our
-      // record. If a rival rmdir'd our directory and re-mkdir'd its own
-      // between our mkdir and our write (above), our write above would have
-      // landed in THEIR directory instead of failing — this is what catches
-      // that: a second file appearing means we lost a race we can't win
-      // retroactively, so we back out instead of returning a lease that
-      // shares its directory with someone else's.
-      let siblings: string[];
-      try {
-        siblings = readdirSync(paths.current).filter(isRecordName);
-      } catch (error) {
-        if (vanished(error)) continue;
-        throw error;
-      }
-      if (siblings.length !== 1 || siblings[0] !== recordName(token)) {
-        try {
-          rmSync(path, { force: true });
-        } catch (error) {
-          if (!vanished(error)) throw error;
-        }
-        rmdirIgnoringNonEmpty(paths.current);
-        continue;
-      }
+      // rename can replace an empty abandoned directory, but cannot replace
+      // the nonempty directory another claimant has already published. There
+      // is no interval in which recovery can see an incomplete live claim.
+      renameSync(proposal.directory, paths.current);
+      const record = proposal.record;
 
       let active = record;
       let released = false;
@@ -414,7 +394,7 @@ export function acquireJobOwner(
       };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST") throw error;
+      if (code !== "EEXIST" && code !== "ENOTEMPTY" && !vanished(error)) throw error;
     }
 
     const observed = readJobOwner(root);
@@ -438,17 +418,15 @@ export function acquireJobOwner(
     try {
       entries = readdirSync(paths.current);
     } catch {
-      continue; // Already gone; next attempt's mkdir will just recreate it.
+      continue; // Already gone; next attempt can publish the prepared proposal.
     }
     const hasLiveCandidate = entries.some(
       (name) => isRecordName(name) && tryParseRecordFile(join(paths.current, name)) !== undefined,
     );
     if (hasLiveCandidate) {
-      // At least one file here still parses as a real record even though
-      // `readJobOwner` above declined to pick it (most likely more than one
-      // candidate present — a self-check above, in another process, is in
-      // the middle of backing itself out of a collision). Leave the files
-      // alone; the next attempt will see a clean, single record.
+      // An owner was published after the earlier read, or legacy state holds
+      // multiple valid records. Never sweep a valid record based on that older
+      // snapshot, and never guess which of multiple records represents work.
       continue;
     }
     // Nothing here is a usable record — empty directory, stray `.pending`
