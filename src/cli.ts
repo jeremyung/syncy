@@ -9,7 +9,7 @@ import { buildEngineActivity, buildEngineSnapshot, configRevision } from "./engi
 import { fingerprint } from "./fingerprint.ts";
 import { bytes } from "./format.ts";
 import { preflight } from "./guards.ts";
-import { acquireJobOwner } from "./job-owner.ts";
+import { type JobOwnerRecord, type OwnedJob, withJobOwnership } from "./job-owner.ts";
 import { configDir, configFile, stateDir, stateFile } from "./paths.ts";
 import { presentDiffSummary } from "./presentation.ts";
 import { serializeEngineMessage } from "./protocol-jsonl.ts";
@@ -22,8 +22,8 @@ import { evaluateUnit, timeoutWord } from "./status.ts";
 import { startSync } from "./sync.ts";
 import { claimSyncIntent } from "./sync-intent.ts";
 import { cmdSyncPreflight } from "./sync-preflight.ts";
+import { resolveTarget, validateTargetPath } from "./target.ts";
 import { startTui } from "./tui/index.tsx";
-import { resolveTarget, validateTargetPath } from "./tui/Setup.tsx";
 
 /**
  * Phase 1: the engine, driven from a CLI. The Ink TUI in phase 2 sits on top of
@@ -101,102 +101,76 @@ async function cmdCheck(
   if (units.length === 0)
     fail(only ? `no such unit: ${only}` : `no subfolders under ${config.source}`);
 
-  const ownership = acquireJobOwner("cli", mode);
-  if (!ownership.acquired) {
-    const detail = ownership.owner
-      ? `${ownership.owner.operation} started by ${ownership.owner.actor}`
-      : "another Syncy process is starting";
-    fail(`Syncy is already running work: ${detail}`);
-  }
-  const abort = new AbortController();
-  let cancelling = false;
-  const requestCancel = (): void => {
-    if (cancelling) return;
-    cancelling = true;
-    abort.abort();
-  };
-  // A second Ctrl-C still force-quits an interactive session, so SIGINT stays
-  // `once`. SIGTERM stays subscribed: a graceful cancel can take a while
-  // (rsync does not exit instantly), and a second SIGTERM must still reach
-  // this handler rather than falling through to the default disposition and
-  // killing the supervisor before history and the lease are written.
-  process.once("SIGINT", requestCancel);
-  process.on("SIGTERM", requestCancel);
-  const heartbeat = heartbeatOwner(
-    () => ownership.lease.heartbeat(),
-    () => abort.abort(),
-  );
-  try {
-    await runCheckQueue(
-      config,
-      loadState(),
-      mode,
-      units.map((unit) => {
-        const measured = fingerprint(join(config.source, unit), config.exclude);
-        return { unit, files: measured.nfiles, bytes: measured.bytes, fingerprint: measured };
-      }),
-      {
-        signal: abort.signal,
-        onEvent: (event) => {
-          ownership.lease.observe(event);
-          if (event.type === "job.started") {
-            process.stdout.write(`  ${event.unit} → ${event.target}: ${mode}…`);
-          } else if (event.type === "job.skipped") {
-            // The raw member would print "timeout", a value rather than a fact;
-            // the ledger says the same condition in the same words.
-            const why = event.reachability === "timeout" ? timeoutWord() : event.reachability;
-            process.stdout.write(` skipped (${why})\n`);
-          } else if (event.type === "job.completed" && event.operation !== "sync") {
-            const detail =
-              event.result.outcome === "clean"
-                ? "clean"
-                : event.result.outcome === "behind"
-                  ? `${event.result.nChanges} pending · ${bytes(event.result.bytesPending)}`
-                  : event.result.outcome;
-            process.stdout.write(` ${detail}\n`);
-          } else if (event.type === "job.failed") {
-            process.stdout.write(` failed (${event.message})\n`);
-          }
+  await owned(
+    "cli",
+    mode,
+    (job) =>
+      runCheckQueue(
+        config,
+        loadState(),
+        mode,
+        units.map((unit) => {
+          const measured = fingerprint(join(config.source, unit), config.exclude);
+          return { unit, files: measured.nfiles, bytes: measured.bytes, fingerprint: measured };
+        }),
+        {
+          signal: job.signal,
+          onEvent: (event) => {
+            job.lease.observe(event);
+            if (event.type === "job.started") {
+              process.stdout.write(`  ${event.unit} → ${event.target}: ${mode}…`);
+            } else if (event.type === "job.skipped") {
+              // The raw member would print "timeout", a value rather than a fact;
+              // the ledger says the same condition in the same words.
+              const why = event.reachability === "timeout" ? timeoutWord() : event.reachability;
+              process.stdout.write(` skipped (${why})\n`);
+            } else if (event.type === "job.completed" && event.operation !== "sync") {
+              const detail =
+                event.result.outcome === "clean"
+                  ? "clean"
+                  : event.result.outcome === "behind"
+                    ? `${event.result.nChanges} pending · ${bytes(event.result.bytesPending)}`
+                    : event.result.outcome;
+              process.stdout.write(` ${detail}\n`);
+            } else if (event.type === "job.failed") {
+              process.stdout.write(` failed (${event.message})\n`);
+            }
+          },
         },
-      },
-    );
-  } finally {
-    clearInterval(heartbeat);
-    process.off("SIGINT", requestCancel);
-    process.off("SIGTERM", requestCancel);
-    ownership.lease.release();
-  }
+      ),
+    { signals: true },
+  );
   process.stdout.write("\n");
   await cmdStatus(config);
 }
 
-function heartbeatOwner(
-  heartbeat: () => void,
-  onLost?: () => void,
-): ReturnType<typeof setInterval> {
-  return setInterval(() => {
-    try {
-      heartbeat();
-    } catch {
-      onLost?.();
-    }
-  }, 10_000);
+/**
+ * Runs work under the job-owner lease, refusing the way every command does:
+ * the shared sentence on stderr and exit 1.
+ */
+function owned<T>(
+  actor: JobOwnerRecord["actor"],
+  operation: JobOwnerRecord["operation"],
+  work: (job: OwnedJob) => Promise<T> | T,
+  options: { readonly heartbeat?: boolean; readonly signals?: boolean } = {},
+): Promise<T> {
+  return withJobOwnership(actor, operation, work, {
+    ...options,
+    onRefused: (refusal) => fail(refusal.message),
+  });
 }
 
-async function withSetupOwnership<T>(work: () => Promise<T> | T): Promise<T> {
+/** Who is asking, for a command a native client or the scheduler may run. */
+function engineActor(): JobOwnerRecord["actor"] {
+  return process.env.SYNCY_ACTOR === "mac" || process.env.SYNCY_ACTOR === "scheduler"
+    ? process.env.SYNCY_ACTOR
+    : "cli";
+}
+
+/** Setup edits are short, so their lease is held without a heartbeat or signal handlers. */
+function withSetupOwnership<T>(work: () => Promise<T> | T): Promise<T> {
   const actor = process.env.SYNCY_ACTOR === "mac" ? "mac" : "cli";
-  const ownership = acquireJobOwner(actor, "setup");
-  if (!ownership.acquired) {
-    const detail = ownership.owner
-      ? `${ownership.owner.operation} started by ${ownership.owner.actor}`
-      : "another Syncy process is starting";
-    fail(`Syncy is already running work: ${detail}`);
-  }
-  try {
-    return await work();
-  } finally {
-    ownership.lease.release();
-  }
+  return owned(actor, "setup", () => work(), { heartbeat: false });
 }
 
 async function cmdDoctor(config: Config): Promise<void> {
@@ -241,14 +215,25 @@ async function cmdDoctor(config: Config): Promise<void> {
   );
 }
 
-async function cmdEngine(
-  config: Config,
-  action: string | undefined,
-  detail: string | undefined,
-  extra: string | undefined,
-  more: string | undefined,
-  last: string | undefined,
-): Promise<void> {
+/**
+ * `syncy engine <action> [operand…]`, as typed.
+ *
+ * The operands used to arrive as four positional parameters named `detail`,
+ * `extra`, `more` and `last`, so `extra` was a destination in one action, a
+ * name in another and a unit in a third. Each action now names its own.
+ */
+interface EngineArgs {
+  readonly action: string | undefined;
+  readonly operands: readonly string[];
+}
+
+function engineArgs(argv: readonly string[]): EngineArgs {
+  const [action, ...operands] = argv;
+  return { action, operands };
+}
+
+async function cmdEngine(config: Config, args: EngineArgs): Promise<void> {
+  const { action, operands } = args;
   if (action === "activity") {
     process.stdout.write(serializeEngineMessage(buildEngineActivity()));
     return;
@@ -259,20 +244,23 @@ async function cmdEngine(
     return;
   }
   if (action === "preflight") {
-    if (detail === undefined || extra === undefined) {
+    const [unit, destination] = operands;
+    if (unit === undefined || destination === undefined) {
       fail("usage: syncy engine preflight <unit> <destination>");
     }
-    await cmdSyncPreflight(config, detail, extra, {}, fail);
+    await cmdSyncPreflight(config, unit, destination, {}, fail);
     return;
   }
   if (action === "sync") {
-    if (detail === undefined) fail("usage: syncy engine sync <confirmation>");
-    await cmdEngineSync(config, detail);
+    const [confirmation] = operands;
+    if (confirmation === undefined) fail("usage: syncy engine sync <confirmation>");
+    await cmdEngineSync(config, confirmation);
     return;
   }
   if (action === "set-source") {
-    if (detail === undefined) fail("usage: syncy engine set-source <path>");
-    const source = resolve(detail);
+    const [typed] = operands;
+    if (typed === undefined) fail("usage: syncy engine set-source <path>");
+    const source = resolve(typed);
     if (!existsSync(source) || !statSync(source).isDirectory()) {
       fail(`source is not a directory: ${source}`);
     }
@@ -285,17 +273,18 @@ async function cmdEngine(
     return;
   }
   if (action === "add-destination") {
-    if (detail === undefined || extra === undefined) {
+    const [typed, name] = operands;
+    if (typed === undefined || name === undefined) {
       fail("usage: syncy engine add-destination <path> <name>");
     }
-    const path = resolve(detail);
+    const path = resolve(typed);
     const invalid = validateTargetPath(path, config);
     if (invalid !== null) fail(`destination not added: ${invalid}`);
     // `fail` exits the process, which skips the `finally` that releases the
     // lease — leaving a fresh ownership record that refuses every command for
     // the next staleness window. Report the refusal outward and exit after.
     const outcome = await withSetupOwnership(async () => {
-      const result = await resolveTarget(path, extra);
+      const result = await resolveTarget(path, name);
       if (!result.ok) return { refused: result.reason } as const;
       const next = withTarget(config, result.target);
       saveConfig(next, configFile());
@@ -307,12 +296,13 @@ async function cmdEngine(
     return;
   }
   if (action === "remove-destination") {
-    if (detail === undefined) fail("usage: syncy engine remove-destination <name>");
-    if (!config.targets.some((target) => target.name === detail)) {
-      fail(`no such destination: ${detail}`);
+    const [name] = operands;
+    if (name === undefined) fail("usage: syncy engine remove-destination <name>");
+    if (!config.targets.some((target) => target.name === name)) {
+      fail(`no such destination: ${name}`);
     }
     const next = await withSetupOwnership(() => {
-      const next = withoutTarget(config, detail);
+      const next = withoutTarget(config, name);
       saveConfig(next, configFile());
       return next;
     });
@@ -320,9 +310,10 @@ async function cmdEngine(
     return;
   }
   if (action === "adopt-destination") {
-    if (detail === undefined) fail("usage: syncy engine adopt-destination <name>");
-    const target = config.targets.find((candidate) => candidate.name === detail);
-    if (target === undefined) fail(`no such destination: ${detail}`);
+    const [name] = operands;
+    if (name === undefined) fail("usage: syncy engine adopt-destination <name>");
+    const target = config.targets.find((candidate) => candidate.name === name);
+    if (target === undefined) fail(`no such destination: ${name}`);
     const next = await withSetupOwnership(async () => {
       const sentinel = await writeSentinel(target.path);
       const next = withTarget(config, { ...target, sentinel });
@@ -333,17 +324,18 @@ async function cmdEngine(
     return;
   }
   if (action === "diff") {
-    if (detail === undefined || extra === undefined) {
+    const [unit, destination] = operands;
+    if (unit === undefined || destination === undefined) {
       fail("usage: syncy engine diff <unit> <destination>");
     }
-    if (!listUnits(config.source).includes(detail)) fail(`no such unit: ${detail}`);
-    if (!config.targets.some((target) => target.name === extra)) {
-      fail(`no such destination: ${extra}`);
+    if (!listUnits(config.source).includes(unit)) fail(`no such unit: ${unit}`);
+    if (!config.targets.some((target) => target.name === destination)) {
+      fail(`no such destination: ${destination}`);
     }
-    const diff = loadDiff(detail, extra);
-    const target = config.targets.find((candidate) => candidate.name === extra)!;
+    const diff = loadDiff(unit, destination);
+    const target = config.targets.find((candidate) => candidate.name === destination)!;
     const presentation = presentDiffSummary(diff);
-    const reachability = (await allReachability(config)).get(extra) ?? "unreachable";
+    const reachability = (await allReachability(config)).get(destination) ?? "unreachable";
     const configuredIdentity = target.identity ?? target.sentinel ?? "";
     const identityMatches = diff?.targetIdentity === configuredIdentity;
     process.stdout.write(
@@ -351,8 +343,8 @@ async function cmdEngine(
         protocolVersion: 1,
         type: "diff",
         generatedAt: Date.now(),
-        unit: detail,
-        target: extra,
+        unit,
+        target: destination,
         diff,
         presentation: {
           state: presentation.state,
@@ -387,26 +379,27 @@ async function cmdEngine(
     return;
   }
   if (action === "record-missed") {
+    const [operation, unit, scheduled, destination] = operands;
     if (
-      (detail !== "quick" && detail !== "deep" && detail !== "sync") ||
-      extra === undefined ||
-      more === undefined
+      (operation !== "quick" && operation !== "deep" && operation !== "sync") ||
+      unit === undefined ||
+      scheduled === undefined
     ) {
       fail(
         "usage: syncy engine record-missed <quick|deep|sync> <unit|*> <scheduled-ms> [destination|*]",
       );
     }
-    const scheduledAt = Number(more);
+    const scheduledAt = Number(scheduled);
     if (!Number.isFinite(scheduledAt) || scheduledAt < 0 || scheduledAt > Date.now()) {
       fail("scheduled time must be a past epoch-millisecond value");
     }
     appendHistory({
       ts: scheduledAt,
-      unit: extra === "*" ? "all units" : extra,
-      target: last === undefined || last === "*" ? "all destinations" : last,
+      unit: unit === "*" ? "all units" : unit,
+      target: destination === undefined || destination === "*" ? "all destinations" : destination,
       argv: [],
       exitCode: null,
-      operation: detail,
+      operation,
       outcome: "missed",
       detail: "Mac was asleep or Syncy was not running at the scheduled time",
     });
@@ -416,235 +409,178 @@ async function cmdEngine(
 
   const mode = action === "check" ? "quick" : action === "verify" ? "deep" : undefined;
   if (mode === undefined) fail("usage: syncy engine snapshot|activity|check [unit]|verify [unit]");
+  const [only] = operands;
   const build = await checkBuild(DEFAULT_RSYNC);
   if (!build.ok) fail(`rsync: ${build.detail}`);
   const units = listUnits(config.source)
-    .filter((unit) => detail === undefined || unit === detail)
+    .filter((unit) => only === undefined || unit === only)
     .map((unit) => {
       const measured = fingerprint(join(config.source, unit), config.exclude);
       return { unit, files: measured.nfiles, bytes: measured.bytes, fingerprint: measured };
     });
   if (units.length === 0)
-    fail(detail ? `no such unit: ${detail}` : `no subfolders under ${config.source}`);
+    fail(only ? `no such unit: ${only}` : `no subfolders under ${config.source}`);
 
-  const actor =
-    process.env.SYNCY_ACTOR === "mac" || process.env.SYNCY_ACTOR === "scheduler"
-      ? process.env.SYNCY_ACTOR
-      : "cli";
-  const ownership = acquireJobOwner(actor, mode);
-  if (!ownership.acquired) {
-    const detail = ownership.owner
-      ? `${ownership.owner.operation} started by ${ownership.owner.actor}`
-      : "another Syncy process is starting";
-    fail(`Syncy is already running work: ${detail}`);
-  }
-
-  const abort = new AbortController();
-  let cancelling = false;
-  const requestCancel = (): void => {
-    if (cancelling) return;
-    cancelling = true;
-    abort.abort();
-  };
-  // A second Ctrl-C still force-quits an interactive session, so SIGINT stays
-  // `once`. SIGTERM stays subscribed: a graceful cancel can take a while
-  // (rsync does not exit instantly), and a second SIGTERM must still reach
-  // this handler rather than falling through to the default disposition and
-  // killing the supervisor before history and the lease are written.
-  process.once("SIGINT", requestCancel);
-  process.on("SIGTERM", requestCancel);
-  const heartbeat = heartbeatOwner(
-    () => ownership.lease.heartbeat(),
-    () => abort.abort(),
+  await owned(
+    engineActor(),
+    mode,
+    async (job) => {
+      const result = await runCheckQueue(config, loadState(), mode, units, {
+        signal: job.signal,
+        onEvent: (event) => {
+          job.lease.observe(event);
+          process.stdout.write(serializeEngineMessage(event));
+        },
+      });
+      if (result.status === "cancelled") process.exitCode = 130;
+      else if (result.failed.length > 0) process.exitCode = 1;
+    },
+    { signals: true },
   );
-  try {
-    const result = await runCheckQueue(config, loadState(), mode, units, {
-      signal: abort.signal,
-      onEvent: (event) => {
-        ownership.lease.observe(event);
-        process.stdout.write(serializeEngineMessage(event));
-      },
-    });
-    if (result.status === "cancelled") process.exitCode = 130;
-    else if (result.failed.length > 0) process.exitCode = 1;
-  } finally {
-    clearInterval(heartbeat);
-    process.off("SIGINT", requestCancel);
-    process.off("SIGTERM", requestCancel);
-    ownership.lease.release();
-  }
 }
 
 async function cmdEngineSync(config: Config, token: string): Promise<void> {
-  const actor =
-    process.env.SYNCY_ACTOR === "mac" || process.env.SYNCY_ACTOR === "scheduler"
-      ? process.env.SYNCY_ACTOR
-      : "cli";
-  const ownership = acquireJobOwner(actor, "sync");
-  if (!ownership.acquired) {
-    const detail = ownership.owner
-      ? `${ownership.owner.operation} started by ${ownership.owner.actor}`
-      : "another Syncy process is starting";
-    fail(`Syncy is already running work: ${detail}`);
-  }
-  const abort = new AbortController();
-  let handle: ReturnType<typeof startSync> | undefined;
-  let cancelling = false;
-  const requestCancel = (): void => {
-    if (cancelling) return;
-    cancelling = true;
-    abort.abort();
-    handle?.cancel();
-  };
-  // A second Ctrl-C still force-quits an interactive session, so SIGINT stays
-  // `once`. SIGTERM stays subscribed: a graceful cancel can take a while
-  // (rsync does not exit instantly), and a second SIGTERM must still reach
-  // this handler rather than falling through to the default disposition and
-  // killing the supervisor before history and the lease are written.
-  process.once("SIGINT", requestCancel);
-  process.on("SIGTERM", requestCancel);
-  const heartbeat = heartbeatOwner(
-    () => ownership.lease.heartbeat(),
-    () => requestCancel(),
-  );
-  try {
-    const intent = claimSyncIntent(token);
-    const target = config.targets.find((candidate) => candidate.name === intent.target);
-    if (target === undefined) throw new Error(`destination no longer exists: ${intent.target}`);
-    // Defence in depth: the fingerprint and argv checks below catch most
-    // config edits as a side effect (a changed destination path changes the
-    // argv it produces), but this closes the gap for any config change that
-    // doesn't happen to move either of those — the confirmation is bound to
-    // the exact config it was reviewed against.
-    if (configRevision(config) !== intent.configRevision) {
-      throw new Error("configuration changed after review; run the preflight again");
-    }
-    const measured = fingerprint(join(config.source, intent.unit), config.exclude);
-    if (
-      measured.nfiles !== intent.fingerprint.nfiles ||
-      measured.bytes !== intent.fingerprint.bytes ||
-      measured.maxMtimeNs !== intent.fingerprint.maxMtimeNs
-    ) {
-      throw new Error("source changed after review; run the check and preflight again");
-    }
-    const argv = argvFor(config, intent.unit, target, "sync", {
-      ...(intent.needsChecksum ? { checksum: true } : {}),
-    });
-    if (JSON.stringify(argv) !== JSON.stringify(intent.argv)) {
-      throw new Error("sync command changed after review; run the preflight again");
-    }
-    const fresh = await preflight(config, target, argv, intent.bytesPending);
-    if (!fresh.ok) {
-      throw new Error(
-        `sync preflight no longer passes: ${fresh.checks
-          .filter((check) => !check.ok)
-          .map((check) => `${check.name}: ${check.detail}`)
-          .join(", ")}`,
-      );
-    }
+  await owned(engineActor(), "sync", (job) => runEngineSync(config, token, job), {
+    signals: true,
+  });
+}
 
-    const jobId = `${Date.now()}-${intent.unit}-${intent.target}`;
-    const base = {
-      protocolVersion: 1,
-      jobId,
-      operation: "sync",
-      unit: intent.unit,
-      target: intent.target,
-    } as const;
-    const emit = (event: Parameters<typeof ownership.lease.observe>[0]): void => {
-      ownership.lease.observe(event);
-      process.stdout.write(serializeEngineMessage(event));
-    };
+async function runEngineSync(config: Config, token: string, job: OwnedJob): Promise<void> {
+  let handle: ReturnType<typeof startSync> | undefined;
+  // A cancel — a signal, a lost heartbeat, a lost lease — stops rsync as well
+  // as the work that reads the abort signal.
+  job.signal.addEventListener("abort", () => handle?.cancel());
+  const intent = claimSyncIntent(token);
+  const target = config.targets.find((candidate) => candidate.name === intent.target);
+  if (target === undefined) throw new Error(`destination no longer exists: ${intent.target}`);
+  // Defence in depth: the fingerprint and argv checks below catch most
+  // config edits as a side effect (a changed destination path changes the
+  // argv it produces), but this closes the gap for any config change that
+  // doesn't happen to move either of those — the confirmation is bound to
+  // the exact config it was reviewed against.
+  if (configRevision(config) !== intent.configRevision) {
+    throw new Error("configuration changed after review; run the preflight again");
+  }
+  const measured = fingerprint(join(config.source, intent.unit), config.exclude);
+  if (
+    measured.nfiles !== intent.fingerprint.nfiles ||
+    measured.bytes !== intent.fingerprint.bytes ||
+    measured.maxMtimeNs !== intent.fingerprint.maxMtimeNs
+  ) {
+    throw new Error("source changed after review; run the check and preflight again");
+  }
+  const argv = argvFor(config, intent.unit, target, "sync", {
+    ...(intent.needsChecksum ? { checksum: true } : {}),
+  });
+  if (JSON.stringify(argv) !== JSON.stringify(intent.argv)) {
+    throw new Error("sync command changed after review; run the preflight again");
+  }
+  const fresh = await preflight(config, target, argv, intent.bytesPending);
+  if (!fresh.ok) {
+    throw new Error(
+      `sync preflight no longer passes: ${fresh.checks
+        .filter((check) => !check.ok)
+        .map((check) => `${check.name}: ${check.detail}`)
+        .join(", ")}`,
+    );
+  }
+
+  const jobId = `${Date.now()}-${intent.unit}-${intent.target}`;
+  const base = {
+    protocolVersion: 1,
+    jobId,
+    operation: "sync",
+    unit: intent.unit,
+    target: intent.target,
+  } as const;
+  const emit = (event: Parameters<OwnedJob["lease"]["observe"]>[0]): void => {
+    job.lease.observe(event);
+    process.stdout.write(serializeEngineMessage(event));
+  };
+  emit({
+    ...base,
+    type: "job.started",
+    at: Date.now(),
+    phase: "queued",
+    unitSize: {
+      ...(intent.nFiles === undefined ? {} : { files: intent.nFiles }),
+      bytes: intent.bytesPending,
+    },
+  });
+  emit({ ...base, type: "job.phase-changed", at: Date.now(), phase: "starting-rsync" });
+  let transferred = 0;
+  handle = startSync(config, intent.unit, target, {
+    ...(intent.needsChecksum ? { checksum: true } : {}),
+    onItem: (item) => {
+      if (item.kind !== "change" || item.flags[1] !== "f") return;
+      transferred += 1;
+      if (transferred % 25 === 0 || transferred === intent.nFiles) {
+        try {
+          emit({
+            ...base,
+            type: "job.progress-observed",
+            at: Date.now(),
+            filesSeen: transferred,
+            ...(intent.nFiles === undefined ? {} : { filesTotal: intent.nFiles }),
+          });
+        } catch {
+          // The lease is gone — same as a lost heartbeat or a SIGTERM: stop
+          // rsync through the one cancellation path, rather than letting
+          // the error reach pump() inside startSync and abort the transfer
+          // ungracefully (sync.ts's own `done` still copes if it does, but
+          // this is the graceful route and it also earns the "cancelled"
+          // outcome instead of "failed").
+          job.cancel();
+        }
+      }
+    },
+  });
+  emit({ ...base, type: "job.phase-changed", at: Date.now(), phase: "transferring" });
+  if (job.signal.aborted) handle.cancel();
+  const result = await handle.done;
+  if (result.cancelled) {
+    emit({ ...base, type: "job.cancelled", at: Date.now(), transferred: result.transferred });
+    process.exitCode = 130;
+  } else if (result.exitCode === 0 || result.exitCode === 24) {
     emit({
       ...base,
-      type: "job.started",
+      type: "job.completed",
       at: Date.now(),
-      phase: "queued",
-      unitSize: {
-        ...(intent.nFiles === undefined ? {} : { files: intent.nFiles }),
-        bytes: intent.bytesPending,
-      },
+      result: { exitCode: result.exitCode, transferred: result.transferred },
     });
-    emit({ ...base, type: "job.phase-changed", at: Date.now(), phase: "starting-rsync" });
-    let transferred = 0;
-    handle = startSync(config, intent.unit, target, {
-      ...(intent.needsChecksum ? { checksum: true } : {}),
-      onItem: (item) => {
-        if (item.kind !== "change" || item.flags[1] !== "f") return;
-        transferred += 1;
-        if (transferred % 25 === 0 || transferred === intent.nFiles) {
-          try {
-            emit({
-              ...base,
-              type: "job.progress-observed",
-              at: Date.now(),
-              filesSeen: transferred,
-              ...(intent.nFiles === undefined ? {} : { filesTotal: intent.nFiles }),
-            });
-          } catch {
-            // The lease is gone — same as a lost heartbeat or a SIGTERM: stop
-            // rsync through the one cancellation path, rather than letting
-            // the error reach pump() inside startSync and abort the transfer
-            // ungracefully (sync.ts's own `done` still copes if it does, but
-            // this is the graceful route and it also earns the "cancelled"
-            // outcome instead of "failed").
-            requestCancel();
-          }
-        }
-      },
-    });
-    emit({ ...base, type: "job.phase-changed", at: Date.now(), phase: "transferring" });
-    if (abort.signal.aborted) handle.cancel();
-    const result = await handle.done;
-    if (result.cancelled) {
-      emit({ ...base, type: "job.cancelled", at: Date.now(), transferred: result.transferred });
-      process.exitCode = 130;
-    } else if (result.exitCode === 0 || result.exitCode === 24) {
-      emit({
-        ...base,
-        type: "job.completed",
-        at: Date.now(),
-        result: { exitCode: result.exitCode, transferred: result.transferred },
+    // The transfer records nothing the ledger reads, so a destination that
+    // was just brought up to date goes on reporting the backlog its last
+    // check found. Same trailing quick check the TUI runs, under the same
+    // lease, streamed so the client sees the row change rather than having
+    // to ask for a check of its own. A check that will not run does not
+    // undo a transfer that did: the sync's own outcome is already emitted.
+    try {
+      await recheckAfterSync(config, loadState(), intent.unit, intent.target, {
+        signal: job.signal,
+        onEvent: emit,
       });
-      // The transfer records nothing the ledger reads, so a destination that
-      // was just brought up to date goes on reporting the backlog its last
-      // check found. Same trailing quick check the TUI runs, under the same
-      // lease, streamed so the client sees the row change rather than having
-      // to ask for a check of its own. A check that will not run does not
-      // undo a transfer that did: the sync's own outcome is already emitted.
-      try {
-        await recheckAfterSync(config, loadState(), intent.unit, intent.target, {
-          signal: abort.signal,
-          onEvent: emit,
-        });
-      } catch (error) {
-        emit({
-          protocolVersion: 1,
-          jobId: `${jobId}-recheck`,
-          operation: "quick",
-          unit: intent.unit,
-          target: intent.target,
-          type: "job.failed",
-          at: Date.now(),
-          message: error instanceof Error ? error.message : String(error),
-          exitCode: null,
-        });
-      }
-    } else {
+    } catch (error) {
       emit({
-        ...base,
+        protocolVersion: 1,
+        jobId: `${jobId}-recheck`,
+        operation: "quick",
+        unit: intent.unit,
+        target: intent.target,
         type: "job.failed",
         at: Date.now(),
-        message: result.stderr || `rsync exited ${String(result.exitCode)}`,
-        exitCode: result.exitCode,
+        message: error instanceof Error ? error.message : String(error),
+        exitCode: null,
       });
-      process.exitCode = 1;
     }
-  } finally {
-    clearInterval(heartbeat);
-    process.off("SIGINT", requestCancel);
-    process.off("SIGTERM", requestCancel);
-    ownership.lease.release();
+  } else {
+    emit({
+      ...base,
+      type: "job.failed",
+      at: Date.now(),
+      message: result.stderr || `rsync exited ${String(result.exitCode)}`,
+      exitCode: result.exitCode,
+    });
+    process.exitCode = 1;
   }
 }
 
@@ -675,7 +611,7 @@ min_targets         = 1   # every configured target must verify regardless
 }
 
 async function main(): Promise<void> {
-  const [cmd, arg, detail, extra, more, last] = process.argv.slice(2);
+  const [cmd, arg] = process.argv.slice(2);
 
   if (cmd === "help" || cmd === "--help" || cmd === "-h") {
     process.stdout.write(USAGE);
@@ -745,7 +681,7 @@ async function main(): Promise<void> {
       await cmdDoctor(config);
       return;
     case "engine":
-      await cmdEngine(config, arg, detail, extra, more, last);
+      await cmdEngine(config, engineArgs(process.argv.slice(3)));
       return;
     default:
       fail(`unknown command: ${cmd}\n\n${USAGE}`);

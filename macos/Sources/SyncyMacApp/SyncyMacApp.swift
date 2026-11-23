@@ -586,6 +586,7 @@ final class AppModel: ObservableObject {
       })
     else { return }
     let due = schedules[index].latestDueDate(at: now)
+    let previousAttempt = schedules[index].lastAttemptAt
     schedules[index].lastAttemptAt = now
     let schedule = schedules[index]
     saveSchedules()
@@ -597,22 +598,36 @@ final class AppModel: ObservableObject {
     scheduleTask = Task { [weak self] in
       guard let self else { return }
       var outcomeMessage: String?
-      do {
+      var suspended = false
+      // Once per occurrence: a sync found suspended at preflight is not an
+      // attempt, and records its missed time only when it does run.
+      let recordMissedIfLate = {
         if let due, now.timeIntervalSince(due) > 90 {
           try? await self.client.recordMissed(schedule: schedule, due: due)
         }
+      }
+      do {
         switch schedule.operation {
         case .quick, .deep:
           guard let operation = schedule.operation.engineOperation else {
             throw ScheduleRunError.incompleteCheckOperation
           }
+          await recordMissedIfLate()
           try await self.client.runCheck(
             operation, unit: schedule.unit, actor: .scheduler, onEvent: events)
         case .sync:
           guard let unit = schedule.unit, let target = schedule.target else {
             throw ScheduleRunError.incompleteSyncScope
           }
-          let preflight = try await self.client.prepareSync(unit: unit, target: target)
+          let preflight = try await self.client.prepareSync(
+            unit: unit, target: target, actor: .scheduler)
+          // Approval was checked against the app's snapshot, which can be
+          // hours old: a hand-edited config.toml changes nothing the app would
+          // notice. The preflight's revision is the engine's, read just now.
+          guard schedule.isApproved(forConfigRevision: preflight.configRevision) else {
+            throw ScheduleRunError.suspended
+          }
+          await recordMissedIfLate()
           guard preflight.ok, let token = preflight.confirmationToken else {
             throw ScheduleRunError.preflightRefused(
               preflight.checks.first(where: { !$0.ok })?.detail ?? "guard checks did not pass")
@@ -625,17 +640,40 @@ final class AppModel: ObservableObject {
           self.jobOutcomeProblems.isEmpty
           ? "Scheduled work cancelled"
           : self.jobOutcomeProblems.joined(separator: " · ")
+      } catch ScheduleRunError.suspended {
+        // Not an attempt: the occurrence stays due, so reviewing the schedule
+        // runs it once, exactly as it would had the snapshot been current.
+        // The approval is withdrawn outright rather than left for the next
+        // snapshot to contradict: if that refresh failed, the stale revision
+        // would still match and this would retry every poll.
+        if let index = self.schedules.firstIndex(where: { $0.id == schedule.id }) {
+          self.schedules[index].lastAttemptAt = previousAttempt
+          self.schedules[index].approvedConfigRevision = nil
+          self.saveSchedules()
+        }
+        suspended = true
+        outcomeMessage =
+          "\(self.scheduleSummary(schedule)) suspended · configuration changed since it was reviewed"
       } catch {
         outcomeMessage = "Scheduled work failed · \(error.localizedDescription)"
       }
-      await self.notifyScheduledOutcome(schedule: schedule, failure: outcomeMessage)
+      let recorded = (try? await self.client.history()) ?? []
+      let outcome =
+        suspended
+        ? ScheduledOutcome(needsAttention: true, message: outcomeMessage ?? "")
+        : ScheduledOutcome.summarize(
+          schedule: schedule, startedAt: now, recorded: recorded, failure: outcomeMessage)
+      await self.notifyScheduledOutcome(outcome)
       self.isLaunchingJob = false
       self.scheduleTask = nil
       await self.refresh()
-      if outcomeMessage == nil {
-        self.finishJob(success: "Scheduled work completed · evidence recorded")
+      self.liveActiveJob = nil
+      self.liveJobID = nil
+      if outcome.needsAttention {
+        self.errorMessage = outcome.message
+      } else {
+        self.jobOutcomeMessage = outcome.message
       }
-      if let outcomeMessage { self.errorMessage = outcomeMessage }
     }
   }
 
@@ -714,14 +752,10 @@ final class AppModel: ObservableObject {
     }
   }
 
-  private func notifyScheduledOutcome(schedule: CheckSchedule, failure: String?) async {
-    let entries = (try? await client.history()) ?? []
-    let matching = entries.filter {
-      $0.operation == schedule.operation.rawValue &&
-        (schedule.unit == nil || $0.unit == schedule.unit) &&
-        $0.ts >= (schedule.lastAttemptAt?.timeIntervalSince1970 ?? 0) * 1_000
-    }
-    let hasProblem = failure != nil || matching.contains { $0.outcome != "completed" }
+  /// Problems notify by default and name every destination that did not
+  /// complete; routine full success stays quiet unless asked for.
+  private func notifyScheduledOutcome(_ outcome: ScheduledOutcome) async {
+    let hasProblem = outcome.needsAttention
     let defaults = UserDefaults.standard
     let shouldNotify =
       hasProblem
@@ -738,13 +772,7 @@ final class AppModel: ObservableObject {
     guard refreshed.authorizationStatus == .authorized else { return }
     let content = UNMutableNotificationContent()
     content.title = hasProblem ? "Syncy scheduled work needs attention" : "Syncy work completed"
-    if let failure {
-      content.body = failure
-    } else if let skipped = matching.first(where: { $0.outcome == "skipped" }) {
-      content.body = "\(skipped.unit) → \(skipped.target) skipped · \(skipped.detail ?? "not run")"
-    } else {
-      content.body = scheduleSummary(schedule)
-    }
+    content.body = outcome.message
     try? await center.add(
       UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
   }
@@ -761,12 +789,14 @@ private enum ScheduleRunError: LocalizedError {
   case incompleteCheckOperation
   case incompleteSyncScope
   case preflightRefused(String)
+  case suspended
 
   var errorDescription: String? {
     switch self {
     case .incompleteCheckOperation: "scheduled check has no check operation"
     case .incompleteSyncScope: "scheduled sync has no exact unit and destination"
     case .preflightRefused(let detail): "scheduled sync preflight refused · \(detail)"
+    case .suspended: "scheduled sync suspended · configuration changed since it was reviewed"
     }
   }
 }

@@ -79,6 +79,102 @@ public struct CheckSchedule: Codable, Identifiable, Sendable {
   public func isApproved(forConfigRevision revision: String?) -> Bool {
     operation != .sync || (revision != nil && approvedConfigRevision == revision)
   }
+
+  /// What this schedule does and what it depends on, one line each, in the
+  /// words the Schedules list shows. The conditions used to be one footer
+  /// under the form for adding a schedule, so a schedule already in the list
+  /// named its work and time but not what it needs or what stops it.
+  ///
+  /// Every line states what the scheduler actually does: nothing here checks
+  /// the power source or the network, wakes the Mac, or mounts a share.
+  public func statement(destinations: [String], calendar: Calendar = .current) -> [String] {
+    let destination: String
+    if operation == .sync {
+      destination = "Destination · \(target ?? "none chosen")"
+    } else if destinations.isEmpty {
+      destination = "Destinations · every configured destination"
+    } else {
+      destination = "Destinations · every configured destination (\(destinations.joined(separator: ", ")))"
+    }
+    let skips =
+      operation == .sync
+      ? "Skipped, and recorded by name, if \(target ?? "the destination") is not connected, nothing is recorded as behind, or a guard refuses · suspended after any configuration change until reviewed"
+      : "A destination that is not connected is skipped and recorded by name; the others still run"
+    return [
+      destination,
+      cadencePhrase(calendar: calendar),
+      "Power · runs on battery or adapter, only while the Mac is awake and Syncy is open; it does not wake the Mac",
+      "Network · none of its own; a destination on a network share must already be mounted",
+      skips,
+      "After sleep or a quit · the latest missed time runs once, and is recorded as missed",
+    ]
+  }
+
+  public func cadencePhrase(calendar: Calendar = .current) -> String {
+    let time = DateComponents(calendar: calendar, hour: hour, minute: minute)
+    let clock = time.date?.formatted(date: .omitted, time: .shortened) ?? "the scheduled time"
+    if cadence == .daily { return "Every day at \(clock)" }
+    return "Every \(calendar.weekdaySymbols[weekday - 1]) at \(clock)"
+  }
+}
+
+/// What one scheduled run recorded, as its notification and the panel say it.
+///
+/// Read from history rather than from how the engine process exited. A
+/// scheduled sync to an unplugged drive exits non-zero after recording itself
+/// as skipped, so the exit status alone called it a failure. And the
+/// notification named at most the first skipped destination: a batch with one
+/// destination skipped and another failed said nothing of the failure, and no
+/// notification said how much of the run had completed.
+public struct ScheduledOutcome: Equatable, Sendable {
+  public let needsAttention: Bool
+  public let message: String
+
+  public init(needsAttention: Bool, message: String) {
+    self.needsAttention = needsAttention
+    self.message = message
+  }
+
+  public static func summarize(
+    schedule: CheckSchedule,
+    startedAt: Date,
+    recorded: [HistorySnapshotEntry],
+    failure: String?
+  ) -> ScheduledOutcome {
+    let since = startedAt.timeIntervalSince1970 * 1_000
+    let runs = recorded
+      .filter {
+        $0.ts >= since && $0.outcome != "missed"
+          && $0.operation == schedule.operation.rawValue
+          && (schedule.unit == nil || $0.unit == schedule.unit)
+          && (schedule.target == nil || $0.target == schedule.target)
+      }
+      .sorted { $0.ts < $1.ts }
+    let completed = runs.filter { $0.outcome == "completed" }.count
+    let problems = runs.filter { $0.outcome != "completed" }.map { entry in
+      "\(entry.unit) → \(entry.target) \(entry.outcome)"
+        + (entry.detail.map { " · \($0)" } ?? "")
+    }
+    let title = schedule.operation.readerTitle
+    if runs.isEmpty {
+      // Never report success for work that did not happen.
+      return ScheduledOutcome(
+        needsAttention: true,
+        message: failure ?? "Scheduled \(title.lowercased()) recorded no outcome")
+    }
+    if problems.isEmpty, let failure {
+      return ScheduledOutcome(
+        needsAttention: true, message: "\(completed) of \(runs.count) completed · \(failure)")
+    }
+    if problems.isEmpty {
+      return ScheduledOutcome(
+        needsAttention: false,
+        message: "Scheduled \(title.lowercased()) completed · \(completed) recorded")
+    }
+    return ScheduledOutcome(
+      needsAttention: true,
+      message: (["\(completed) of \(runs.count) completed"] + problems).joined(separator: " · "))
+  }
 }
 
 /** Codable counterpart of the command enum, kept stable in personal settings. */

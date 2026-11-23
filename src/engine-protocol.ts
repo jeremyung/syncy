@@ -137,6 +137,13 @@ export interface SyncPreflightMessage {
   readonly unit: string;
   readonly target: string;
   readonly argv: readonly string[];
+  /**
+   * The configuration this preflight was evaluated against. A scheduled sync
+   * compares it with the revision its schedule was reviewed at; the app's
+   * snapshot can be hours old, and a hand-edited config.toml changes nothing
+   * the app would notice.
+   */
+  readonly configRevision: string;
   readonly checks: readonly {
     readonly name: string;
     readonly ok: boolean;

@@ -334,9 +334,16 @@ struct SchedulesView: View {
               ) {
                 VStack(alignment: .leading, spacing: SyncySpace.xs) {
                   Text(scheduleTitle(schedule))
-                  Text(scheduleDescription(schedule))
-                    .font(.caption)
-                    .foregroundStyle(SyncyTheme.secondaryInk)
+                  ForEach(
+                    schedule.statement(
+                      destinations: model.snapshot?.targets.map(\.name) ?? []),
+                    id: \.self
+                  ) { line in
+                    Text(line)
+                      .font(.caption)
+                      .foregroundStyle(SyncyTheme.secondaryInk)
+                      .fixedSize(horizontal: false, vertical: true)
+                  }
                   if schedule.operation == .sync,
                     !schedule.isApproved(forConfigRevision: model.snapshot?.configRevision)
                   {
@@ -430,13 +437,6 @@ struct SchedulesView: View {
       }
       .formStyle(.grouped)
     }
-  }
-
-  private func scheduleDescription(_ schedule: CheckSchedule) -> String {
-    let time = DateComponents(calendar: .current, hour: schedule.hour, minute: schedule.minute)
-    let date = time.date?.formatted(date: .omitted, time: .shortened) ?? "scheduled time"
-    if schedule.cadence == .daily { return "Every day at \(date)" }
-    return "\(Calendar.current.weekdaySymbols[schedule.weekday - 1]) at \(date)"
   }
 
   private func scheduleTitle(_ schedule: CheckSchedule) -> String {

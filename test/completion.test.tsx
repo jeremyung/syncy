@@ -225,7 +225,7 @@ describe("completions and input always resolve to absolute paths", () => {
   test("a relative path completes to an absolute one", async () => {
     // Relative in, relative out meant accepting a completion produced a path
     // the validator then refused with "must be an absolute path".
-    const { completions } = await import("../src/tui/Setup.tsx");
+    const { completions } = await import("../src/target.ts");
     const rel = join(root, "picks").replace(process.cwd() + "/", "");
     const out = completions(rel + "/al");
     expect(out).toHaveLength(1);
@@ -234,7 +234,7 @@ describe("completions and input always resolve to absolute paths", () => {
   });
 
   test("every completion is absolute, whatever was typed", async () => {
-    const { completions } = await import("../src/tui/Setup.tsx");
+    const { completions } = await import("../src/target.ts");
     for (const typed of [join(root, "picks") + "/", "~/", "./"]) {
       for (const c of completions(typed)) {
         expect(c.startsWith("/"), `${typed} -> ${c}`).toBe(true);
@@ -243,7 +243,7 @@ describe("completions and input always resolve to absolute paths", () => {
   });
 
   test("expandPath handles ~, bare ~, relative and ./", async () => {
-    const { expandPath } = await import("../src/tui/Setup.tsx");
+    const { expandPath } = await import("../src/target.ts");
     const home = process.env["HOME"]!;
     expect(expandPath("~")).toBe(home);
     expect(expandPath("~/x")).toBe(join(home, "x"));
@@ -254,19 +254,19 @@ describe("completions and input always resolve to absolute paths", () => {
   });
 
   test("a relative target path is accepted, not refused", async () => {
-    const { validateTargetPath } = await import("../src/tui/Setup.tsx");
+    const { validateTargetPath } = await import("../src/target.ts");
     const rel = join(root, "picks", "alpha").replace(process.cwd() + "/", "");
     expect(validateTargetPath(rel, EMPTY_CONFIG(join(root, "src")))).toBeNull();
   });
 
   test("an empty path says so plainly", async () => {
-    const { validateTargetPath } = await import("../src/tui/Setup.tsx");
+    const { validateTargetPath } = await import("../src/target.ts");
     expect(validateTargetPath("", EMPTY_CONFIG("/src"))).toBe("a path is required");
   });
 
   test("nesting checks still apply to a relative path once resolved", async () => {
     // The safety check must not be dodgeable by typing a relative path.
-    const { validateTargetPath } = await import("../src/tui/Setup.tsx");
+    const { validateTargetPath } = await import("../src/target.ts");
     const src = join(root, "src");
     mkdirSync(join(src, "inside"), { recursive: true });
     const rel = join(src, "inside").replace(process.cwd() + "/", "");
