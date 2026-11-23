@@ -385,6 +385,51 @@ describe("the UI-independent check runner", () => {
       true,
     );
   });
+  test.each(["cancelled", "failed", "completed", "skipped"] as const)(
+    "%s remains in history when the terminal-event observer throws",
+    async (outcome) => {
+      const history: HistoryEntry[] = [];
+      const abort = new AbortController();
+      const observerError = new Error("job ownership was lost");
+      const check: CheckRunnerDependencies["check"] = async (_config, unit, target, mode) => {
+        if (outcome === "cancelled") abort.abort();
+        if (outcome === "failed") throw new Error("rsync unavailable");
+        return checked(unit, target.name, mode);
+      };
+      await expect(
+        runCheckQueue(
+          { ...config, targets: [targets[0]!] },
+          EMPTY_STATE,
+          "quick",
+          [{ unit: "one", bytes: 1, files: 1 }],
+          {
+            signal: abort.signal,
+            dependencies: {
+              ...dependencies([], check),
+              reachability: async () =>
+                new Map([["archive", outcome === "skipped" ? "unreachable" : "ok"]]),
+              appendHistory: (entry) => history.push(entry),
+            },
+            onEvent: (event) => {
+              if (
+                event.type === "job.cancelled" ||
+                event.type === "job.failed" ||
+                event.type === "job.completed" ||
+                event.type === "job.skipped"
+              )
+                throw observerError;
+            },
+          },
+        ),
+      ).rejects.toBe(observerError);
+      // Exactly one literal outcome: retrying the event in the error path
+      // must not duplicate a cancellation or relabel a recorded completion.
+      expect(history.map((entry) => [entry.unit, entry.target, entry.outcome])).toEqual([
+        ["one", "archive", outcome],
+      ]);
+    },
+  );
+
   test("confines a run to the named destinations", async () => {
     // What the trailing check after a sync needs: the one destination the
     // transfer wrote to, not a fan-out that would make a two-second recheck

@@ -61,6 +61,26 @@ struct SchedulerTests {
     #expect(model.errorMessage?.contains("suspended") == true)
   }
 
+  @Test func finalRefreshReadsAgainAfterAnOlderRefreshFinishes() async throws {
+    let client = ControlledEngine()
+    let model = AppModel(client: client, preferences: MemoryPreferences())
+    await model.refresh()
+    client.holdRefresh = true
+    let olderRefresh = Task { await model.refresh() }
+    defer { client.finishRefresh() }
+    try await until { client.refreshIsWaiting }
+
+    model.addSchedule(dueSchedule())
+    try await until { client.historyCalls == 1 }
+    // The older snapshot began before this check completed. Its response
+    // cannot replace the fresh evidence the run's final refresh must read.
+    client.finishRefresh()
+    await olderRefresh.value
+    try await until { !model.isLaunchingJob }
+    #expect(client.snapshotCalls == 3)
+    #expect(model.snapshot?.generatedAt == 3)
+  }
+
   private func dueSchedule(operation: EngineCheckOperationValue = .quick) -> CheckSchedule {
     CheckSchedule(
       operation: operation, unit: "photos", target: operation == .sync ? "archive" : nil,
@@ -97,20 +117,22 @@ private final class ControlledEngine: EngineClient {
   private(set) var checkCalls = 0
   private(set) var preflightCalls = 0
   private(set) var syncCalls = 0
-  private var snapshots = 0
+  private(set) var snapshotCalls = 0
+  private(set) var historyCalls = 0
   private var check: CheckedContinuation<Void, any Error>?
   private var refresh: CheckedContinuation<Void, Never>?
   var refreshIsWaiting: Bool { refresh != nil }
 
   func snapshot() async throws -> EngineSnapshot {
-    snapshots += 1
-    if holdRefresh, snapshots > 1 {
+    snapshotCalls += 1
+    let generatedAt = snapshotCalls
+    if holdRefresh, snapshotCalls > 1 {
       await withCheckedContinuation { refresh = $0 }
     }
     return try JSONDecoder().decode(
       EngineSnapshot.self,
       from: Data(
-        #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"original","targets":[],"units":[]}"#
+        #"{"protocolVersion":1,"type":"snapshot","generatedAt":\#(generatedAt),"source":"/source","configRevision":"original","targets":[],"units":[]}"#
           .utf8))
   }
 
@@ -161,7 +183,10 @@ private final class ControlledEngine: EngineClient {
   ) async throws { syncCalls += 1 }
 
   func activity() async throws -> ActiveJobSnapshot? { nil }
-  func history() async throws -> [HistorySnapshotEntry] { [] }
+  func history() async throws -> [HistorySnapshotEntry] {
+    historyCalls += 1
+    return []
+  }
   func recordMissed(schedule: CheckSchedule, due: Date) async throws {}
   func doctor() async throws -> String { throw TestFailure.unexpectedCommand }
   func setSource(path: String) async throws -> EngineSnapshot {

@@ -161,7 +161,7 @@ final class AppModel: ObservableObject {
   private let client: any EngineClient
   private var attemptedInitialLoad = false
   private var lastFullRefreshAt: Date?
-  private var snapshotRefreshInFlight = false
+  private var snapshotRefreshTask: Task<Void, Never>?
   private var checkTask: Task<Void, Error>?
   private var syncTask: Task<Void, Never>?
   private var scheduleTask: Task<Void, Never>?
@@ -296,12 +296,24 @@ final class AppModel: ObservableObject {
   }
 
   func refresh() async {
-    guard !snapshotRefreshInFlight else { return }
-    snapshotRefreshInFlight = true
+    // A snapshot already being read may predate the check that requested
+    // this refresh. Wait for it, then read again; silently returning here
+    // left the ledger showing the evidence from before that check finished.
+    while let current = snapshotRefreshTask {
+      await current.value
+    }
+    let refresh = Task {
+      await self.loadSnapshot()
+      self.snapshotRefreshTask = nil
+    }
+    snapshotRefreshTask = refresh
+    await refresh.value
+  }
+
+  private func loadSnapshot() async {
     isRefreshing = true
     isLoading = true
     defer {
-      snapshotRefreshInFlight = false
       isRefreshing = false
       isLoading = false
     }

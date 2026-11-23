@@ -4,7 +4,7 @@ The Mac app is implemented. Release acceptance still requires a clean-machine
 smoke test; a successful build or a resident process cannot establish that the
 interface launches, cancels work, or recovers its ledger correctly.
 
-## Integration checked on 2026-11-22
+## Integration checked on 2026-11-23
 
 The scheduling changes in PR #55 and engine ownership refactor in PR #54 were
 combined against the same main revision. Their only merge conflict was the
@@ -12,14 +12,14 @@ README test count, updated to the measured combined count.
 
 | Gate | Observed result |
 |---|---|
-| `bun test` | 1,070 passed, zero failed |
+| `bun test` | 1,074 passed, zero failed |
 | `bunx tsc --noEmit` | Passed |
 | `bun run lint` | Passed |
-| `swift test` in `macos/` | 36 passed, zero failed (33 core and three app scheduler tests) |
+| `swift test` in `macos/` | 37 passed, zero failed (33 core and four app scheduler tests) |
 | `./scripts/build-mac-app.sh` | Built the engine and Mac bundle; signature verification passed |
 | `bun run audit` | Working tree, commit messages, and all reachable blobs clean |
 
-The process-cleanup tests require permission to run `ps`. In a restricted
+The process-cleanup tests require permission to run `ps`. In an earlier restricted
 sandbox, 1,068 passed and two failed because `ps` could not run. The complete
 suite was then rerun with process inspection allowed and all 1,070 passed.
 Apple's icon compiler likewise needed to run outside the restricted sandbox.
@@ -39,6 +39,20 @@ A third app test confirms that a changed preflight revision suspends a sync
 without running it or consuming its due occurrence. The app tests use in-memory
 preferences and controlled engine responses; they do not access real schedules,
 notification settings, or source/destination files.
+
+Self-review found that an older refresh in flight could swallow a scheduled
+run's final refresh. Refresh requests now wait for the older read and then read
+again. The fourth app test holds that older read across a completed check and
+asserts that the final snapshot comes from the new read. Restoring the previous
+refresh implementation made this test fail.
+
+Self-review also checked terminal-event observers throwing after ownership is
+lost. Cancellation, failure, and skip records were missing because notification
+preceded persistence. Terminal outcomes now reach history before their events;
+the error path cannot duplicate an ending or relabel a recorded completion.
+Three observer tests failed before the ordering fix. Disabling the duplicate
+guard separately made the cancellation and completion tests fail. All four
+observer cases pass with the fix.
 
 The desktop inspection tool timed out without returning an app window state.
 An attempted sandboxed launch exited with status 134 and supplied no diagnostic
