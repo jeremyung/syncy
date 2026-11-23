@@ -15,7 +15,7 @@ README test count, updated to the measured combined count.
 | `bun test` | 1,070 passed, zero failed |
 | `bunx tsc --noEmit` | Passed |
 | `bun run lint` | Passed |
-| `swift test` in `macos/` | 33 passed, zero failed |
+| `swift test` in `macos/` | 36 passed, zero failed (33 core and three app scheduler tests) |
 | `./scripts/build-mac-app.sh` | Built the engine and Mac bundle; signature verification passed |
 | `bun run audit` | Working tree, commit messages, and all reachable blobs clean |
 
@@ -29,6 +29,16 @@ Two guards were independently checked by restoring their bugs: an engine
 import from the interface made the layering test fail, and removing the
 preflight configuration-revision validator made its required-field test fail.
 Both changes were restored; all 24 layering and protocol tests then passed.
+
+Review of the app scheduler found two further cleanup bugs: cancellation left
+the next job showing “Cancelling…”, and releasing the busy state before the
+final refresh let another due schedule start while the older run could still
+clear its activity. Cleanup now runs after the refresh, in `defer`. Both app
+tests failed when the old cleanup was restored, then passed with the fix.
+A third app test confirms that a changed preflight revision suspends a sync
+without running it or consuming its due occurrence. The app tests use in-memory
+preferences and controlled engine responses; they do not access real schedules,
+notification settings, or source/destination files.
 
 The desktop inspection tool timed out without returning an app window state.
 An attempted sandboxed launch exited with status 134 and supplied no diagnostic

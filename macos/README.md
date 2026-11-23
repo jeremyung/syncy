@@ -34,6 +34,11 @@ swift build
 swift test
 ```
 
+The test suite covers the shared engine contract and the app's scheduler state
+machine. Scheduler tests use in-memory preferences and controlled engine
+completion, so cancellation, final refresh, and configuration-change suspension
+can be exercised without changing real schedules or requesting notifications.
+
 From the repository root, `scripts/build-mac-app.sh` builds the engine and a
 `build/Syncy.app` bundle, embeds the engine helper, and ad-hoc signs both. Set
 `SYNCY_SIGN_IDENTITY` to use a Developer ID identity. Notarization is a separate

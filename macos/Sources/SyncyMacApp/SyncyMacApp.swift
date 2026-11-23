@@ -169,19 +169,17 @@ final class AppModel: ObservableObject {
   private var liveJobID: String?
   private var differencesRequestID = UUID()
   private var suppressSnapshotJob = false
-  private let scheduleDefaultsKey = "syncy.check-schedules.v1"
+  private let preferences: any AppPreferences
 
-  init(client: (any EngineClient)? = nil) {
+  init(client: (any EngineClient)? = nil, preferences: (any AppPreferences)? = nil) {
+    let preferences = preferences ?? DefaultsAppPreferences()
+    self.preferences = preferences
     if let client {
       self.client = client
     } else {
       self.client = (try? ProcessEngineClient.located()) ?? DisconnectedEngineClient()
     }
-    if let data = UserDefaults.standard.data(forKey: scheduleDefaultsKey),
-      let decoded = try? JSONDecoder().decode([CheckSchedule].self, from: data)
-    {
-      schedules = decoded
-    }
+    schedules = preferences.schedules
   }
 
   var selectedUnit: UnitSnapshot? {
@@ -572,9 +570,7 @@ final class AppModel: ObservableObject {
   }
 
   private func saveSchedules() {
-    if let data = try? JSONEncoder().encode(schedules) {
-      UserDefaults.standard.set(data, forKey: scheduleDefaultsKey)
-    }
+    preferences.schedules = schedules
   }
 
   private func startDueScheduleIfNeeded(now: Date = Date()) {
@@ -597,6 +593,15 @@ final class AppModel: ObservableObject {
     let events = eventHandler(actor: .scheduler)
     scheduleTask = Task { [weak self] in
       guard let self else { return }
+      // A run still owns the app's busy state while its final snapshot is
+      // loading. Releasing it before that await let another schedule start,
+      // then the older run cleared the newer run's live activity. Cancellation
+      // also left the next job displaying a disabled "Cancelling…" button.
+      defer {
+        self.isLaunchingJob = false
+        self.isCancellingJob = false
+        self.scheduleTask = nil
+      }
       var outcomeMessage: String?
       var suspended = false
       // Once per occurrence: a sync found suspended at preflight is not an
@@ -664,8 +669,6 @@ final class AppModel: ObservableObject {
         : ScheduledOutcome.summarize(
           schedule: schedule, startedAt: now, recorded: recorded, failure: outcomeMessage)
       await self.notifyScheduledOutcome(outcome)
-      self.isLaunchingJob = false
-      self.scheduleTask = nil
       await self.refresh()
       self.liveActiveJob = nil
       self.liveJobID = nil
@@ -756,11 +759,10 @@ final class AppModel: ObservableObject {
   /// complete; routine full success stays quiet unless asked for.
   private func notifyScheduledOutcome(_ outcome: ScheduledOutcome) async {
     let hasProblem = outcome.needsAttention
-    let defaults = UserDefaults.standard
     let shouldNotify =
       hasProblem
-      ? defaults.object(forKey: "notify-problems") as? Bool ?? true
-      : defaults.object(forKey: "notify-success") as? Bool ?? false
+      ? preferences.notifyProblems
+      : preferences.notifySuccess
     guard shouldNotify else { return }
 
     let center = UNUserNotificationCenter.current()
