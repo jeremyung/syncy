@@ -8,6 +8,7 @@ export interface SyncIntent {
   readonly token: string;
   readonly createdAt: number;
   readonly expiresAt: number;
+  readonly localEpoch?: number;
   readonly unit: string;
   readonly target: string;
   readonly argv: readonly string[];
@@ -46,6 +47,7 @@ function parseIntent(raw: unknown): SyncIntent {
     typeof value.token !== "string" ||
     typeof value.createdAt !== "number" ||
     typeof value.expiresAt !== "number" ||
+    (value.localEpoch !== undefined && !Number.isSafeInteger(value.localEpoch)) ||
     typeof value.unit !== "string" ||
     typeof value.target !== "string" ||
     !Array.isArray(value.argv) ||

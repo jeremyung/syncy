@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   closeSync,
   fsyncSync,
@@ -11,6 +12,7 @@ import { join } from "node:path";
 import type { Fingerprint } from "./fingerprint.ts";
 import { type Item, isNew } from "./itemize.ts";
 import { diffDir } from "./paths.ts";
+import type { State } from "./state.ts";
 
 /**
  * What a check actually found, kept so the ledger can show it (DESIGN.md §4).
@@ -83,6 +85,7 @@ export interface Diff {
   /** Set when the destination folder does not exist, so nothing was itemized. */
   readonly wholeFolderMissing: boolean;
   /** What the source holds, so the listing can be read against the whole. */
+  readonly sourceRoot?: string;
   readonly sourceHolds?: Fingerprint;
   /** What the destination actually holds. Absent on records written earlier. */
   readonly targetHolds?: Fingerprint;
@@ -219,7 +222,14 @@ export function diffFile(unit: string, target: string, dir: string = diffDir()):
   return join(dir, `${safe(target)}__${safe(unit)}.json`);
 }
 
-export function saveDiff(diff: Diff, dir: string = diffDir()): void {
+function scopedDiffDir(source: string) {
+  return join(diffDir(), createHash("sha256").update(source).digest("hex"));
+}
+
+export function saveDiff(
+  diff: Diff,
+  dir: string = diff.sourceRoot ? scopedDiffDir(diff.sourceRoot) : diffDir(),
+): void {
   mkdirSync(dir, { recursive: true });
   const file = diffFile(diff.unit, diff.target, dir);
   const tmp = `${file}.${process.pid}.tmp`;
@@ -271,6 +281,27 @@ export function loadDiff(unit: string, target: string, dir: string = diffDir()):
   } catch {
     return null;
   }
+}
+
+/** Match both the source period and the exact scan that produced the listing. */
+export function loadLocalDiff(
+  source: string,
+  unit: string,
+  target: string,
+  current: State,
+): Diff | null {
+  const listing = loadDiff(unit, target, scopedDiffDir(source)) ?? loadDiff(unit, target);
+  if (!listing || (listing.sourceRoot !== undefined && listing.sourceRoot !== source)) return null;
+  return current.scans.some(
+    (s) =>
+      s.unit === unit &&
+      s.target === target &&
+      s.ts === listing.ts &&
+      s.method === listing.method &&
+      (!listing.targetIdentity || listing.targetIdentity === s.sentinel),
+  )
+    ? listing
+    : null;
 }
 
 /**

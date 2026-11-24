@@ -1,3 +1,4 @@
+import type { ArchiveRecord } from "./archive-ledger.ts";
 import type { Config } from "./config.ts";
 import { ageAgo, bytes, stamp } from "./format.ts";
 import { shelfSummary } from "./shelf.ts";
@@ -43,7 +44,8 @@ const BLOCK: Readonly<Record<UnitStatus["state"], string>> = {
 
 export interface LedgerRow {
   readonly status: UnitStatus;
-  readonly size: number;
+  readonly size: number | undefined;
+  readonly archive?: ArchiveRecord | undefined;
 }
 
 export interface LedgerView {
@@ -63,7 +65,7 @@ export function renderLedger(view: LedgerView): string {
   const statusW = Math.max(12, W - fixed + 2);
 
   const out: string[] = [];
-  const states = view.rows.map((r) => r.status.state);
+  const states = view.rows.filter((r) => r.size !== undefined).map((r) => r.status.state);
   const blocks = states.map((s) => BLOCK[s]).join("");
   const dateLine = `archive ledger · ${stamp(view.now).split(" · ")[0]} ${new Date(view.now).getFullYear()}`;
   const wordmark = "  syncy  " + blocks;
@@ -87,7 +89,12 @@ export function renderLedger(view: LedgerView): string {
   view.rows.forEach((row, idx) => {
     const mark = idx === view.selected ? "»" : " ";
     let line =
-      mark + " " + leaders(row.status.unit, FOLDER) + " " + padStart(bytes(row.size), SIZE) + "   ";
+      mark +
+      " " +
+      leaders(row.status.unit, FOLDER) +
+      " " +
+      padStart(row.size === undefined ? "—" : bytes(row.size), SIZE) +
+      "   ";
     names.forEach((n, i) => {
       const cell = row.status.cells.find((c) => c.target === n);
       const glyph = cell === undefined ? "?" : GLYPH[cell.state];
@@ -96,8 +103,26 @@ export function renderLedger(view: LedgerView): string {
     });
     const reason =
       row.status.state === "verified" ? "verified" : `${row.status.state} · ${row.status.reason}`;
-    line += truncate(reason, statusW);
+    line += truncate(
+      row.archive && row.archive.local !== "present" ? row.archive.label : reason,
+      statusW,
+    );
     out.push(line);
+    if (row.archive?.local !== "present" && row.archive) {
+      for (const result of row.archive.pairs)
+        out.push(
+          "    " +
+            truncate(
+              result.endpoints.join(" ↔ ") +
+                " · " +
+                (result.current ? "" : "Last check · ") +
+                result.detail +
+                " · " +
+                stamp(result.at),
+              W - 2,
+            ),
+        );
+    }
   });
 
   out.push(rule(W));
@@ -120,7 +145,11 @@ function legend(): string {
  */
 function detailLines(view: LedgerView): string[] {
   const row = view.rows[view.selected];
-  if (row === undefined) return ["  no subfolders under the source root"];
+  if (row === undefined) return ["  no tracked folders in this view"];
+  if (row.archive && row.archive.local !== "present")
+    return row.archive.localChecks.map(
+      (check) => "  " + check.target + " · last verified against local " + stamp(check.at),
+    );
   const label = truncate(row.status.unit, 18);
   const out: string[] = [];
   view.config.targets.forEach((t, i) => {
@@ -142,7 +171,7 @@ function detailLines(view: LedgerView): string[] {
     out.push(`  ${prefix}${padEnd(t.name, 5)} ${describe(deep, last, view.now, extras)}`);
   });
   const fp = row.status.cells.length > 0 ? view.rows[view.selected] : undefined;
-  if (fp !== undefined) {
+  if (fp !== undefined && row.size !== undefined) {
     out.push(`  ${padEnd("", 18)}${padEnd("", 5)} ${bytes(row.size)} on disk`);
   }
   return out;
@@ -156,15 +185,15 @@ const describe = (
 ): string => evidencePhrase(deep, last, now, { stamp, ageAgo }, extras);
 
 function footer(view: LedgerView, W: number): string {
-  const total = view.rows.reduce((a, r) => a + r.size, 0);
+  const total = view.rows.reduce((a, r) => a + (r.size ?? 0), 0);
   const verified = view.rows
     .filter((r) => r.status.state === "verified")
-    .reduce((a, r) => a + r.size, 0);
+    .reduce((a, r) => a + (r.size ?? 0), 0);
   const awaiting = view.rows
     .filter((r) => r.status.state === "unchecked")
-    .reduce((a, r) => a + r.size, 0);
+    .reduce((a, r) => a + (r.size ?? 0), 0);
 
-  const left = `${view.rows.length} units · ${bytes(total)}`;
+  const left = `${view.rows.filter((row) => row.size !== undefined).length} local units · ${bytes(total)}`;
   const mid = `${bytes(verified)} verified`;
   const right =
     awaiting > 0

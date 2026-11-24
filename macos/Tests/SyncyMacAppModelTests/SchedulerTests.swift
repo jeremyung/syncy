@@ -110,7 +110,8 @@ private final class MemoryPreferences: AppPreferences {
 /// The real app state machine, with engine completion and refresh held at
 /// observable boundaries. No UserDefaults, filesystem, or notification access.
 @MainActor
-private final class ControlledEngine: EngineClient {
+final class ControlledEngine: EngineClient {
+  var snapshotOverride: EngineSnapshot?
   var holdCheck = false
   var holdRefresh = false
   var preparedRevision = "original"
@@ -124,6 +125,7 @@ private final class ControlledEngine: EngineClient {
   var refreshIsWaiting: Bool { refresh != nil }
 
   func snapshot() async throws -> EngineSnapshot {
+    if let snapshotOverride { return snapshotOverride }
     snapshotCalls += 1
     let generatedAt = snapshotCalls
     if holdRefresh, snapshotCalls > 1 {
@@ -132,7 +134,7 @@ private final class ControlledEngine: EngineClient {
     return try JSONDecoder().decode(
       EngineSnapshot.self,
       from: Data(
-        #"{"protocolVersion":1,"type":"snapshot","generatedAt":\#(generatedAt),"source":"/source","configRevision":"original","targets":[],"units":[]}"#
+        #"{"protocolVersion":2,"type":"snapshot","generatedAt":\#(generatedAt),"source":"/source","configRevision":"original","targets":[],"units":[]}"#
           .utf8))
   }
 
@@ -141,6 +143,21 @@ private final class ControlledEngine: EngineClient {
     let waiting = refresh
     refresh = nil
     waiting?.resume()
+  }
+
+  func compare(
+    _: EngineCheckOperation, unit _: String, pair _: DestinationPair, revision _: String,
+    onEvent _: @escaping JobEventHandler
+  ) async throws {
+    throw EngineClientError.engineNotFound
+  }
+
+  func folders(discover _: Bool, destinations _: [String]) async throws -> FolderCandidates {
+    throw EngineClientError.engineNotFound
+  }
+
+  func track(unit _: String, active _: Bool, revision _: String) async throws -> EngineSnapshot {
+    throw EngineClientError.engineNotFound
   }
 
   func runCheck(
@@ -171,7 +188,7 @@ private final class ControlledEngine: EngineClient {
       SyncPreflight.self,
       from: Data(
         """
-        {"protocolVersion":1,"type":"sync.preflight","generatedAt":1,
+        {"protocolVersion":2,"type":"sync.preflight","generatedAt":1,
         "unit":"photos","target":"archive","argv":[],"configRevision":"\(preparedRevision)",
         "checks":[],"ok":true,"nChanges":1,"nExtra":0,"bytesPending":1,
         "needsChecksum":false,"confirmationToken":"confirmation","expiresAt":9999999999999}

@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { acquireJobOwner } from "../src/job-owner.ts";
 import { parseEngineMessage } from "../src/protocol-jsonl.ts";
@@ -85,7 +93,7 @@ describeRsync("structured engine command", () => {
     const activity = await runEngine(["activity"], configHome, stateHome);
     expect(activity.exitCode).toBe(0);
     expect(parseEngineMessage(activity.stdout)).toEqual({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "activity",
       generatedAt: expect.any(Number),
     });
@@ -272,6 +280,31 @@ sentinel = "${sentinel}"
     expect(changed.exitCode).not.toBe(0);
     expect(changed.stderr).toContain("source changed after review");
     expect(existsSync(join(destination, "photos", "three.txt"))).toBe(false);
+
+    // A returned directory can have exactly its former fingerprint. A reviewed sync
+    // must still belong to the local observation period that produced the plan.
+    await runEngine(["check", "photos"], configHome, stateHome);
+    const beforeAbsence = parseEngineMessage(
+      (await runEngine(["preflight", "photos", "archive"], configHome, stateHome)).stdout,
+    );
+    if (beforeAbsence.type !== "sync.preflight" || !beforeAbsence.confirmationToken)
+      throw new Error("Need a reviewed sync");
+    const localFolder = join(source, "photos");
+    renameSync(localFolder, join(root, "offloaded"));
+    const observed = await runEngine(["snapshot"], configHome, stateHome);
+    expect(observed.exitCode, observed.stderr).toBe(0);
+    const absentPlan = await runEngine(["preflight", "photos", "archive"], configHome, stateHome);
+    expect(absentPlan.exitCode).toBe(1);
+    expect(absentPlan.stderr).toContain("Absent locally");
+    renameSync(join(root, "offloaded"), localFolder);
+    const restored = await runEngine(
+      ["sync", beforeAbsence.confirmationToken],
+      configHome,
+      stateHome,
+    );
+    expect(restored.exitCode).toBe(1);
+    expect(restored.stderr).toContain("after review");
+    expect(existsSync(join(destination, "photos", "two.txt"))).toBe(false);
 
     const missed = await runEngine(
       ["record-missed", "sync", "photos", String(Date.now() - 1_000), "archive"],
@@ -462,4 +495,138 @@ describe("syncy adopt (the bootstrap command)", () => {
       if (owner.acquired) owner.lease.release();
     }
   });
+});
+
+describeRsync("archive ledger across engine processes", () => {
+  test("resumes an offloaded folder, compares both copies and requires new local evidence on return", async () => {
+    root = makeFixtureDir("archive-release");
+    const configHome = join(root, "config");
+    const stateHome = join(root, "state");
+    const source = join(root, "source");
+    mkdirSync(join(configHome, "syncy"), { recursive: true });
+    mkdirSync(join(stateHome, "syncy"), { recursive: true });
+    mkdirSync(join(source, "other"), { recursive: true });
+    const names = ["first", "second"];
+    for (const name of names) {
+      const path = join(root, name);
+      mkdirSync(join(path, "photos"), { recursive: true });
+      writeFileSync(join(path, SENTINEL_NAME), name);
+      writeFileSync(join(path, "photos", "image"), "same bytes");
+      utimesSync(join(path, "photos", "image"), 100000, 100000);
+      utimesSync(join(path, "photos"), 100000, 100000);
+    }
+    const config =
+      "source = " +
+      JSON.stringify(source) +
+      "\n" +
+      names
+        .map(
+          (name) =>
+            `[[target]]\nname="${name}"\npath=${JSON.stringify(join(root, name))}\nsentinel="${name}"\n`,
+        )
+        .join("");
+    writeFileSync(join(configHome, "syncy", "config.toml"), config);
+    const ts = Date.now() - 86400000;
+    const oldScans = names.map((name) => ({
+      unit: "photos",
+      target: name,
+      ts,
+      method: "deep",
+      outcome: "clean",
+      nChanges: 0,
+      nExtra: 0,
+      bytesPending: 0,
+      fingerprint: { nfiles: 1, bytes: 10, maxMtimeNs: "0" },
+      sentinel: name,
+    }));
+    writeFileSync(
+      join(stateHome, "syncy", "state.json"),
+      JSON.stringify({ version: 1, scans: oldScans }),
+    );
+    writeFileSync(
+      join(stateHome, "syncy", "history.jsonl"),
+      names
+        .map((name) =>
+          JSON.stringify({
+            unit: "photos",
+            target: name,
+            ts,
+            exitCode: 0,
+            argv: [
+              "-a",
+              "-n",
+              "-c",
+              join(source, "photos") + "/",
+              join(root, name, "photos") + "/",
+            ],
+          }),
+        )
+        .join("\n") + "\n",
+    );
+    const engine = async (...args: string[]) => {
+      const result = await runEngine(args, configHome, stateHome);
+      expect(result.exitCode, result.stderr).toBe(0);
+      return result.stdout.trim().split("\n").map(parseEngineMessage);
+    };
+    const row = async () => {
+      const [message] = await engine("snapshot");
+      if (message?.type !== "snapshot") throw new Error("Expected ledger");
+      return message.units.find((u) => u.unit === "photos");
+    };
+    expect((await row())?.archive?.local).toBe("unavailable");
+    await engine("set-source", source);
+    expect((await row())?.archive).toMatchObject({
+      local: "absent",
+      localChecks: names.map((target) => ({ target, at: ts })),
+    });
+    await engine("stop-tracking", "photos");
+    expect(await row()).toBeUndefined();
+    expect((await engine("remembered"))[0]).toMatchObject({
+      type: "folders",
+      candidates: expect.arrayContaining([
+        expect.objectContaining({ unit: "photos", tracked: false }),
+      ]),
+    });
+    const [options] = await engine("remembered");
+    if (options?.type !== "folders") throw new Error("Expected folder candidates");
+    const stale = await runEngine(["track", "photos", "--revision", "old"], configHome, stateHome);
+    expect(stale.exitCode).toBe(1);
+    expect(stale.stderr).toContain("Configuration changed");
+    expect(await row()).toBeUndefined();
+    await engine("track", "photos", "--revision", options.configRevision);
+    await engine("track", "photos");
+    await engine("compare", "deep", "photos", "second", "first");
+    expect((await row())?.archive?.pairs[0]).toMatchObject({
+      current: true,
+      method: "deep",
+      outcome: "agree",
+    });
+    writeFileSync(join(root, "second", "photos", "extra"), "only here");
+    await engine("compare", "deep", "photos", "first", "second");
+    expect((await row())?.archive?.pairs[0]).toMatchObject({
+      outcome: "different",
+      counts: expect.objectContaining({ "Only on second": 1 }),
+    });
+    renameSync(join(root, "second"), join(root, "disconnected"));
+    expect((await row())?.archive?.pairs[0]).toMatchObject({
+      current: false,
+      outcome: "different",
+    });
+    const [skipped] = await engine("check", "photos");
+    expect(skipped).toMatchObject({
+      type: "job.skipped",
+      unit: "photos",
+      reason: expect.stringContaining("Absent locally"),
+    });
+    const status = await runCli(["status"], configHome, stateHome);
+    expect(status.exitCode, status.stderr).toBe(0);
+    expect(status.stdout).toContain("Absent locally");
+    renameSync(join(root, "disconnected"), join(root, "second"));
+    mkdirSync(join(source, "photos"));
+    writeFileSync(join(source, "photos", "image"), "same bytes");
+    expect(await row()).toMatchObject({
+      state: "unchecked",
+      archive: { local: "present", label: "Local copy present · awaiting check" },
+    });
+  }, 30000);
 });

@@ -35,6 +35,19 @@ The Differences destination defaults to the first required destination that
 needs work. If none needs work, it defaults to the first recorded destination.
 The user can change it explicitly; the visible label remains `Destination`.
 
+## Tracked archive folders
+
+| Observation | Ledger or folder record |
+| --- | --- |
+| Expected source root was listed and the folder was absent | **Absent locally**. Keep its row and its dated local verification per destination. |
+| Root unreadable, wrong, or unconfirmed | **Local source unavailable**. Allow comparison of reachable destinations. |
+| Returned since observed absence | **Local copy present · awaiting check**. A fresh local check establishes its current evidence. |
+| Clean pair quick check | Show both destination names, comparison date, and size/date agreement with bytes unread. |
+| Clean pair deep check | **Verified against each other**. Show endpoints and comparison date. |
+| Different or missing entry | Name its side, or say what differs. Detail counts cover every observed difference and samples are bounded. |
+| Offline destination | Name the current blocker and retain the dated prior result. |
+| Discovery or resume | List remembered folders first. Discovery reports where each folder was observed and which roots could not be inspected. |
+
 ## Work in progress
 
 | Evidence available | Render | Never render |

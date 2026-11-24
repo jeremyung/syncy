@@ -202,7 +202,7 @@ syncy adopt <path>     write a sentinel to a destination
 Keys: `enter` differences, `q` quick check, `d` deep verify, `s` sync,
 `p` commands, `e` evidence, `f` filter, `,` setup, `?` all keys, `ctrl-c` quit
 (during a transfer the first press cancels it; a second quits).
-Hold shift to run a check against every folder rather than the selected one.
+Hold shift to check all tracked folders that have a local copy. The result names folders outside that scope.
 `s` offers the first destination the folder is behind on; `tab` on the confirm
 page moves between the others, re-deriving the counts, the checks and the
 command for each.
@@ -215,6 +215,25 @@ on exit, including after a signal.
 First run opens setup. Set a source root, then add destinations; adding one
 records its identity, detects its filesystem, and probes what metadata it can
 preserve. syncy tracks the immediate subfolders of the source root.
+
+### After a local copy goes away
+
+The ledger keeps the folder. **Absent locally** means syncy identified and listed
+the expected source root. **Local source unavailable** means it could not establish
+absence. On upgrade, reselect the source in setup to confirm its identity if needed.
+
+Open **Compare Copies** in the macOS folder record or press `c` on the TUI row.
+Choose two destinations and run a quick check for file lists, size and date, or a
+deep check for file lists and checksums. A difference names the copy holding the
+entry. The record shows when the destinations were compared and when each last
+verified against the local copy. Two surviving copies can agree even if both
+lost the same file.
+
+**Add Folder** (TUI `a`) lists remembered folders. Resume a folder there, or use
+**Find on Destinations** to look for one that has no attributable history.
+You can search all destinations or choose which ones to inspect (TUI `s`).
+Stopping tracking hides the row and preserves its history. When a local copy
+returns, its row accepts local checks again and requires fresh evidence.
 
 ### Differences
 
@@ -298,7 +317,8 @@ compatibility with existing configs.
 State lives in `~/.local/state/syncy`:
 
 ```
-state.json           current result per folder, destination and method
+state.json           latest local scans by source, folder, destination and method
+archive-v1.sqlite    tracking, source identity, dated verification and pair comparisons
 history.jsonl        every rsync invocation, with literal argv and exit code
 diffs/               which files differ, per folder and destination
 logs/
@@ -307,8 +327,7 @@ job-owners/          append-only archive of every past lease and how it ended
 job-owner-proposals/ unpublished ownership proposals retained for inspection
 ```
 
-Plain files rather than a database, so the record can be read with `cat`,
-`grep` and `diff`, and backed up without a client. `diffs/` is derived and safe
+Local scans and invocation history are plain JSON. The archive catalog uses SQLite transactions so concurrent ledger refreshes and tracking changes preserve each other. `diffs/` is derived and safe
 to delete; the cost is a re-check.
 
 `job-owners/` is never pruned: it is one small JSON file per past job, named
@@ -344,7 +363,7 @@ own palette.
 ## Development
 
 ```
-bun test               # 1075 tests
+bun test               # 1131 tests
 bunx tsc --noEmit
 bun run build
 bun run audit          # no machine-specific data in the tree or the history

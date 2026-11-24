@@ -137,17 +137,22 @@ private struct ActivityDrawer: View {
     if model.isLoading, model.snapshot == nil { return "Reading engine snapshot" }
     if let error = model.engineErrorMessage ?? model.errorMessage { return error }
     guard let snapshot = model.snapshot else { return "No snapshot loaded" }
-    let units = snapshot.units
+    let units = snapshot.localUnits
     // The scale of the archive and the measure of what is safe, which is what
     // the page header used to carry as "12 folders · 431.38 gb" — a total with
     // nothing to compare it against. Bytes rather than a folder count for the
     // reason `verifiedPhrase` in the TUI footer gives: the reader is deciding
     // what to delete off a full disk, and a folder is not a unit of space.
-    let total = units.reduce(Int64(0)) { $0 + $1.fingerprint.bytes }
-    let verified = units.filter { $0.state == .verified }
-      .reduce(Int64(0)) { $0 + $1.fingerprint.bytes }
-    let scale = "\(units.count) folder\(units.count == 1 ? "" : "s")"
-    return "\(scale) \u{00B7} \(SyncyFormat.bytes(verified)) verified of \(SyncyFormat.bytes(total))"
+    let verified = units.filter { $0.state == .verified }.measuredBytes
+    let scale = "\(units.count) local folder\(units.count == 1 ? "" : "s")"
+    let archived = snapshot.units.count - units.count
+    let tracked = archived > 0 ? " · \(archived) without a current local copy" : ""
+    if units.isEmpty && archived > 0 {
+      return "\(archived) tracked · local measurements unavailable"
+    }
+    guard let verified, let total = units.measuredBytes else { return "\(scale)\(tracked) · total size unavailable" }
+    return
+      "\(scale)\(tracked) \u{00B7} \(SyncyFormat.bytes(verified)) verified of \(SyncyFormat.bytes(total))"
   }
 
   private func running(_ job: ActiveJobSnapshot) -> String {
@@ -181,6 +186,7 @@ private struct ActivityDrawer: View {
 private struct LedgerView: View {
   @ObservedObject var model: AppModel
   @State private var showsSyncReview = false
+  @State private var showsAdd = false
 
   var body: some View {
     Group {
@@ -212,6 +218,7 @@ private struct LedgerView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .sheet(isPresented: $showsAdd) { AddTrackedFolderView(model: model) }
     .sheet(isPresented: $showsSyncReview) {
       SyncConfirmationView(model: model)
         .frame(minWidth: 620, minHeight: 560)
@@ -226,6 +233,13 @@ private struct LedgerView: View {
     .navigationTitle("Ledger")
     .toolbar {
       ToolbarItemGroup {
+        Button("Add Folder", systemImage: "folder.badge.plus") { showsAdd = true }
+          .disabled(model.snapshot == nil || model.isLaunchingJob || model.activeJob != nil)
+        if let unit = model.selectedUnit, !unit.isLocal {
+          Button("Compare Copies…", systemImage: "externaldrive") {
+            model.openFolderRecord(unit.id)
+          }
+        }
         CheckButton(
           title: "Quick Check", symbol: "checkmark.circle",
           operation: .quick, model: model)
@@ -258,7 +272,7 @@ private struct CheckButton: View {
   var body: some View {
     Menu {
       Button(allTitle) { Task { await model.runCheck(operation) } }
-      if model.selectedUnit != nil {
+      if model.selectedUnit?.isLocal == true {
         Button(scopedTitle) {
           Task { await model.runCheck(operation, unit: model.selectedUnit?.unit) }
         }
@@ -269,13 +283,17 @@ private struct CheckButton: View {
     } primaryAction: {
       Task { await model.runCheck(operation) }
     }
-    .disabled(model.isLaunchingJob || model.activeJob != nil || model.snapshot == nil)
+    .disabled(
+      model.isLaunchingJob || model.activeJob != nil || model.snapshot?.localUnits.isEmpty != false
+    )
     .help("\(allTitle) \u{00B7} open the menu to pick one folder")
   }
 
   private var allTitle: String {
-    guard let count = model.snapshot?.units.count, count > 0 else { return "\(title) Every Folder" }
-    return "\(title) All \(count) Folders"
+    guard let count = model.snapshot?.localUnits.count, count > 0 else {
+      return "\(title) Local Folders"
+    }
+    return "\(title) All \(count) Local Folders"
   }
 
   /// Names the folder outright rather than saying "selected", so nobody has to
@@ -326,6 +344,11 @@ private struct LedgerTable: View {
             .font(.caption.monospacedDigit())
             .foregroundStyle(SyncyTheme.secondaryInk)
             .lineLimit(1)
+          if !unit.isLocal, let reading = unit.archive?.pairs.first {
+            Text(reading.datedSummary)
+            .font(.caption)
+            .lineLimit(2)
+          }
         }
         .padding(.vertical, SyncySpace.xs)
       }
@@ -341,7 +364,20 @@ private struct LedgerTable: View {
       // said once, under the name it belongs to.
       TableColumnForEach(snapshot.targets) { target in
         TableColumn(header(target)) { (unit: UnitSnapshot) in
-          DestinationCell(destination: unit.cell(for: target.name))
+          if !unit.isLocal {
+            if let checked = unit.archive?.localChecks.first(where: { $0.target == target.name }) {
+              Text(
+                "Last verified against local · "
+                  + Date(timeIntervalSince1970: checked.at / 1_000).formatted(
+                    date: .abbreviated, time: .omitted)
+              )
+              .font(.caption)
+            } else {
+              Text("No local verification recorded").font(.caption).foregroundStyle(.secondary)
+            }
+          } else {
+            DestinationCell(destination: unit.cell(for: target.name))
+          }
         }
         .width(min: 132, ideal: 190)
       }
@@ -368,20 +404,24 @@ private struct LedgerTable: View {
   private func rowMenu(for ids: Set<UnitSnapshot.ID>) -> some View {
     if let id = ids.first, let unit = snapshot.units.first(where: { $0.id == id }) {
       Button("Open Folder Record") { open(id) }
-      Divider()
-      Button("Quick Check \u{201C}\(unit.unit)\u{201D}") { check(.quick, unit.unit) }
-        .disabled(!canCheck)
-      Button("Deep Verify \u{201C}\(unit.unit)\u{201D}") { check(.deep, unit.unit) }
-        .disabled(!canCheck)
-      Divider()
-      // The ledger's whole job is to say which folders are behind, and this is
-      // the row that says it — so the transfer belongs here rather than only
-      // behind a drill-in. It stays visible with nothing to send, like the
-      // checks above it, because a menu item that comes and goes per row is a
-      // worse answer to "can I sync this?" than one that is plainly unavailable.
-      // `canCheck` gates it too: a sync writes the tree a check is reading.
-      Button("Sync \u{201C}\(unit.unit)\u{201D}\u{2026}") { sync(id) }
-        .disabled(!canCheck || !unit.needsSync)
+      if !unit.isLocal {
+        Button("Compare Copies…") { open(id) }
+      } else {
+        Divider()
+        Button("Quick Check \u{201C}\(unit.unit)\u{201D}") { check(.quick, unit.unit) }
+          .disabled(!canCheck)
+        Button("Deep Verify \u{201C}\(unit.unit)\u{201D}") { check(.deep, unit.unit) }
+          .disabled(!canCheck)
+        Divider()
+        // The ledger's whole job is to say which folders are behind, and this is
+        // the row that says it — so the transfer belongs here rather than only
+        // behind a drill-in. It stays visible with nothing to send, like the
+        // checks above it, because a menu item that comes and goes per row is a
+        // worse answer to "can I sync this?" than one that is plainly unavailable.
+        // `canCheck` gates it too: a sync writes the tree a check is reading.
+        Button("Sync \u{201C}\(unit.unit)\u{201D}\u{2026}") { sync(id) }
+          .disabled(!canCheck || !unit.needsSync)
+      }
     }
   }
 
@@ -394,8 +434,10 @@ private struct LedgerTable: View {
   }
 
   private func folderFacts(_ unit: UnitSnapshot) -> String {
-    let size = SyncyFormat.bytes(unit.fingerprint.bytes)
-    return "\(size) \u{00B7} \(unit.fingerprint.nfiles.formatted()) files"
+    guard unit.isLocal else { return unit.archive?.label ?? unit.reason }
+    guard let fingerprint = unit.measuredFingerprint else { return "Local size and file count unavailable" }
+    if let archive = unit.archive, archive.label != "Local copy present" { return archive.label }
+    return "\(SyncyFormat.bytes(fingerprint.bytes)) · \(fingerprint.nfiles.formatted()) files"
   }
 
 }

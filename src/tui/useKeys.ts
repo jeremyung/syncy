@@ -24,6 +24,8 @@ export type KeyMode =
 
 /** What the ledger screen can do with a key. */
 export interface LedgerKeys {
+  readonly addFolder: () => void;
+  readonly compare: () => void;
   readonly up: () => void;
   readonly down: () => void;
   readonly quick: () => void;
@@ -69,6 +71,8 @@ export function useKeys(mode: KeyMode, actions: KeyActions): void {
     const k = actions.ledger;
     if (key.upArrow || input === "k") k.up();
     else if (key.downArrow || input === "j") k.down();
+    else if (input === "a") k.addFolder();
+    else if (input === "c") k.compare();
     else if (input === "q") k.quick();
     else if (input === "Q") k.quickAll();
     else if (input === "d") k.deep();

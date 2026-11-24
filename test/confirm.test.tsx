@@ -355,18 +355,27 @@ describeRsync("choosing which destination to sync", () => {
       onCancel: () => {},
     };
     const r = render(<Confirm {...props} target={target()} onSwitch={() => {}} />);
-    await settle();
-    // The first destination's checks have resolved and enter would run.
-    expect(plain(r.lastFrame())).toContain("dry run");
+    try {
+      await waitFor(() => plain(r.lastFrame()).includes("dry run"), {
+        what: "first destination guards",
+      });
+      expect(plain(r.lastFrame())).toContain("[enter] run");
 
-    r.rerender(<Confirm {...props} target={second} onSwitch={() => {}} />);
-    r.stdin.write(ENTER);
-    expect(ran).toBe(false);
-    expect(plain(r.lastFrame())).toContain("running…");
+      r.rerender(<Confirm {...props} target={second} onSwitch={() => {}} />);
+      expect(plain(r.lastFrame())).toContain("running…");
+      expect(plain(r.lastFrame())).not.toContain("[enter] run");
+      r.stdin.write(ENTER);
+      expect(ran).toBe(false);
 
-    // And once the new destination's own preflight lands, it is that one's.
-    await settle(400);
-    expect(plain(r.lastFrame())).toContain("dst2");
+      await waitFor(() => plain(r.lastFrame()).includes("[enter] run"), {
+        what: "second destination ready",
+      });
+      expect(plain(r.lastFrame())).toContain("dst2");
+      r.stdin.write(ENTER);
+      await waitFor(() => ran, { what: "second destination accepts Enter" });
+    } finally {
+      r.unmount();
+    }
   });
 
   test("a single destination offers no switch, and tab does nothing", async () => {

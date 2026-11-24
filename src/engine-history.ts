@@ -29,7 +29,7 @@ function outcomeOf(entry: HistoryEntry): HistorySnapshotEntry["outcome"] {
   return entry.exitCode === 0 || entry.exitCode === 24 ? "completed" : "failed";
 }
 
-function parseEntry(line: string): HistoryEntry | undefined {
+export function parseHistoryEntry(line: string): HistoryEntry | undefined {
   let raw: unknown;
   try {
     raw = JSON.parse(line);
@@ -50,6 +50,10 @@ function parseEntry(line: string): HistoryEntry | undefined {
       (typeof value.operation !== "string" || !OPERATIONS.has(value.operation))) ||
     (value.outcome !== undefined &&
       (typeof value.outcome !== "string" || !OUTCOMES.has(value.outcome))) ||
+    (value.comparisonEndpoints !== undefined &&
+      (!Array.isArray(value.comparisonEndpoints) ||
+        value.comparisonEndpoints.length !== 2 ||
+        !value.comparisonEndpoints.every((name) => typeof name === "string"))) ||
     (value.detail !== undefined && typeof value.detail !== "string") ||
     (value.log !== undefined && typeof value.log !== "string")
   ) {
@@ -73,7 +77,7 @@ export function loadHistorySnapshot(
     .split("\n")
     .filter((line) => line.trim() !== "")
     .flatMap((line) => {
-      const entry = parseEntry(line);
+      const entry = parseHistoryEntry(line);
       return entry === undefined ? [] : [entry];
     });
   const completedLogs = new Set(

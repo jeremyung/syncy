@@ -85,7 +85,7 @@ final class ModelsTests: XCTestCase {
 
   func testArchiveReportsItsWeakestFolder() throws {
     let json = """
-      {"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source",\
+      {"protocolVersion":2,"type":"snapshot","generatedAt":1,"source":"/source",\
       "configRevision":"r","targets":[],"units":[\
       {"unit":"a","state":"verified","reason":"deep verified","fingerprint":\
       {"nfiles":1,"bytes":10,"maxMtimeNs":"0"},"cells":[]},\
@@ -103,7 +103,7 @@ final class ModelsTests: XCTestCase {
   /// claim we looked at something.
   func testEmptyArchiveHasNoState() throws {
     let json =
-      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[]}"#
+      #"{"protocolVersion":2,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[]}"#
     let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
 
     XCTAssertNil(snapshot.archiveState)
@@ -137,7 +137,7 @@ final class ModelsTests: XCTestCase {
 
   func testTimedOutDestinationDecodesAsItsOwnState() throws {
     let json =
-      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[{"name":"nas","required":true,"reachability":"timeout","reachabilityPhrase":"did not answer within 5s","usesSentinel":false}],"units":[]}"#
+      #"{"protocolVersion":2,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[{"name":"nas","required":true,"reachability":"timeout","reachabilityPhrase":"did not answer within 5s","usesSentinel":false}],"units":[]}"#
     let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
     XCTAssertEqual(snapshot.targets.first?.reachability, .timeout)
     XCTAssertEqual(snapshot.targets.first?.reachabilityPhrase, "did not answer within 5s")
@@ -156,16 +156,104 @@ final class ModelsTests: XCTestCase {
     }
   }
 
+  func testArchiveContractKeepsPairEvidenceAndLocalHistorySeparate() throws {
+    let snapshot = try JSONDecoder().decode(
+      EngineSnapshot.self, from: contractFixture("archive-snapshot.json"))
+    let unit = try XCTUnwrap(snapshot.units.first)
+    XCTAssertNil(unit.fingerprint)
+    XCTAssertFalse(unit.isLocal)
+    XCTAssertFalse(unit.needsSync)
+    XCTAssertTrue(snapshot.localUnits.isEmpty)
+    XCTAssertNil(snapshot.archiveState)
+    let archive = try XCTUnwrap(unit.archive)
+    XCTAssertEqual(archive.local, .absent)
+    let pair = try XCTUnwrap(archive.pairOptions.first)
+    XCTAssertEqual(pair.label, "Archive ↔ External")
+    XCTAssertEqual(pair.blocker, "External · not connected")
+    let result = try XCTUnwrap(archive.pairs.first)
+    XCTAssertTrue(pair.matches(result.endpoints))
+    XCTAssertFalse(result.current)
+    XCTAssertEqual(result.samples.first?.name, "day-1/photo.jpg")
+    XCTAssertEqual(result.samples.first?.kind, "Only on External")
+    XCTAssertEqual(snapshot.latestArchivedPair?.unit, unit.unit)
+    XCTAssertFalse(result.comparisonRules.isEmpty)
+    XCTAssertEqual(snapshot.newestEvidenceAt, result.at)
+    XCTAssertTrue(archive.localChecks.allSatisfy { $0.at < result.at })
+  }
+
+  func testSnapshotRefusesLocalFingerprintForAnAbsentFolder() throws {
+    let data = try contractFixture("archive-snapshot.json")
+    var message = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    var units = try XCTUnwrap(message["units"] as? [[String: Any]])
+    units[0]["fingerprint"] = ["nfiles": 42, "bytes": 1_000, "maxMtimeNs": "42"]
+    message["units"] = units
+    XCTAssertThrowsError(
+      try JSONDecoder().decode(
+        EngineSnapshot.self, from: JSONSerialization.data(withJSONObject: message))
+    ) { error in
+      XCTAssertTrue(error.localizedDescription.contains("invalid local evidence"), error.localizedDescription)
+    }
+  }
+
+  func testArchiveSnapshotRefusesPairEvidenceFromAnotherFolder() throws {
+    let data = try contractFixture("archive-snapshot.json")
+    var message = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    var units = try XCTUnwrap(message["units"] as? [[String: Any]])
+    units[0]["unit"] = "other"
+    message["units"] = units
+    XCTAssertThrowsError(try JSONDecoder().decode(EngineSnapshot.self, from: JSONSerialization.data(withJSONObject: message))) { error in
+      XCTAssertTrue(error.localizedDescription.contains("invalid pair evidence"), error.localizedDescription)
+    }
+  }
+
+  func testPairPickerRefusesTheSameEndpointTwice() {
+    let data = Data(#"{"endpoints":["Archive","Archive"],"blocker":null}"#.utf8)
+    XCTAssertThrowsError(try JSONDecoder().decode(DestinationPair.self, from: data)) { error in
+      XCTAssertTrue(
+        error.localizedDescription.contains("two different destinations"),
+        error.localizedDescription)
+    }
+  }
+
+  func testIncompleteLocalWalkHasNoFileOrByteTotal() throws {
+    let data = Data(#"{"unit":"folder","state":"unchecked","reason":"incomplete","cells":[],"fingerprint":{"nfiles":0,"bytes":0,"maxMtimeNs":"0","complete":false}}"#.utf8)
+    let unit = try JSONDecoder().decode(UnitSnapshot.self, from: data)
+    XCTAssertTrue(unit.isLocal)
+    XCTAssertNil(unit.measuredFingerprint)
+    XCTAssertNil([unit].measuredBytes)
+  }
+
+  func testLocalSourceSkipCanOnlyDescribeAJob() throws {
+    let skip = Data(
+      #"{"protocolVersion":2,"type":"job.skipped","jobId":"j","at":1,"operation":"quick","unit":"photos","target":"local","reason":"Absent locally","reachability":"local-unavailable"}"#
+        .utf8)
+    XCTAssertEqual(
+      try JSONDecoder().decode(JobEventSnapshot.self, from: skip).reachability, .localUnavailable)
+    XCTAssertNil(Reachability(rawValue: "local-unavailable"))
+  }
+
+  func testPairEventsDecodeWithoutTransferCounts() throws {
+    let data = try contractFixture("pair-events.jsonl")
+    let events = try data.split(separator: 10).map {
+      try JSONDecoder().decode(JobEventSnapshot.self, from: Data($0))
+    }
+    XCTAssertEqual(events.first?.phase, "comparing-content")
+    XCTAssertEqual(events.last?.type, "pair.completed")
+    XCTAssertEqual(events.last?.result?.endpoints, ["Archive", "External"])
+    XCTAssertEqual(events.last?.result?.detail, "Only on External · 1")
+    XCTAssertNil(events.last?.result?.bytesPending)
+  }
+
   func testSnapshotProtocolRejectsUnsupportedVersion() {
     let json =
-      #"{"protocolVersion":2,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[]}"#
+      #"{"protocolVersion":99,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[]}"#
 
     XCTAssertThrowsError(try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8)))
   }
 
   func testSnapshotProtocolDecodesArbitraryTargets() throws {
     let json =
-      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[{"name":"one","required":true,"reachability":"ok","usesSentinel":false},{"name":"two","required":false,"reachability":"unreachable","usesSentinel":true}],"units":[]}"#
+      #"{"protocolVersion":2,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[{"name":"one","required":true,"reachability":"ok","usesSentinel":false},{"name":"two","required":false,"reachability":"unreachable","usesSentinel":true}],"units":[]}"#
     let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
 
     XCTAssertEqual(snapshot.targets.map(\.name), ["one", "two"])
@@ -186,7 +274,7 @@ final class ModelsTests: XCTestCase {
 
   func testSyncableTargetsIsEmptyWhenEveryDestinationMatches() throws {
     let json =
-      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[{"unit":"photos","state":"verified","reason":"all destinations deep verified","fingerprint":{"nfiles":1,"bytes":1,"maxMtimeNs":"1"},"cells":[{"target":"Archive","state":"verified","reason":"deep verified","nChanges":0,"bytesPending":0,"nExtra":0}]}]}"#
+      #"{"protocolVersion":2,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[{"unit":"photos","state":"verified","reason":"all destinations deep verified","fingerprint":{"nfiles":1,"bytes":1,"maxMtimeNs":"1"},"cells":[{"target":"Archive","state":"verified","reason":"deep verified","nChanges":0,"bytesPending":0,"nExtra":0}]}]}"#
     let snapshot = try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8))
 
     XCTAssertEqual(snapshot.units[0].syncableTargets, [])
@@ -223,7 +311,7 @@ final class ModelsTests: XCTestCase {
 
   func testDifferenceProtocolDistinguishesNoRecordFromARecordedEmptyCheck() throws {
     let json =
-      #"{"protocolVersion":1,"type":"diff","generatedAt":1,"unit":"photos","target":"Archive","diff":null,"presentation":{"state":"no-record","title":"No check recorded","detail":"No recorded check for this destination. Run a check to record differences.","parts":[],"copyableFiles":0}}"#
+      #"{"protocolVersion":2,"type":"diff","generatedAt":1,"unit":"photos","target":"Archive","diff":null,"presentation":{"state":"no-record","title":"No check recorded","detail":"No recorded check for this destination. Run a check to record differences.","parts":[],"copyableFiles":0}}"#
 
     let envelope = try JSONDecoder().decode(DiffEnvelope.self, from: Data(json.utf8))
 
@@ -259,7 +347,8 @@ final class ModelsTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: dir) }
     let marker = dir.appendingPathComponent("terminated")
     let engine = dir.appendingPathComponent("engine.sh")
-    let base = "\"protocolVersion\":1,\"jobId\":\"j\",\"operation\":\"quick\",\"unit\":\"u\",\"target\":\"t\""
+    let base =
+      "\"protocolVersion\":2,\"jobId\":\"j\",\"operation\":\"quick\",\"unit\":\"u\",\"target\":\"t\""
     let script = """
       #!/bin/sh
       trap 'echo terminated > "\(marker.path)"; exit 143' TERM
@@ -301,21 +390,21 @@ final class ModelsTests: XCTestCase {
 
   func testJobProtocolRejectsUnknownEventTypes() {
     let json =
-      #"{"protocolVersion":1,"type":"job.future","jobId":"j","at":1,"operation":"deep","unit":"photos","target":"Archive"}"#
+      #"{"protocolVersion":2,"type":"job.future","jobId":"j","at":1,"operation":"deep","unit":"photos","target":"Archive"}"#
 
     XCTAssertThrowsError(try JSONDecoder().decode(JobEventSnapshot.self, from: Data(json.utf8)))
   }
 
   func testJobProtocolRejectsProgressWithoutAnObservation() {
     let json =
-      #"{"protocolVersion":1,"type":"job.progress-observed","jobId":"j","at":1,"operation":"deep","unit":"photos","target":"Archive"}"#
+      #"{"protocolVersion":2,"type":"job.progress-observed","jobId":"j","at":1,"operation":"deep","unit":"photos","target":"Archive"}"#
 
     XCTAssertThrowsError(try JSONDecoder().decode(JobEventSnapshot.self, from: Data(json.utf8)))
   }
 
   func testSnapshotProtocolRejectsNullOptionalCounts() {
     let json =
-      #"{"protocolVersion":1,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[{"unit":"a","state":"unchecked","reason":"never checked","fingerprint":{"nfiles":0,"bytes":0,"maxMtimeNs":"0"},"cells":[{"target":"one","state":"unchecked","reason":"never checked","nChanges":0,"nNew":null,"bytesPending":0,"nExtra":0}]}]}"#
+      #"{"protocolVersion":2,"type":"snapshot","generatedAt":1,"source":"/source","configRevision":"r","targets":[],"units":[{"unit":"a","state":"unchecked","reason":"never checked","fingerprint":{"nfiles":0,"bytes":0,"maxMtimeNs":"0"},"cells":[{"target":"one","state":"unchecked","reason":"never checked","nChanges":0,"nNew":null,"bytesPending":0,"nExtra":0}]}]}"#
 
     XCTAssertThrowsError(try JSONDecoder().decode(EngineSnapshot.self, from: Data(json.utf8)))
   }
@@ -477,7 +566,7 @@ final class ModelsTests: XCTestCase {
 
   func testSyncPreflightCarriesTheRevisionItWasEvaluatedAgainst() throws {
     let json = """
-      {"protocolVersion":1,"type":"sync.preflight","generatedAt":1,"unit":"photos",
+      {"protocolVersion":2,"type":"sync.preflight","generatedAt":1,"unit":"photos",
       "target":"Archive","argv":["-a"],"configRevision":"revision-2","checks":[],"ok":false,
       "nChanges":1,"nExtra":0,"bytesPending":10,"needsChecksum":false}
       """

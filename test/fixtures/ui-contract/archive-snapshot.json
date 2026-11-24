@@ -1,0 +1,74 @@
+{
+  "protocolVersion": 2,
+  "type": "snapshot",
+  "generatedAt": 1788681600000,
+  "source": "/Source",
+  "configRevision": "fixture-revision",
+  "targets": [
+    {
+      "name": "Archive",
+      "required": true,
+      "reachability": "ok",
+      "reachabilityPhrase": "connected",
+      "usesSentinel": true
+    },
+    {
+      "name": "External",
+      "required": true,
+      "reachability": "unreachable",
+      "reachabilityPhrase": "not connected",
+      "usesSentinel": true
+    }
+  ],
+  "units": [
+    {
+      "unit": "photos",
+      "state": "unchecked",
+      "reason": "Absent locally",
+      "cells": [],
+      "archive": {
+        "local": "absent",
+        "localEpoch": 0,
+        "label": "Absent locally",
+        "pairs": [
+          {
+            "unit": "photos",
+            "method": "deep",
+            "at": 1788681540000,
+            "endpoints": ["Archive", "External"],
+            "outcome": "different",
+            "detail": "Only on External · 1",
+            "counts": {
+              "Only on External": 1
+            },
+            "samples": [
+              {
+                "kind": "Only on External",
+                "name": "day-1/photo.jpg"
+              }
+            ],
+            "comparisonRules": "Timestamp tolerance 0s · Archive metadata, ACLs and extended attributes · Excludes .syncy-*",
+            "rules": "{\"endpoints\":[{\"name\":\"Archive\",\"path\":\"/Archive\",\"sentinel\":\"archive\"},{\"name\":\"External\",\"path\":\"/External\",\"sentinel\":\"external\"}],\"exclude\":[],\"modifyWindow\":0,\"flagsDrop\":[]}",
+            "current": false
+          }
+        ],
+        "pairOptions": [
+          {
+            "endpoints": ["Archive", "External"],
+            "blocker": "External · not connected"
+          }
+        ],
+        "localChecks": [
+          {
+            "target": "Archive",
+            "at": 1788681530000
+          },
+          {
+            "target": "External",
+            "at": 1788681530000
+          }
+        ]
+      }
+    }
+  ]
+}

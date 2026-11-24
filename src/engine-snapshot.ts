@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { archiveLedger } from "./archive-ledger.ts";
 import type { Config, Target } from "./config.ts";
 import {
   type ActivityMessage,
@@ -39,6 +40,7 @@ export interface ActivityIo {
 }
 
 export interface SnapshotIo extends ActivityIo {
+  readonly catalog?: typeof archiveLedger;
   readonly listUnits: (source: string) => readonly string[];
   readonly fingerprint: (root: string, exclude: readonly string[]) => Fingerprint;
   readonly reachability: (config: Config) => Promise<ReadonlyMap<string, Reachability>>;
@@ -47,6 +49,7 @@ export interface SnapshotIo extends ActivityIo {
 }
 
 const REAL_IO: SnapshotIo = {
+  catalog: archiveLedger,
   listUnits,
   fingerprint,
   reachability: allReachability,
@@ -120,7 +123,7 @@ function buildUnitSnapshot(
   currentFingerprint: Fingerprint,
   reach: ReadonlyMap<string, Reachability>,
   now: number,
-): UnitSnapshot {
+): UnitSnapshot & { fingerprint: Fingerprint } {
   const status = evaluateUnit(
     config,
     state,
@@ -185,7 +188,7 @@ export async function evaluateUnitCell(
   io: UnitCellIo = REAL_UNIT_CELL_IO,
 ): Promise<
   | {
-      readonly unit: UnitSnapshot;
+      readonly unit: UnitSnapshot & { fingerprint: Fingerprint };
       readonly cell: CellSnapshot;
       readonly reachability: Reachability;
     }
@@ -199,23 +202,31 @@ export async function evaluateUnitCell(
   return cell === undefined ? undefined : { unit, cell, reachability };
 }
 
-export async function buildEngineSnapshot(
+export async function readEngineLedger(
   config: Config,
   state: State,
   now: number = Date.now(),
   io: SnapshotIo = REAL_IO,
-): Promise<SnapshotMessage> {
+) {
   const reach = await io.reachability(config);
-  const units = io.listUnits(config.source).map((unit) => {
+  const ledger = io.catalog?.(config, state, reach, now);
+  const records =
+    ledger?.records ?? io.listUnits(config.source).map((unit) => ({ unit, archive: undefined }));
+  const units = records.map(({ unit, archive }): UnitSnapshot => {
+    if (archive && archive.local !== "present")
+      return { unit, archive, state: "unchecked", reason: archive.label, cells: [] };
     const current = io.fingerprint(join(config.source, unit), config.exclude);
-    return buildUnitSnapshot(config, state, unit, current, reach, now);
+    return {
+      ...buildUnitSnapshot(config, ledger?.current ?? state, unit, current, reach, now),
+      ...(archive ? { archive } : {}),
+    };
   });
   // A lease is a live-work signal, not durable history. A crashed owner can
   // remain on disk until the next contender archives it, so publishing it as
   // active would leave a native UI claiming work is still happening forever.
   const activity = buildEngineActivity(now, io);
 
-  return {
+  const snapshot: SnapshotMessage = {
     protocolVersion: ENGINE_PROTOCOL_VERSION,
     type: "snapshot",
     generatedAt: io.completedAt?.() ?? now,
@@ -235,4 +246,14 @@ export async function buildEngineSnapshot(
           activeJob: activity.activeJob,
         }),
   };
+  return { snapshot, current: ledger?.current ?? state };
+}
+
+export async function buildEngineSnapshot(
+  config: Config,
+  state: State,
+  now: number = Date.now(),
+  io: SnapshotIo = REAL_IO,
+): Promise<SnapshotMessage> {
+  return (await readEngineLedger(config, state, now, io)).snapshot;
 }

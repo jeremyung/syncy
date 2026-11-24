@@ -102,15 +102,15 @@ struct MenuBarPanel: View {
         .keyboardShortcut(.defaultAction)
       } else {
         Menu("Check") {
-          Button("Quick check · all folders") {
+          Button("Quick check · all local folders") {
             Task { await model.runCheck(.quick) }
           }
-          Button("Deep verify · all folders") {
+          Button("Deep verify · all local folders") {
             Task { await model.runCheck(.deep) }
           }
         }
         .fixedSize()
-        .disabled(model.snapshot == nil)
+        .disabled(model.snapshot?.localUnits.isEmpty != false)
         Spacer()
         Button("Open Syncy") { openLedger() }
           .keyboardShortcut(.defaultAction)
@@ -213,16 +213,16 @@ private struct ArchiveReport: View {
         .sorted { left, right in
           left.required == right.required ? left.name < right.name : left.required
         }
-        .map { DestinationReading(target: $0, units: snapshot.units) }
+        .map { DestinationReading(target: $0, units: snapshot.localUnits) }
       : []
 
     self.tallies = LedgerState.precedence.compactMap { state in
-      let matching = snapshot.units.filter { $0.state == state }
+      let matching = snapshot.localUnits.filter { $0.state == state }
       guard !matching.isEmpty else { return nil }
       return StateTally(
         state: state,
         count: matching.count,
-        bytes: matching.reduce(0) { $0 + $1.fingerprint.bytes })
+        bytes: matching.measuredBytes)
     }
   }
 
@@ -233,7 +233,9 @@ private struct ArchiveReport: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       if let state = snapshot.archiveState {
-        PanelHeadline(title: state.rawValue, trailing: extent)
+        PanelHeadline(
+          title: snapshot.localUnits.count == snapshot.units.count
+            ? state.rawValue : "Local copies · " + state.rawValue, trailing: extent)
 
         ProportionRule(parts: parts)
           .padding(.top, SyncySpace.sm)
@@ -245,12 +247,27 @@ private struct ArchiveReport: View {
           TallyLine(rows: tallies)
             .padding(.top, SyncySpace.sm)
         }
+      } else if !snapshot.units.isEmpty {
+        PanelHeadline(
+          title: "Archive copies", detail: "Local replication measurements unavailable.")
       } else {
         PanelHeadline(
           title: "nothing tracked",
           detail: "No folders are recorded in the ledger.")
       }
 
+      let archived = snapshot.units.count - snapshot.localUnits.count
+      if archived > 0 {
+        Text("\(counted(archived, of: "folder")) without a current local copy")
+          .font(.caption)
+          .padding(.top, SyncySpace.sm)
+        if let latest = snapshot.latestArchivedPair {
+          Text("\(latest.unit) · \(latest.datedSummary)")
+          .font(.caption)
+          .foregroundStyle(SyncyTheme.secondaryInk)
+          .lineLimit(3)
+        }
+      }
       if !destinations.isEmpty {
         Destinations(readings: destinations)
           .padding(.top, SyncySpace.md)
@@ -267,8 +284,8 @@ private struct ArchiveReport: View {
   }
 
   private var extent: String {
-    let bytes = snapshot.units.reduce(Int64(0)) { $0 + $1.fingerprint.bytes }
-    return "\(counted(snapshot.units.count, of: "folder")) · \(SyncyFormat.bytes(bytes))"
+    let size = snapshot.localUnits.measuredBytes.map(SyncyFormat.bytes) ?? "size unavailable"
+    return "\(counted(snapshot.localUnits.count, of: "local folder")) · \(size)"
   }
 
   /// Bytes, because the reader is reclaiming disk space and that is the measure
@@ -276,12 +293,12 @@ private struct ArchiveReport: View {
   /// byte proportion to show, so the rule falls back to counting folders rather
   /// than dividing by zero or vanishing.
   private var parts: [RulePart] {
-    let totalBytes = tallies.reduce(Int64(0)) { $0 + $1.bytes }
+    let useBytes = (snapshot.localUnits.measuredBytes ?? 0) > 0
     return tallies.map { row in
       RulePart(
         id: row.state.rawValue,
         color: SyncyTheme.color(for: row.state),
-        weight: totalBytes > 0 ? Double(row.bytes) : Double(row.count))
+        weight: useBytes ? Double(row.bytes ?? 0) : Double(row.count))
     }
   }
 
@@ -290,7 +307,7 @@ private struct ArchiveReport: View {
 private struct StateTally {
   let state: LedgerState
   let count: Int
-  let bytes: Int64
+  let bytes: Int64?
 }
 
 /// One line, not a column of rows. The rule above already carries the byte
@@ -331,7 +348,7 @@ private struct TallyLine: View {
   /// in the accessibility layer.
   private var summary: String {
     rows
-      .map { "\(counted($0.count, of: "folder")) \($0.state.rawValue), \(SyncyFormat.bytes($0.bytes))" }
+      .map { "\(counted($0.count, of: "folder")) \($0.state.rawValue), \(($0.bytes.map(SyncyFormat.bytes) ?? "size unavailable"))" }
       .joined(separator: ". ")
   }
 }

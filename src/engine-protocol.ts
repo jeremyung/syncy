@@ -1,3 +1,6 @@
+import type { FolderCandidate } from "./archive-catalog.ts";
+import type { ArchiveRecord } from "./archive-ledger.ts";
+import type { PairEvidence } from "./archive-pair.ts";
 import type { Diff } from "./diff.ts";
 import type { HistorySnapshotEntry } from "./engine-history.ts";
 import type { Fingerprint } from "./fingerprint.ts";
@@ -14,7 +17,7 @@ import type { CellState, UnitState } from "./status.ts";
  * evidence remains in scan.ts, sync.ts and their existing guards. The
  * headless runner translates those results into these messages.
  */
-export const ENGINE_PROTOCOL_VERSION = 1 as const;
+export const ENGINE_PROTOCOL_VERSION = 2 as const;
 
 export type EngineProtocolVersion = typeof ENGINE_PROTOCOL_VERSION;
 export type JobOperation = "quick" | "deep" | "sync" | "setup";
@@ -77,7 +80,8 @@ export interface UnitSnapshot {
   readonly unit: string;
   readonly state: UnitState;
   readonly reason: string;
-  readonly fingerprint: Fingerprint;
+  readonly fingerprint?: Fingerprint;
+  readonly archive?: ArchiveRecord;
   readonly cells: readonly CellSnapshot[];
 }
 
@@ -246,7 +250,7 @@ export interface JobProgressObservedEvent extends JobEventBase {
 
 export interface JobSkippedEvent extends JobEventBase {
   readonly type: "job.skipped";
-  readonly reachability: Exclude<Reachability, "ok">;
+  readonly reachability: Exclude<Reachability, "ok"> | "local-unavailable";
   readonly reason: string;
 }
 
@@ -281,12 +285,27 @@ export interface JobFailedEvent extends JobEventBase {
   readonly exitCode: number | null;
 }
 
+export interface PairCompletedEvent extends JobEventBase {
+  readonly type: "pair.completed";
+  readonly operation: "quick" | "deep";
+  readonly result: PairEvidence;
+}
+
+export interface FolderCandidatesMessage {
+  readonly protocolVersion: EngineProtocolVersion;
+  readonly type: "folders";
+  readonly configRevision: string;
+  readonly candidates: FolderCandidate[];
+  readonly blocked: string[];
+}
+
 export interface JobCancelledEvent extends JobEventBase {
   readonly type: "job.cancelled";
   readonly transferred?: number;
 }
 
 export type JobEvent =
+  | PairCompletedEvent
   | JobStartedEvent
   | JobPhaseChangedEvent
   | JobProgressObservedEvent
@@ -297,6 +316,7 @@ export type JobEvent =
   | JobCancelledEvent;
 
 export type EngineMessage =
+  | FolderCandidatesMessage
   | SnapshotMessage
   | ActivityMessage
   | SyncPreflightMessage

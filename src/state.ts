@@ -9,25 +9,17 @@ import {
   statSync,
   writeSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Fingerprint } from "./fingerprint.ts";
 import { debug } from "./log.ts";
 import { historyFile, stateFile } from "./paths.ts";
 
-/**
- * Two plain files, no database (DESIGN.md section 2).
- *
- * At one source root's subfolders times a couple of targets this is under 30
- * entries. Every argument for SQLite - concurrency, query planning, scale -
- * answers a problem this tool does not have. What matters more is that a tool
- * whose entire product is "trust my record" keeps a record you can cat, grep,
- * diff and back up without a client.
- */
-
+/** Local scan state and invocation history. archive-catalog.ts owns tracking and pair evidence. */
 export type Method = "quick" | "deep";
 export type ScanOutcome = "clean" | "behind" | "missing" | "error";
 
 export interface Scan {
+  readonly source?: string;
   readonly unit: string;
   readonly target: string;
   readonly ts: number;
@@ -89,6 +81,7 @@ function validateScan(raw: unknown): Scan | string {
   const durationMs = o["durationMs"];
   const log = o["log"];
 
+  if (o.source !== undefined && typeof o.source !== "string") return "source is not a string";
   if (typeof unit !== "string") return "unit is not a string";
   if (typeof target !== "string") return "target is not a string";
   if (typeof ts !== "number" || !Number.isFinite(ts)) return "ts is not a finite number";
@@ -124,6 +117,7 @@ function validateScan(raw: unknown): Scan | string {
   if (log !== undefined && typeof log !== "string") return "log is not a string";
 
   return {
+    ...(typeof o.source === "string" ? { source: o.source } : {}),
     unit,
     target,
     ts,
@@ -269,7 +263,13 @@ export function saveState(state: State, file: string = stateFile()): void {
  */
 export function upsertScan(state: State, scan: Scan): State {
   const next = state.scans.filter(
-    (s) => !(s.unit === scan.unit && s.target === scan.target && s.method === scan.method),
+    (s) =>
+      !(
+        s.source === scan.source &&
+        s.unit === scan.unit &&
+        s.target === scan.target &&
+        s.method === scan.method
+      ),
   );
   next.push(scan);
   next.sort(
@@ -332,6 +332,7 @@ export function latestScan(
 }
 
 export interface HistoryEntry {
+  readonly comparisonEndpoints?: readonly string[];
   readonly ts: number;
   readonly unit: string;
   readonly target: string;
@@ -450,6 +451,8 @@ export function lastSyncAt(
   unit: string,
   target: string,
   file: string = historyFile(),
+  source?: string,
+  destination?: string,
 ): number | null {
   let text: string;
   try {
@@ -470,6 +473,22 @@ export function lastSyncAt(
     const o = raw as Record<string, unknown>;
     if (o["unit"] !== unit || o["target"] !== target) continue;
     if (o["exitCode"] !== 0 && o["exitCode"] !== 24) continue;
+    const argv = o.argv;
+    if (!Array.isArray(argv) || argv.includes("-n") || o.comparisonEndpoints !== undefined)
+      continue;
+    if (
+      o.operation !== "sync" &&
+      !(
+        o.operation === undefined &&
+        argv.some((flag) => typeof flag === "string" && flag.startsWith("--partial-dir="))
+      )
+    )
+      continue;
+    if (o.outcome !== undefined && o.outcome !== "completed") continue;
+    const [from, to] = argv.slice(-2);
+    if (source && (typeof from !== "string" || resolve(from) !== join(source, unit))) continue;
+    if (destination && (typeof to !== "string" || resolve(to) !== join(destination, unit)))
+      continue;
     const ts = o["ts"];
     if (typeof ts !== "number" || !Number.isFinite(ts)) continue;
     if (best === null || ts > best) best = ts;

@@ -14,6 +14,8 @@ export class ProtocolError extends Error {
 
 const MESSAGE_TYPES = new Set([
   "snapshot",
+  "folders",
+  "pair.completed",
   "activity",
   "sync.preflight",
   "diff",
@@ -201,6 +203,36 @@ function validateActivity(message: RecordValue): void {
   }
 }
 
+function strings(value: unknown, where: string): asserts value is string[] {
+  array(value, where);
+  for (const item of value) string(item, where);
+}
+
+function endpoints(value: unknown, where: string): void {
+  strings(value, where);
+  if (value.length !== 2 || value[0] === value[1])
+    throw new ProtocolError(where + " requires two distinct destinations");
+}
+
+function validatePair(value: unknown, where: string): RecordValue {
+  const pair = record(value, where);
+  endpoints(pair.endpoints, where + ".endpoints");
+  member(pair.method, new Set(["quick", "deep"]), where + ".method");
+  member(pair.outcome, new Set(["agree", "different", "missing"]), where + ".outcome");
+  finite(pair.at, where + ".at");
+  for (const field of ["rules", "comparisonRules", "unit", "detail"])
+    string(pair[field], where + "." + field);
+  const counts = record(pair.counts, where + ".counts");
+  for (const n of Object.values(counts)) count(n, where + ".counts");
+  array(pair.samples, where + ".samples");
+  for (const value of pair.samples) {
+    const entry = record(value, where + ".samples");
+    string(entry.kind, where + ".kind");
+    string(entry.name, where + ".name");
+  }
+  return pair;
+}
+
 function validateSnapshot(message: RecordValue): void {
   finite(message["generatedAt"], "snapshot.generatedAt");
   string(message["source"], "snapshot.source");
@@ -220,7 +252,36 @@ function validateSnapshot(message: RecordValue): void {
     string(unit["unit"], `snapshot.units[${index}].unit`);
     member(unit["state"], CELL_STATES, `snapshot.units[${index}].state`);
     string(unit["reason"], `snapshot.units[${index}].reason`);
-    validateFingerprint(unit["fingerprint"], `snapshot.units[${index}].fingerprint`);
+    const archive = unit.archive === undefined ? undefined : record(unit.archive, "unit.archive");
+    if (archive) {
+      member(archive.local, new Set(["present", "absent", "unavailable"]), "archive.local");
+      count(archive.localEpoch, "archive.localEpoch");
+      string(archive.label, "archive.label");
+      array(archive.localChecks, "archive.localChecks");
+      for (const value of archive.localChecks) {
+        const check = record(value, "archive.localChecks");
+        string(check.target, "localCheck.target");
+        finite(check.at, "localCheck.at");
+      }
+      array(archive.pairOptions, "archive.pairOptions");
+      for (const value of archive.pairOptions) {
+        const option = record(value, "archive.pairOptions");
+        endpoints(option.endpoints, "pairOption.endpoints");
+        if (option.blocker !== null) string(option.blocker, "pairOption.blocker");
+      }
+      array(archive.pairs, "archive.pairs");
+      for (const pair of archive.pairs)
+        bool(validatePair(pair, "archive.pairs").current, "pair.current");
+    }
+    if (!archive || archive.local === "present")
+      validateFingerprint(unit.fingerprint, "unit.fingerprint");
+    else if (
+      unit.fingerprint !== undefined ||
+      unit.state !== "unchecked" ||
+      !Array.isArray(unit.cells) ||
+      unit.cells.length > 0
+    )
+      throw new ProtocolError("absent local folder cannot carry a current local measurement");
     array(unit["cells"], `snapshot.units[${index}].cells`);
     unit["cells"].forEach((cell, cellIndex) => {
       validateCell(cell, `snapshot.units[${index}].cells[${cellIndex}]`);
@@ -389,12 +450,22 @@ function validateJob(message: RecordValue): void {
       return;
     }
     case "job.skipped":
-      member(message["reachability"], REACHABILITY, "job.skipped.reachability");
+      member(
+        message["reachability"],
+        new Set([...REACHABILITY, "local-unavailable"]),
+        "job.skipped.reachability",
+      );
       if (message["reachability"] === "ok") {
         throw new ProtocolError('job.skipped.reachability cannot be "ok"');
       }
       string(message["reason"], "job.skipped.reason");
       return;
+    case "pair.completed": {
+      const result = validatePair(message.result, "pair.completed.result");
+      if (result.unit !== message.unit || result.method !== operation)
+        throw new ProtocolError("pair result does not match job");
+      return;
+    }
     case "job.completed": {
       const result = record(message["result"], "job.completed.result");
       if (operation === "sync") {
@@ -437,7 +508,18 @@ export function assertEngineMessage(value: unknown): asserts value is EngineMess
   }
   member(message["type"], MESSAGE_TYPES, "message.type");
   if (message["type"] === "snapshot") validateSnapshot(message);
-  else if (message["type"] === "activity") validateActivity(message);
+  else if (message.type === "folders") {
+    string(message.configRevision, "folders.configRevision");
+    strings(message.blocked, "folders.blocked");
+    array(message.candidates, "folders.candidates");
+    for (const value of message.candidates) {
+      const folder = record(value, "folder");
+      string(folder.unit, "folder.unit");
+      bool(folder.tracked, "folder.tracked");
+      bool(folder.remembered, "folder.remembered");
+      strings(folder.locations, "folder.locations");
+    }
+  } else if (message["type"] === "activity") validateActivity(message);
   else if (message["type"] === "sync.preflight") validateSyncPreflight(message);
   else if (message["type"] === "diff") validateDiff(message);
   else if (message["type"] === "history") validateHistory(message);

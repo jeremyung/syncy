@@ -1,24 +1,42 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { recheckAfterSync, runCheckQueue } from "./check-runner.ts";
+import {
+  catalogFolders,
+  folderCandidates,
+  sourceEvidence,
+  trackFolder,
+} from "./archive-catalog.ts";
+import { runPairJob } from "./archive-job.ts";
+import {
+  type CheckRunUnit,
+  recheckAfterSync,
+  recordLocalSkip,
+  runCheckQueue,
+} from "./check-runner.ts";
 import { type Config, ConfigError, loadConfig } from "./config.ts";
 import { EMPTY_CONFIG, saveConfig, withoutTarget, withTarget } from "./configio.ts";
-import { loadDiff } from "./diff.ts";
+import { loadLocalDiff } from "./diff.ts";
 import { loadHistorySnapshot } from "./engine-history.ts";
-import { buildEngineActivity, buildEngineSnapshot, configRevision } from "./engine-snapshot.ts";
-import { fingerprint } from "./fingerprint.ts";
+import { ENGINE_PROTOCOL_VERSION } from "./engine-protocol.ts";
+import {
+  buildEngineActivity,
+  buildEngineSnapshot,
+  configRevision,
+  readEngineLedger,
+} from "./engine-snapshot.ts";
+import { fingerprint, sameFingerprint } from "./fingerprint.ts";
 import { bytes } from "./format.ts";
 import { preflight } from "./guards.ts";
 import { type JobOwnerRecord, type OwnedJob, withJobOwnership } from "./job-owner.ts";
 import { configDir, configFile, stateDir, stateFile } from "./paths.ts";
 import { presentDiffSummary } from "./presentation.ts";
 import { serializeEngineMessage } from "./protocol-jsonl.ts";
-import { type LedgerRow, renderLedger } from "./render.ts";
+import { renderLedger } from "./render.ts";
 import { argvFor, checkBuild, DEFAULT_RSYNC } from "./rsync.ts";
-import { allReachability, listUnits } from "./scan.ts";
+import { allReachability } from "./scan.ts";
 import { writeSentinel } from "./sentinel.ts";
-import { appendHistory, loadState, openState, type State } from "./state.ts";
-import { evaluateUnit, timeoutWord } from "./status.ts";
+import { appendHistory, loadState, openState } from "./state.ts";
+import { timeoutWord } from "./status.ts";
 import { startSync } from "./sync.ts";
 import { claimSyncIntent } from "./sync-intent.ts";
 import { cmdSyncPreflight } from "./sync-preflight.ts";
@@ -38,6 +56,10 @@ const USAGE = `syncy — replication ledger
   syncy verify [unit]       deep verify (checksum) against every target
   syncy doctor              check the rsync build and target reachability
   syncy engine snapshot     print one versioned ledger snapshot for native clients
+  syncy engine remembered | discover            list remembered folders or inspect destinations
+  syncy engine track | stop-tracking <folder>   resume or stop tracking a folder
+  syncy engine compare <quick|deep> <folder> <left> <right>
+                                              compare destination copies read-only
   syncy engine activity     print lightweight live-work status for native clients
   syncy engine check [unit] stream a quick check as versioned JSON lines
   syncy engine verify [unit] stream a deep verify as versioned JSON lines
@@ -69,24 +91,47 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-async function buildRows(config: Config, state: State, now: number): Promise<LedgerRow[]> {
-  const units = listUnits(config.source);
-  const sentinels = await allReachability(config);
-  return units.map((unit) => {
-    const fp = fingerprint(join(config.source, unit), config.exclude);
-    const status = evaluateUnit(config, state, { unit, fingerprint: fp, sentinels }, now);
-    return { status, size: fp.bytes };
-  });
-}
-
 async function cmdStatus(config: Config): Promise<void> {
   const now = Date.now();
   const state = loadState();
-  const rows = await buildRows(config, state, now);
+  const { snapshot, current } = await readEngineLedger(config, state, now);
+  const rows = snapshot.units.map((unit) => ({
+    status: unit,
+    size: unit.fingerprint?.complete === false ? undefined : unit.fingerprint?.bytes,
+    archive: unit.archive,
+  }));
   if (rows.length === 0) {
-    fail(`no subfolders found under ${config.source}`);
+    fail(`no tracked folders for ${config.source}`);
   }
-  process.stdout.write(renderLedger({ rows, selected: 0, config, state, now }) + "\n");
+  process.stdout.write(renderLedger({ rows, selected: 0, config, state: current, now }) + "\n");
+}
+
+/** The bulk and scheduled local checks name every archive outside their scope. */
+function localCheckSelection(config: Config, only: string | undefined) {
+  const folders = catalogFolders(config).filter(
+    (folder) => folder.active && (!only || folder.unit === only),
+  );
+  if (folders.length === 0)
+    throw new Error(only ? `no such unit: ${only}` : `no tracked folders under ${config.source}`);
+  const units: CheckRunUnit[] = [];
+  const skipped: { unit: string; reason: string }[] = [];
+  for (const folder of folders) {
+    const unit = folder.unit;
+    if (folder.local !== "present") {
+      skipped.push({
+        unit,
+        reason:
+          folder.local === "absent"
+            ? "Absent locally · outside local check scope"
+            : "Local source unavailable",
+      });
+      continue;
+    }
+    const fp = fingerprint(join(config.source, unit), config.exclude);
+    if (fp.complete === false) skipped.push({ unit, reason: "Local copy could not be fully read" });
+    else units.push({ unit, files: fp.nfiles, bytes: fp.bytes, fingerprint: fp });
+  }
+  return { units, skipped };
 }
 
 async function cmdCheck(
@@ -97,49 +142,44 @@ async function cmdCheck(
   const build = await checkBuild(DEFAULT_RSYNC);
   if (!build.ok) fail(`rsync: ${build.detail}`);
 
-  const units = listUnits(config.source).filter((u) => only === undefined || u === only);
-  if (units.length === 0)
-    fail(only ? `no such unit: ${only}` : `no subfolders under ${config.source}`);
-
-  await owned(
+  const result = await owned(
     "cli",
     mode,
-    (job) =>
-      runCheckQueue(
-        config,
-        loadState(),
-        mode,
-        units.map((unit) => {
-          const measured = fingerprint(join(config.source, unit), config.exclude);
-          return { unit, files: measured.nfiles, bytes: measured.bytes, fingerprint: measured };
-        }),
-        {
-          signal: job.signal,
-          onEvent: (event) => {
-            job.lease.observe(event);
-            if (event.type === "job.started") {
-              process.stdout.write(`  ${event.unit} → ${event.target}: ${mode}…`);
-            } else if (event.type === "job.skipped") {
-              // The raw member would print "timeout", a value rather than a fact;
-              // the ledger says the same condition in the same words.
-              const why = event.reachability === "timeout" ? timeoutWord() : event.reachability;
-              process.stdout.write(` skipped (${why})\n`);
-            } else if (event.type === "job.completed" && event.operation !== "sync") {
-              const detail =
-                event.result.outcome === "clean"
-                  ? "clean"
-                  : event.result.outcome === "behind"
-                    ? `${event.result.nChanges} pending · ${bytes(event.result.bytesPending)}`
-                    : event.result.outcome;
-              process.stdout.write(` ${detail}\n`);
-            } else if (event.type === "job.failed") {
-              process.stdout.write(` failed (${event.message})\n`);
-            }
-          },
+    (job) => {
+      const { units, skipped } = localCheckSelection(config, only);
+      for (const { unit, reason } of skipped) {
+        recordLocalSkip(unit, reason, mode);
+        process.stdout.write(`  ${unit} · skipped · ${reason}\n`);
+      }
+      return runCheckQueue(config, loadState(), mode, units, {
+        signal: job.signal,
+        onEvent: (event) => {
+          job.lease.observe(event);
+          if (event.type === "job.started") {
+            process.stdout.write(`  ${event.unit} → ${event.target}: ${mode}…`);
+          } else if (event.type === "job.skipped") {
+            // The raw member would print "timeout", a value rather than a fact;
+            // the ledger says the same condition in the same words.
+            const why = event.reachability === "timeout" ? timeoutWord() : event.reachability;
+            process.stdout.write(` skipped (${why})\n`);
+          } else if (event.type === "job.completed" && event.operation !== "sync") {
+            const detail =
+              event.result.outcome === "clean"
+                ? "clean"
+                : event.result.outcome === "behind"
+                  ? `${event.result.nChanges} pending · ${bytes(event.result.bytesPending)}`
+                  : event.result.outcome;
+            process.stdout.write(` ${detail}\n`);
+          } else if (event.type === "job.failed") {
+            process.stdout.write(` failed (${event.message})\n`);
+          }
         },
-      ),
+      });
+    },
     { signals: true },
   );
+  if (result.status === "cancelled") process.exitCode = 130;
+  else if (result.failed.length) process.exitCode = 1;
   process.stdout.write("\n");
   await cmdStatus(config);
 }
@@ -233,7 +273,58 @@ function engineArgs(argv: readonly string[]): EngineArgs {
 }
 
 async function cmdEngine(config: Config, args: EngineArgs): Promise<void> {
-  const { action, operands } = args;
+  const { action } = args;
+  let operands = args.operands;
+  if (
+    (action === "compare" || action === "track" || action === "stop-tracking") &&
+    operands.length === (action === "compare" ? 6 : 3) &&
+    operands.at(-2) === "--revision"
+  ) {
+    if (operands.at(-1) !== configRevision(config))
+      fail("Configuration changed since selection. Refresh the ledger and select again.");
+    operands = operands.slice(0, -2);
+  }
+  if ((action === "track" || action === "stop-tracking") && operands.length !== 1)
+    fail("Choose one folder to track");
+  if (action === "compare" && operands.length !== 4)
+    fail("Choose a method, folder and two destinations");
+  if (action === "remembered" || action === "discover") {
+    const result = await folderCandidates(
+      config,
+      loadState(),
+      action === "discover",
+      operands.length ? { destinations: operands } : {},
+    );
+    process.stdout.write(
+      serializeEngineMessage({
+        protocolVersion: ENGINE_PROTOCOL_VERSION,
+        type: "folders",
+        configRevision: configRevision(config),
+        ...result,
+      }),
+    );
+    return;
+  }
+  if (action === "track" || action === "stop-tracking") {
+    const [unit] = operands;
+    if (!unit) fail("Choose a folder to track");
+    await withSetupOwnership(() => trackFolder(config, unit, action === "track"));
+    process.stdout.write(serializeEngineMessage(await buildEngineSnapshot(config, loadState())));
+    return;
+  }
+  if (action === "compare") {
+    const [mode, unit, left, right] = operands;
+    if ((mode !== "quick" && mode !== "deep") || !unit || !left || !right)
+      fail(
+        "usage: syncy engine compare <quick|deep> <folder> <first destination> <second destination>",
+      );
+    await runPairJob(config, unit, [left, right], mode, {
+      actor: engineActor(),
+      signals: true,
+      onEvent: (e) => process.stdout.write(serializeEngineMessage(e)),
+    });
+    return;
+  }
   if (action === "activity") {
     process.stdout.write(serializeEngineMessage(buildEngineActivity()));
     return;
@@ -266,6 +357,7 @@ async function cmdEngine(config: Config, args: EngineArgs): Promise<void> {
     }
     const next = await withSetupOwnership(() => {
       const next = { ...config, source };
+      catalogFolders(next, Date.now(), true);
       saveConfig(next, configFile());
       return next;
     });
@@ -328,11 +420,18 @@ async function cmdEngine(config: Config, args: EngineArgs): Promise<void> {
     if (unit === undefined || destination === undefined) {
       fail("usage: syncy engine diff <unit> <destination>");
     }
-    if (!listUnits(config.source).includes(unit)) fail(`no such unit: ${unit}`);
+    const folders = catalogFolders(config);
+    if (!folders.some((f) => f.active && f.unit === unit && f.local === "present"))
+      fail(`local copy unavailable: ${unit}`);
     if (!config.targets.some((target) => target.name === destination)) {
       fail(`no such destination: ${destination}`);
     }
-    const diff = loadDiff(unit, destination);
+    const diff = loadLocalDiff(
+      config.source,
+      unit,
+      destination,
+      sourceEvidence(config, loadState(), folders, true),
+    );
     const target = config.targets.find((candidate) => candidate.name === destination)!;
     const presentation = presentDiffSummary(diff);
     const reachability = (await allReachability(config)).get(destination) ?? "unreachable";
@@ -340,7 +439,7 @@ async function cmdEngine(config: Config, args: EngineArgs): Promise<void> {
     const identityMatches = diff?.targetIdentity === configuredIdentity;
     process.stdout.write(
       serializeEngineMessage({
-        protocolVersion: 1,
+        protocolVersion: ENGINE_PROTOCOL_VERSION,
         type: "diff",
         generatedAt: Date.now(),
         unit,
@@ -370,7 +469,7 @@ async function cmdEngine(config: Config, args: EngineArgs): Promise<void> {
   if (action === "history") {
     process.stdout.write(
       serializeEngineMessage({
-        protocolVersion: 1,
+        protocolVersion: ENGINE_PROTOCOL_VERSION,
         type: "history",
         generatedAt: Date.now(),
         entries: loadHistorySnapshot(),
@@ -412,19 +511,13 @@ async function cmdEngine(config: Config, args: EngineArgs): Promise<void> {
   const [only] = operands;
   const build = await checkBuild(DEFAULT_RSYNC);
   if (!build.ok) fail(`rsync: ${build.detail}`);
-  const units = listUnits(config.source)
-    .filter((unit) => only === undefined || unit === only)
-    .map((unit) => {
-      const measured = fingerprint(join(config.source, unit), config.exclude);
-      return { unit, files: measured.nfiles, bytes: measured.bytes, fingerprint: measured };
-    });
-  if (units.length === 0)
-    fail(only ? `no such unit: ${only}` : `no subfolders under ${config.source}`);
-
   await owned(
     engineActor(),
     mode,
     async (job) => {
+      const { units, skipped } = localCheckSelection(config, only);
+      for (const { unit, reason } of skipped)
+        process.stdout.write(serializeEngineMessage(recordLocalSkip(unit, reason, mode)));
       const result = await runCheckQueue(config, loadState(), mode, units, {
         signal: job.signal,
         onEvent: (event) => {
@@ -461,12 +554,19 @@ async function runEngineSync(config: Config, token: string, job: OwnedJob): Prom
   if (configRevision(config) !== intent.configRevision) {
     throw new Error("configuration changed after review; run the preflight again");
   }
-  const measured = fingerprint(join(config.source, intent.unit), config.exclude);
+  const folder = catalogFolders(config).find((f) => f.active && f.unit === intent.unit);
   if (
-    measured.nfiles !== intent.fingerprint.nfiles ||
-    measured.bytes !== intent.fingerprint.bytes ||
-    measured.maxMtimeNs !== intent.fingerprint.maxMtimeNs
+    folder?.local !== "present" ||
+    (intent.localEpoch === undefined
+      ? folder.since > intent.createdAt
+      : folder.since !== intent.localEpoch)
   ) {
+    throw new Error(
+      "Local copy changed or became unavailable after review; run the preflight again",
+    );
+  }
+  const measured = fingerprint(join(config.source, intent.unit), config.exclude);
+  if (!sameFingerprint(measured, intent.fingerprint)) {
     throw new Error("source changed after review; run the check and preflight again");
   }
   const argv = argvFor(config, intent.unit, target, "sync", {
@@ -487,7 +587,7 @@ async function runEngineSync(config: Config, token: string, job: OwnedJob): Prom
 
   const jobId = `${Date.now()}-${intent.unit}-${intent.target}`;
   const base = {
-    protocolVersion: 1,
+    protocolVersion: ENGINE_PROTOCOL_VERSION,
     jobId,
     operation: "sync",
     unit: intent.unit,
@@ -510,6 +610,7 @@ async function runEngineSync(config: Config, token: string, job: OwnedJob): Prom
   emit({ ...base, type: "job.phase-changed", at: Date.now(), phase: "starting-rsync" });
   let transferred = 0;
   handle = startSync(config, intent.unit, target, {
+    expectedEpoch: folder.since,
     ...(intent.needsChecksum ? { checksum: true } : {}),
     onItem: (item) => {
       if (item.kind !== "change" || item.flags[1] !== "f") return;
@@ -561,7 +662,7 @@ async function runEngineSync(config: Config, token: string, job: OwnedJob): Prom
       });
     } catch (error) {
       emit({
-        protocolVersion: 1,
+        protocolVersion: ENGINE_PROTOCOL_VERSION,
         jobId: `${jobId}-recheck`,
         operation: "quick",
         unit: intent.unit,

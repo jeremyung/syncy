@@ -1,9 +1,10 @@
+import { catalogFolders, sourceEvidence } from "./archive-catalog.ts";
 import type { Config, Target } from "./config.ts";
+import { ENGINE_PROTOCOL_VERSION } from "./engine-protocol.ts";
 import { configRevision, evaluateUnitCell, type UnitCellIo } from "./engine-snapshot.ts";
 import { type Preflight, preflight } from "./guards.ts";
 import { serializeEngineMessage } from "./protocol-jsonl.ts";
 import { argvFor } from "./rsync.ts";
-import { listUnits } from "./scan.ts";
 import { appendHistory, type HistoryEntry, loadState, type State } from "./state.ts";
 import { reachWord } from "./status.ts";
 import { type SyncIntent, saveSyncIntent } from "./sync-intent.ts";
@@ -64,18 +65,6 @@ export async function cmdSyncPreflight(
   const now = (io.now ?? Date.now)();
   const target = config.targets.find((candidate) => candidate.name === targetName);
   if (target === undefined) fail(`no such destination: ${targetName}`);
-  if (!(io.listUnits ?? listUnits)(config.source).includes(unitName)) {
-    fail(`no such unit: ${unitName}`);
-  }
-  const state = (io.loadState ?? loadState)();
-  const evaluation = await evaluateUnitCell(config, state, unitName, target, now, io.unitCell);
-  if (evaluation === undefined) fail(`no evidence for ${unitName} at ${targetName}`);
-  const { unit, cell, reachability } = evaluation;
-  // A scheduled sync that does not run is a skipped sync, and says so in
-  // history by name. Without this, a scheduled sync to an unplugged drive
-  // left no record at all — the preflight refused, the app said "failed",
-  // and the history that outlives both said nothing had been attempted.
-  // A person reviewing a sync by hand sees the refusal on screen instead.
   const scheduled = (io.actor ?? process.env.SYNCY_ACTOR) === "scheduler";
   const recordSkipped = (detail: string): void => {
     if (!scheduled) return;
@@ -90,6 +79,27 @@ export async function cmdSyncPreflight(
       detail,
     });
   };
+  const folders = io.listUnits
+    ? io
+        .listUnits(config.source)
+        .map((unit) => ({ unit, local: "present" as const, active: 1, since: 0 }))
+    : catalogFolders(config, now);
+  const local = folders.find((folder) => folder.unit === unitName && folder.active);
+  if (local?.local !== "present") {
+    const reason =
+      local?.local === "absent"
+        ? "Absent locally"
+        : local?.local === "unavailable"
+          ? "Local source unavailable"
+          : `no such unit: ${unitName}`;
+    recordSkipped(reason);
+    fail(reason);
+  }
+  const raw = (io.loadState ?? loadState)();
+  const state = io.loadState ? raw : sourceEvidence(config, raw, folders, true);
+  const evaluation = await evaluateUnitCell(config, state, unitName, target, now, io.unitCell);
+  if (evaluation === undefined) fail(`no evidence for ${unitName} at ${targetName}`);
+  const { unit, cell, reachability } = evaluation;
   if (cell.state !== "behind" && cell.state !== "missing") {
     recordSkipped(
       reachability === "ok"
@@ -113,6 +123,7 @@ export async function cmdSyncPreflight(
       version: 1,
       token,
       createdAt: now,
+      localEpoch: local.since,
       expiresAt,
       unit: unitName,
       target: targetName,
@@ -127,7 +138,7 @@ export async function cmdSyncPreflight(
   }
   (io.write ?? ((chunk: string) => process.stdout.write(chunk)))(
     serializeEngineMessage({
-      protocolVersion: 1,
+      protocolVersion: ENGINE_PROTOCOL_VERSION,
       type: "sync.preflight",
       generatedAt: now,
       unit: unitName,

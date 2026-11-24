@@ -380,6 +380,7 @@ export async function checkUnit(
     const observation = observeTargetSync(target);
     assertTargetReachable(target, observation);
     const base = {
+      source: config.source,
       unit,
       target: target.name,
       ts: now,
@@ -410,6 +411,7 @@ export async function checkUnit(
   const observation = observeTargetSync(target);
   assertTargetReachable(target, observation);
   const base = {
+    source: config.source,
     unit,
     target: target.name,
     ts: now,

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { catalogFolders } from "../archive-catalog.ts";
 import type { Config } from "../config.ts";
 import { saveConfig, withoutTarget, withTarget } from "../configio.ts";
 import { bytes } from "../format.ts";
@@ -203,7 +204,14 @@ export function Setup({
           setStatus("no such directory");
           return;
         }
-        persist({ ...config, source: abs });
+        const next = { ...config, source: abs };
+        try {
+          catalogFolders(next, Date.now(), true);
+        } catch (error) {
+          setStatus(String(error));
+          return;
+        }
+        persist(next);
         setMode("list");
         return;
       }
