@@ -2,6 +2,7 @@ import { Box, Text, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { recheckAfterSync } from "../check-runner.ts";
 import type { Config, Target } from "../config.ts";
+import { ENGINE_PROTOCOL_VERSION } from "../engine-protocol.ts";
 import { bytes, count } from "../format.ts";
 import { type JobOwnerLease, type OwnedJob, withJobOwnership } from "../job-owner.ts";
 import { PARTIAL_DIR } from "../rsync.ts";
@@ -27,6 +28,7 @@ const NOTICE_MS = 3000;
 export interface JobProps {
   readonly config: Config;
   readonly unit: string;
+  readonly expectedEpoch?: number;
   readonly target: Target;
   readonly nChanges: number;
   /** Changed files only; old evidence has no separate count. */
@@ -116,7 +118,7 @@ export function Job(props: JobProps): React.ReactElement {
       try {
         const jobId = `${started}-${unit}-${target.name}`;
         const base = {
-          protocolVersion: 1,
+          protocolVersion: ENGINE_PROTOCOL_VERSION,
           jobId,
           operation: "sync",
           unit,
@@ -171,6 +173,7 @@ export function Job(props: JobProps): React.ReactElement {
 
         let seen = 0;
         const h = startSync(config, unit, target, {
+          ...(props.expectedEpoch === undefined ? {} : { expectedEpoch: props.expectedEpoch }),
           onLine: (line) => pending.current.push(line),
           onItem: (item) => {
             if (item.kind !== "change" || item.flags[1] !== "f") return;

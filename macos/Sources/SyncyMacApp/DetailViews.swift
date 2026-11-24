@@ -69,7 +69,9 @@ struct DifferencesView: View {
                 title: "Recorded listing is not current",
                 detail: "No current verification is implied.",
                 symbol: "clock.badge.exclamationmark")
-            } else if sourceChanged(since: diff, current: unit.fingerprint) {
+            } else if let fingerprint = unit.fingerprint,
+              sourceChanged(since: diff, current: fingerprint)
+            {
               PaneNotice(
                 title: "Evidence is stale",
                 detail:
@@ -378,8 +380,8 @@ struct SchedulesView: View {
             Text("Sync files").tag(EngineCheckOperationValue.sync)
           }
           Picker("Scope", selection: $unit) {
-            if operation != .sync { Text("All folders").tag("") }
-            ForEach(model.snapshot?.units ?? []) { unit in Text(unit.unit).tag(unit.unit) }
+            if operation != .sync { Text("All local folders").tag("") }
+            ForEach(model.snapshot?.localUnits ?? []) { unit in Text(unit.unit).tag(unit.unit) }
           }
           if operation == .sync {
             Picker("Destination", selection: $target) {
@@ -443,7 +445,7 @@ struct SchedulesView: View {
     if schedule.operation == .sync {
       return "Sync · \(schedule.unit ?? "no folder") → \(schedule.target ?? "no destination")"
     }
-    return "\(schedule.operation.readerTitle) · \(schedule.unit ?? "all folders")"
+    return "\(schedule.operation.readerTitle) · \(schedule.unit ?? "all local folders")"
   }
 }
 
@@ -871,21 +873,23 @@ struct FolderRecordView: View {
       if let unit {
         PageHeader(
           title: unit.unit,
-          detail: "\(unit.state.rawValue) · \(unit.reason)"
+          detail: unit.isLocal ? "\(unit.state.rawValue) · \(unit.reason)" : unit.reason
         ) {
-          Picker("Folder record", selection: $section) {
-            ForEach(FolderRecordSection.allCases) { item in
-              Text(item.rawValue).tag(item)
+          if unit.isLocal {
+            Picker("Folder record", selection: $section) {
+              ForEach(FolderRecordSection.allCases) { item in
+                Text(item.rawValue).tag(item)
+              }
             }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 300)
           }
-          .labelsHidden()
-          .pickerStyle(.segmented)
-          .frame(width: 300)
         }
 
-        switch section {
+        switch unit.isLocal ? section : .summary {
         case .summary:
-          FolderSummaryView(unit: unit)
+          FolderSummaryView(model: model, unit: unit)
         case .differences:
           DifferencesView(model: model, showsHeader: false)
         case .evidence:
@@ -913,8 +917,8 @@ struct FolderRecordView: View {
         .help("Back to the ledger")
       }
       ToolbarItemGroup {
-        if let unit {
-          Menu("Check", systemImage: "checkmark.circle") {
+        if let unit, unit.isLocal {
+          Menu("Check Local Copy", systemImage: "checkmark.circle") {
             Button("Quick check") {
               Task { await model.runCheck(.quick, unit: unit.unit) }
             }
@@ -923,6 +927,14 @@ struct FolderRecordView: View {
             }
           }
           .disabled(model.isLaunchingJob || model.activeJob != nil)
+        }
+        if let unit, let revision = model.snapshot?.configRevision {
+          Menu("Tracking", systemImage: "ellipsis.circle") {
+            Button("Stop Tracking This Folder") {
+              Task { await model.track(unit.unit, active: false, revision: revision) }
+            }
+          }
+          .disabled(model.isLaunchingJob || model.activeJob != nil || model.isUpdatingSetup)
         }
         if canReviewSync {
           Button("Review sync…") { showsSyncReview = true }
@@ -937,35 +949,47 @@ struct FolderRecordView: View {
 }
 
 private struct FolderSummaryView: View {
+  @ObservedObject var model: AppModel
   let unit: UnitSnapshot
 
   var body: some View {
     Form {
       Section("Source") {
-        LabeledContent("Files", value: unit.fingerprint.nfiles.formatted())
-        LabeledContent("Size", value: SyncyFormat.bytes(unit.fingerprint.bytes))
+        if let archive = unit.archive { Text(archive.label) }
+        if let fp = unit.measuredFingerprint {
+          LabeledContent("Files", value: fp.nfiles.formatted())
+          LabeledContent("Size", value: SyncyFormat.bytes(fp.bytes))
+        } else if unit.isLocal {
+          Text("Local size and file count unavailable")
+        }
       }
-      Section("Destinations") {
-        ForEach(unit.cells) { destination in
-          HStack(alignment: .top, spacing: SyncySpace.md) {
-            StateMark(state: destination.state)
-            VStack(alignment: .leading, spacing: SyncySpace.xs) {
-              HStack(alignment: .firstTextBaseline) {
-                Text(destination.target).fontWeight(.medium)
-                Spacer()
-                Text(destination.state.rawValue)
-              }
-              Text(destination.reason)
-                .font(.caption)
-                .foregroundStyle(SyncyTheme.secondaryInk)
-              if destination.nExtra > 0 {
-                Text("\(destination.nExtra.formatted()) only at destination · left unchanged")
+      if let archive = unit.archive, let revision = model.snapshot?.configRevision {
+        ArchiveCopySections(model: model, unit: unit.unit, record: archive, revision: revision)
+          .id([revision, unit.unit])
+      }
+      if !unit.cells.isEmpty {
+        Section("Destinations") {
+          ForEach(unit.cells) { destination in
+            HStack(alignment: .top, spacing: SyncySpace.md) {
+              StateMark(state: destination.state)
+              VStack(alignment: .leading, spacing: SyncySpace.xs) {
+                HStack(alignment: .firstTextBaseline) {
+                  Text(destination.target).fontWeight(.medium)
+                  Spacer()
+                  Text(destination.state.rawValue)
+                }
+                Text(destination.reason)
                   .font(.caption)
                   .foregroundStyle(SyncyTheme.secondaryInk)
+                if destination.nExtra > 0 {
+                  Text("\(destination.nExtra.formatted()) only at destination · left unchanged")
+                    .font(.caption)
+                    .foregroundStyle(SyncyTheme.secondaryInk)
+                }
               }
             }
+            .padding(.vertical, SyncySpace.xs)
           }
-          .padding(.vertical, SyncySpace.xs)
         }
       }
     }
@@ -995,7 +1019,7 @@ struct RunningActivityView: View {
   }
 }
 
-private struct ActiveTaskView: View {
+struct ActiveTaskView: View {
   let job: ActiveJobSnapshot
   @ObservedObject var model: AppModel
 

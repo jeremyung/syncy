@@ -39,7 +39,7 @@ whether the local copy can safely be deleted.
 | Language | TypeScript, `strict` |
 | Runtime | Bun |
 | TUI | Ink + React (Yoga flexbox layout) |
-| State | Two plain files: `state.json` (atomic rewrite) + `history.jsonl` (append-only) |
+| State | Local scans in `state.json`, invocation history in `history.jsonl`, and a transactional SQLite archive catalog |
 | Subprocess | `Bun.spawn` + line reader over stdout; `.kill()` for cancel |
 | FS walk | `node:fs` `opendirSync` / `statSync` (measured above) |
 | Config | TOML at a runtime path, then a **runtime schema validator** |
@@ -81,11 +81,17 @@ at a capped rate (~20 fps) instead of setting state per line.
 
 ## 2. Model
 
-**Unit** — a directory that is the atom of both sync and status. There is **one
-source root**, and the units are its **immediate subfolders** — not a
-configurable depth, not an explicit list. Status is determined per unit, never
-per file. A unit's path relative to the source root is also its path relative to
-each target root, which is what makes N targets comparable at a glance.
+**Unit** — an immediate subfolder, keyed by configured source root and folder name.
+The ledger combines local observations with remembered folders. Each unit's relative
+path identifies its counterpart under each destination. An unavailable source root
+leaves local presence unknown. A successful listing of the identified root can
+establish absence. An observed return starts a new period for local verification.
+
+**Pair comparison** — a read-only comparison between two identified destinations
+for one unit. Quick checks inventory both sides. Deep checks inventory both sides and
+compare checksums. Effective exclusions, compatible attributes, time tolerance, and
+endpoint identities travel with the evidence. The ledger dates historical local
+verification separately. Pair results never authorize a transfer.
 
 **Target** — one of **N named target roots**, each a directory syncy can reach
 and each holding the same subfolder structure as the source root. The names are
@@ -105,22 +111,17 @@ written once at setup.
 > copy of the data you were trying to move off it. Every operation — verify,
 > sync, status — refuses to proceed on a sentinel miss.
 
-**State** — two files under `~/.local/state/syncy/`, no database.
+**State** lives under syncy's state directory. `state.json` holds local scan
+results per source root, unit, destination and method. `history.jsonl` records
+literal rsync arguments, exit codes and job outcomes. Both remain readable
+independently of the clients.
 
-`state.json` holds current scan results, one entry per unit × target: timestamp,
-method (`quick` | `deep`), result, change and extra counts, bytes pending, the
-source fingerprint at scan time, and the log path. At ~14 units × 2 targets that
-is under 30 entries — read whole, rewritten whole.
-
-`history.jsonl` is an append-only line per rsync invocation: timestamp, unit,
-target, literal argv, exit code, log path.
-
-SQLite was the earlier choice and was dropped deliberately. Its advantages —
-concurrency, query planning, scale — answer problems this tool does not have at
-this size and with a single process. What matters more is that a tool whose
-entire product is *"trust my record"* should keep a record you can `cat`,
-`grep`, diff and back up without a client. Dropping it also removes schema
-migrations, since the runtime validator required for config (§1) covers both.
+`archive-v1.sqlite` holds the folder catalog, source identities and observation
+periods, dated local verification, and pair comparison results. The app, terminal
+and scheduled engine can observe the same folders concurrently. An immediate
+transaction serializes catalog mutations and ties each returned folder's local
+evidence to the copy that was actually checked. Schema upgrades retain the
+existing local scan and history files.
 
 **`state.json` must be written atomically** — write to a temp file in the same
 directory, `fsync`, then `rename`. It is the single worst file in the system to

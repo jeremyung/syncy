@@ -1,14 +1,16 @@
 import { basename, join } from "node:path";
 import { Box, Text, useApp, useStdout } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ArchiveRecord, archiveLedger } from "../archive-ledger.ts";
+import type { runCheckQueue } from "../check-runner.ts";
 import { copyToClipboard } from "../clipboard.ts";
 import type { Config } from "../config.ts";
-import { type Diff, loadDiff } from "../diff.ts";
-import { EMPTY as EMPTY_FINGERPRINT, type Fingerprint, fingerprint } from "../fingerprint.ts";
+import { type Diff, loadLocalDiff } from "../diff.ts";
+import { type Fingerprint, fingerprint } from "../fingerprint.ts";
 import { bytes } from "../format.ts";
 import { isJobOwnerActive, readJobOwner } from "../job-owner.ts";
 import { timed, timedAsync } from "../log.ts";
-import { allReachability, listUnits, REACHABILITY_TIMEOUT_MS, type Reachability } from "../scan.ts";
+import { allReachability, REACHABILITY_TIMEOUT_MS, type Reachability } from "../scan.ts";
 import {
   findScan,
   lastSyncAt,
@@ -17,10 +19,12 @@ import {
   type Scan,
   type State,
   type StateOpen,
+  upsertScan,
 } from "../state.ts";
 import { type CellState, evaluateUnit, targetIdentity, type UnitState } from "../status.ts";
 import { setTitle, titleFor } from "../title.ts";
 import { padEnd, truncate, truncatePath } from "../width.ts";
+import { FolderPicker, PairView } from "./Archive.tsx";
 import { Confirm } from "./Confirm.tsx";
 import { Diff as DiffScreen } from "./Diff.tsx";
 import { Job } from "./Job.tsx";
@@ -59,12 +63,19 @@ export interface AppProps {
   readonly config: Config;
   /** Not used by the app; lets tests point the job screen at a controllable stand-in for rsync. */
   readonly bin?: string;
+  readonly measureFolder?: typeof fingerprint;
+  readonly runQueue?: typeof runCheckQueue;
 }
 
 /** How long a refused keypress stays on screen. */
 const NOTICE_MS = 3000;
 
-export function App({ config: initialConfig, bin }: AppProps): React.ReactElement {
+export function App({
+  config: initialConfig,
+  bin,
+  measureFolder = fingerprint,
+  runQueue,
+}: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const theme = useMemo(() => resolveTheme(), []);
@@ -76,12 +87,13 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   // it when the ledger first draws.
   const [opened] = useState<StateOpen>(() => openState());
   const [state, setState] = useState<State>(opened.state);
-  // Recomputed rather than held, since the setup screen can change the source.
-  const units = useMemo(
-    () => (config.source === "" ? [] : listUnits(config.source)),
-    [config.source],
-  );
-  const [selected, setSelected] = useState(0);
+  const [picker, setPicker] = useState(false);
+  const [pairContext, setPairContext] = useState<{
+    unit: string;
+    method?: "quick" | "deep";
+  } | null>(null);
+  const [preferredPairs, setPreferredPairs] = useState(new Map<string, readonly string[]>());
+  const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
   const [filter, setFilter] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
   const [showEvidence, setShowEvidence] = useState(false);
@@ -138,8 +150,16 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   const [showSetup, setShowSetup] = useState(() => initialConfig.targets.length === 0);
   // A sync moves through confirm -> job. Neither can be entered by accident:
   // `s` opens the confirm page, and only [enter] there starts a transfer.
-  const [pendingSync, setPendingSync] = useState<{ unit: string; target: string } | null>(null);
-  const [runningSync, setRunningSync] = useState<{ unit: string; target: string } | null>(null);
+  const [pendingSync, setPendingSync] = useState<{
+    unit: string;
+    target: string;
+    expectedEpoch: number;
+  } | null>(null);
+  const [runningSync, setRunningSync] = useState<{
+    unit: string;
+    target: string;
+    expectedEpoch: number;
+  } | null>(null);
   /**
    * ctrl-c presses seen while a transfer is running.
    *
@@ -179,21 +199,20 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
    * open, on [r], and when a run of checks finishes.
    */
   const [scan, setScan] = useState<{
+    readonly records: { unit: string; archive: ArchiveRecord }[];
     readonly fingerprints: ReadonlyMap<string, Fingerprint>;
     readonly reach: ReadonlyMap<string, Reachability>;
   } | null>(null);
 
+  const refreshVersion = useRef(0);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const refresh = useCallback(() => {
+    const version = ++refreshVersion.current;
+    setRefreshError(null);
     if (config.source === "") {
-      setScan({ fingerprints: new Map(), reach: new Map() });
+      setScan({ records: [], fingerprints: new Map(), reach: new Map() });
       return;
     }
-    const fingerprints = new Map<string, Fingerprint>();
-    timed("refresh.fingerprints", 250, () => {
-      for (const unit of units) {
-        fingerprints.set(unit, fingerprint(join(config.source, unit), config.exclude));
-      }
-    });
     // Reachability may spawn a process (diskutil, mount), so it is awaited off
     // the render path rather than blocking a frame.
     // A destination that has not answered in time is named on the notice line
@@ -203,6 +222,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     void timedAsync("refresh.reachability", 250, () =>
       allReachability(config, {
         onWaiting: (name) => {
+          if (version !== refreshVersion.current) return;
           const text = `waiting on ${name}`;
           waiting = text;
           // Held for the whole window the destination still has to answer in,
@@ -212,43 +232,76 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
           showNoticeRef.current(text, REACHABILITY_TIMEOUT_MS);
         },
       }),
-    ).then((reach) => {
-      // Clear the waiting message only if it is still on screen: a refused
-      // keypress may have replaced it while the refresh was in flight, and
-      // that message keeps its own timer.
-      const was = waiting;
-      if (was !== null) setNotice((current) => (current === was ? null : current));
-      setScan({ fingerprints, reach });
-    });
-    // The ledger's records drift too: a check run from another session, or a
-    // scheduled one, writes state.json without telling this interface. [r] is
-    // what re-reads it, so a row cannot keep showing yesterday's verdict.
-    setState(loadState());
-    setNow(Date.now());
-  }, [units, config]);
+    )
+      .then((reach) => {
+        // Clear the waiting message only if it is still on screen: a refused
+        // keypress may have replaced it while the refresh was in flight, and
+        // that message keeps its own timer.
+        if (version !== refreshVersion.current) return;
+        const was = waiting;
+        if (was !== null) setNotice((current) => (current === was ? null : current));
+        const observedAt = Date.now();
+        const ledger = archiveLedger(config, loadState(), reach, observedAt);
+        const fingerprints = new Map<string, Fingerprint>();
+        timed("refresh.fingerprints", 250, () => {
+          for (const { unit, archive } of ledger.records) {
+            if (config.targets.length > 0 && archive.local === "present")
+              fingerprints.set(unit, measureFolder(join(config.source, unit), config.exclude));
+          }
+        });
+        setScan({ records: ledger.records, fingerprints, reach });
+        setState(ledger.current);
+        setPairContext((context) =>
+          context && ledger.records.some((row) => row.unit === context.unit) ? context : null,
+        );
+        setNow(observedAt);
+      })
+      .catch((error) => {
+        if (version === refreshVersion.current) {
+          setScan(null);
+          setPairContext(null);
+          setRefreshError("Ledger refresh failed · " + String(error));
+        }
+      });
+  }, [config, measureFolder]);
 
   useEffect(() => {
     refresh();
+    return () => {
+      refreshVersion.current++;
+    };
   }, [refresh]);
 
   const allRows: Row[] = useMemo(() => {
-    if (config.source === "" || config.targets.length === 0 || scan === null) return [];
-    return units.map((unit) => {
-      const fp = scan.fingerprints.get(unit) ?? EMPTY_FINGERPRINT;
+    if (config.source === "" || scan === null) return [];
+    return scan.records.map(({ unit, archive }): Row => {
+      const fp = scan.fingerprints.get(unit);
+      if (!fp)
+        return {
+          status: { unit, state: "unchecked", reason: archive.label, cells: [] },
+          size: null,
+          archive,
+        };
       return {
         status: evaluateUnit(config, state, { unit, fingerprint: fp, sentinels: scan.reach }, now),
-        size: fp.bytes,
-        files: fp.nfiles,
+        size: fp.complete === false ? null : fp.bytes,
+        ...(fp.complete === false ? {} : { files: fp.nfiles }),
+        archive,
       };
     });
-  }, [units, config, state, now, scan]);
+  }, [config, state, now, scan]);
 
   const active = FILTERS[filter] ?? "all";
   const rows = active === "all" ? allRows : allRows.filter((r) => r.status.state === active);
-  const clampedSelection = Math.min(selected, Math.max(0, rows.length - 1));
+  const clampedSelection = Math.max(
+    0,
+    rows.findIndex((row) => row.status.unit === selectedUnit),
+  );
 
   const job = useJob({
     config,
+    measureFolder,
+    ...(runQueue ? { runQueue } : {}),
     rows,
     clampedSelection,
     state,
@@ -256,7 +309,9 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     refresh,
     notify: showNotice,
     setNow,
-    setState,
+    // Only merge observations made by this run. The full state returned by the
+    // runner also contains other sources and observations before a local return.
+    onScan: (scan) => setState((current) => upsertScan(current, scan)),
   });
   const { running, busy, runCheck } = job;
 
@@ -300,17 +355,14 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
     );
   }, [running, now, allRows]);
 
-  // Read only while the differences screen is open, and re-read whenever a
-  // check finishes, so it never shows a listing older than the record above it.
-  // `state` is an intentional invalidation trigger: it changes exactly when a
-  // check finishes writing a new diff, and the memo body reads the diff files
-  // rather than state itself.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
+  // A local difference listing belongs to a specific persisted scan and source epoch.
   const diffs: ReadonlyMap<string, Diff | null> = useMemo(() => {
     const unit = rows[clampedSelection]?.status.unit;
     if (!showDiff || unit === undefined) return new Map<string, Diff | null>();
-    return new Map(config.targets.map((t) => [t.name, loadDiff(unit, t.name)]));
-  }, [showDiff, rows, clampedSelection, config.targets, state]);
+    return new Map(
+      config.targets.map((t) => [t.name, loadLocalDiff(config.source, unit, t.name, state)]),
+    );
+  }, [showDiff, rows, clampedSelection, config, state]);
 
   const diffProvenance = useMemo(() => {
     const values = new Map<string, "current" | "different-volume" | "not-connected" | "unknown">();
@@ -336,19 +388,42 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   const lastSync: ReadonlyMap<string, number | null> = useMemo(() => {
     const unit = rows[clampedSelection]?.status.unit;
     if (!showDiff || unit === undefined) return new Map<string, number | null>();
-    return new Map(config.targets.map((t) => [t.name, lastSyncAt(unit, t.name)]));
-  }, [showDiff, rows, clampedSelection, config.targets, state]);
+    return new Map(
+      config.targets.map((t) => [
+        t.name,
+        lastSyncAt(unit, t.name, undefined, config.source, t.path),
+      ]),
+    );
+  }, [showDiff, rows, clampedSelection, config, state]);
+
+  const selectedRow = rows[clampedSelection];
+  const archiveOnly = selectedRow?.archive !== undefined && selectedRow.archive.local !== "present";
+  const openPair = (method?: "quick" | "deep") => {
+    if (running !== null) return showNotice("Check on " + running.unit + " is still running");
+    if (!selectedRow?.archive) return showNotice("Select a tracked folder to compare copies");
+    setSelectedUnit(selectedRow.status.unit);
+    setPairContext({ unit: selectedRow.status.unit, ...(method ? { method } : {}) });
+  };
 
   useKeys(
     showHelp
       ? "help"
       : showEvidence
         ? "evidence"
-        : showDiff || showPlan || showSetup || pendingSync !== null || runningSync !== null
+        : picker ||
+            pairContext !== null ||
+            showDiff ||
+            showPlan ||
+            showSetup ||
+            pendingSync !== null ||
+            runningSync !== null
           ? "inert"
           : "ledger",
     {
       controlC: () => {
+        if (pairContext !== null) {
+          return; // The pair screen owns cancellation.
+        }
         // While a transfer is running, the first press is Job's to act on: let
         // it cancel and render the outcome instead of the app vanishing under
         // it. A second press exits regardless of what the transfer is doing.
@@ -361,29 +436,41 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
       closeHelp: () => setShowHelp(false),
       closeEvidence: () => setShowEvidence(false),
       ledger: {
-        up: () => setSelected((s) => Math.max(0, s - 1)),
-        down: () => setSelected((s) => Math.min(rows.length - 1, s + 1)),
-        quick: () => void runCheck("quick", "selected"),
+        up: () => setSelectedUnit(rows[Math.max(0, clampedSelection - 1)]?.status.unit ?? null),
+        down: () =>
+          setSelectedUnit(
+            rows[Math.min(rows.length - 1, clampedSelection + 1)]?.status.unit ?? null,
+          ),
+        quick: () => (archiveOnly ? openPair("quick") : void runCheck("quick", "selected")),
         quickAll: () => void runCheck("quick", "all"),
-        deep: () => void runCheck("deep", "selected"),
+        deep: () => (archiveOnly ? openPair("deep") : void runCheck("deep", "selected")),
         deepAll: () => void runCheck("deep", "all"),
         refresh,
         cycleFilter: () => {
           setFilter((f) => (f + 1) % FILTERS.length);
-          setSelected(0);
+          setSelectedUnit(null);
         },
-        evidence: () => setShowEvidence(true),
+        addFolder: () => {
+          if (running) showNotice("Check on " + running.unit + " is still running");
+          else setPicker(true);
+        },
+        compare: () => openPair(),
+        evidence: () => (archiveOnly ? openPair() : setShowEvidence(true)),
         openDiff: () => {
           // Only open it when there is a row, or the keyboard guard in
           // useKeys would swallow every key with nothing on screen.
-          if (rows[clampedSelection] !== undefined) setShowDiff(true);
+          if (archiveOnly) openPair();
+          else if (rows[clampedSelection] !== undefined) setShowDiff(true);
         },
         openPlan: () => {
           // Only open it when there is a folder to describe, or the keyboard
           // guard in useKeys would swallow every key with nothing on screen.
-          if (rows[clampedSelection] !== undefined) setShowPlan(true);
+          if (archiveOnly)
+            showNotice("Local commands unavailable · " + selectedRow?.archive?.label);
+          else if (rows[clampedSelection] !== undefined) setShowPlan(true);
         },
         startSync: () => {
+          if (archiveOnly) return showNotice("Sync unavailable · " + selectedRow?.archive?.label);
           // Offer the first destination that is behind — there is nothing to
           // sync to one that is already clean — and let the confirm page's
           // [tab] reach the others. The comment here used to claim "furthest
@@ -409,8 +496,12 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
           }
           const row = rows[clampedSelection];
           const cell = row?.status.cells.find((c) => c.state === "behind" || c.state === "missing");
-          if (row !== undefined && cell !== undefined) {
-            setPendingSync({ unit: row.status.unit, target: cell.target });
+          if (row?.archive && cell !== undefined) {
+            setPendingSync({
+              unit: row.status.unit,
+              target: cell.target,
+              expectedEpoch: row.archive.localEpoch,
+            });
           }
         },
         setup: () => setShowSetup(true),
@@ -442,13 +533,56 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
             bytesPending: c.bytesPending,
           }));
 
+  if (picker)
+    return (
+      <FolderPicker
+        config={config}
+        width={width}
+        height={screen.rows}
+        theme={theme}
+        onClose={() => setPicker(false)}
+        onChange={refresh}
+        onChoose={(unit) => {
+          setPicker(false);
+          setFilter(0);
+          setSelectedUnit(unit);
+          refresh();
+        }}
+      />
+    );
+  if (pairContext !== null) {
+    const record = scan?.records.find((r) => r.unit === pairContext.unit);
+    if (scan && record)
+      return (
+        <PairView
+          key={record.unit}
+          {...{ config, width, theme, refresh }}
+          height={screen.rows}
+          onClose={() => {
+            setPairContext(null);
+            refresh();
+          }}
+          archive={record.archive}
+          unit={record.unit}
+          selectedPair={preferredPairs.get(JSON.stringify([config.source, record.unit]))}
+          onSelectPair={(pair) =>
+            setPreferredPairs((previous) =>
+              new Map(previous).set(JSON.stringify([config.source, record.unit]), pair),
+            )
+          }
+          {...(pairContext.method ? { initialMethod: pairContext.method } : {})}
+        />
+      );
+  }
+
   if (pendingSync !== null && syncRow !== undefined && syncTarget !== undefined) {
     return (
       <Confirm
         config={config}
         candidates={syncCandidates}
-        onSwitch={(name) => setPendingSync({ unit: pendingSync.unit, target: name })}
+        onSwitch={(name) => setPendingSync({ ...pendingSync, target: name })}
         unit={pendingSync.unit}
+        expectedEpoch={pendingSync.expectedEpoch}
         target={syncTarget}
         nChanges={syncCell?.nChanges ?? 0}
         {...(syncCell?.nFiles === undefined ? {} : { nFiles: syncCell.nFiles })}
@@ -473,6 +607,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
       <Job
         config={config}
         unit={runningSync.unit}
+        expectedEpoch={runningSync.expectedEpoch}
         target={syncTarget}
         nChanges={syncCell?.nChanges ?? 0}
         {...(syncCell?.nFiles === undefined ? {} : { nFiles: syncCell.nFiles })}
@@ -485,7 +620,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
         onDone={() => {
           // A transfer changes what is at the target, so every recorded scan
           // for it is now stale. Re-read state rather than assuming success.
-          setState(loadState());
+          refresh();
           setNow(Date.now());
           // Nothing is running any more, so ctrl-c has nothing to leave to the
           // job screen: arm it to exit on the very next press. Without this the
@@ -495,6 +630,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
           ctrlCPresses.current = 1;
         }}
         onClose={() => {
+          refresh();
           setRunningSync(null);
           setNow(Date.now());
         }}
@@ -532,10 +668,13 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
   // The first scan happens in an effect so the interface paints immediately;
   // on a large archive it takes about a second, and a blank table would read as
   // "no folders" rather than "still looking".
-  if (scan === null && config.source !== "" && config.targets.length > 0) {
+  if (!showSetup && scan === null && config.source !== "" && config.targets.length > 0) {
     return (
       <Screen title="syncy" width={width} height={screen.rows} theme={theme}>
-        <Text color={theme.dim}>{`  reading ${config.source}…`}</Text>
+        <Text color={theme.dim}>
+          {"  " + truncate(refreshError ?? notice ?? "Reading " + config.source + "…", width - 2)}
+        </Text>
+        {refreshError && <Text color={theme.dim}>{"  [r] retry   [,] setup"}</Text>}
       </Screen>
     );
   }
@@ -562,7 +701,7 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
         width={width}
         height={screen.rows}
         config={config}
-        units={units.length}
+        units={allRows.length}
         states={
           new Map(
             config.targets.map((t) => [
@@ -617,6 +756,11 @@ export function App({ config: initialConfig, bin }: AppProps): React.ReactElemen
       <Ledger
         rows={rows}
         selected={clampedSelection}
+        preferredPair={
+          selectedRow
+            ? preferredPairs.get(JSON.stringify([config.source, selectedRow.status.unit]))
+            : undefined
+        }
         config={config}
         state={state}
         theme={theme}
@@ -666,6 +810,7 @@ export function Help({
       {line("↑ ↓ / j k", "move between folders")}
       {line("q / Q", "quick check — this folder / all · size and date · writes nothing")}
       {line("d / D", "deep verify — this folder / all · checksums · writes nothing")}
+      {line("a / c", "add or resume a folder / compare two destination copies")}
       {line("s", "sync — copies what is missing · the only key that writes")}
       {line("  tab", "on the confirm page: switch which destination to sync to")}
       {line("p", "show the exact rsync command each of those runs")}
@@ -723,7 +868,7 @@ export function Evidence({
     >
       <Box>
         <Text color={theme.figure}>{"  " + row.status.unit}</Text>
-        <Text color={theme.dim}>{`   ${bytes(row.size)}`}</Text>
+        <Text color={theme.dim}>{row.size === null ? "" : `   ${bytes(row.size)}`}</Text>
       </Box>
       <Rule width={width} theme={theme} />
       {config.targets.map((t) => {

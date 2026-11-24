@@ -104,28 +104,35 @@ describe("when a sync last landed", () => {
     for (const d of made) removeFixtureDir(d);
   });
 
+  const transfer = {
+    unit: "u",
+    target: "ext",
+    operation: "sync",
+    argv: ["--partial-dir=.syncy-partial", "/source/u/", "/backup/u/"],
+    exitCode: 0,
+  };
   test("the newest successful sync for that unit and destination wins", () => {
     const f = history([
-      { ts: 100, unit: "u", target: "ext", argv: [], exitCode: 0 },
-      { ts: 300, unit: "u", target: "ext", argv: [], exitCode: 0 },
-      { ts: 200, unit: "u", target: "ext", argv: [], exitCode: 0 },
+      { ...transfer, ts: 100 },
+      { ...transfer, ts: 300 },
+      { ...transfer, ts: 200 },
     ]);
     expect(lastSyncAt("u", "ext", f)).toBe(300);
   });
 
   test("another unit or another destination is not this one's sync", () => {
     const f = history([
-      { ts: 900, unit: "other", target: "ext", argv: [], exitCode: 0 },
-      { ts: 800, unit: "u", target: "nas", argv: [], exitCode: 0 },
-      { ts: 100, unit: "u", target: "ext", argv: [], exitCode: 0 },
+      { ...transfer, ts: 900, unit: "other" },
+      { ...transfer, ts: 800, target: "nas" },
+      { ...transfer, ts: 100 },
     ]);
     expect(lastSyncAt("u", "ext", f)).toBe(100);
   });
 
   test("a failed run is not a sync that landed", () => {
     const f = history([
-      { ts: 100, unit: "u", target: "ext", argv: [], exitCode: 0 },
-      { ts: 500, unit: "u", target: "ext", argv: [], exitCode: 23 },
+      { ...transfer, ts: 100 },
+      { ...transfer, ts: 500, exitCode: 23 },
     ]);
     expect(lastSyncAt("u", "ext", f)).toBe(100);
   });
@@ -133,15 +140,24 @@ describe("when a sync last landed", () => {
   test("exit 24 counts, as it does everywhere else", () => {
     // Files vanishing mid-run is routine on a live archive and does not mean
     // nothing was copied.
-    const f = history([{ ts: 500, unit: "u", target: "ext", argv: [], exitCode: 24 }]);
+    const f = history([{ ...transfer, ts: 500, exitCode: 24 }]);
     expect(lastSyncAt("u", "ext", f)).toBe(500);
   });
 
   test("a torn last line does not hide every sync before it", () => {
-    const good = JSON.stringify({ ts: 7, unit: "u", target: "ext", argv: [], exitCode: 0 });
+    const good = JSON.stringify({ ...transfer, ts: 7 });
     expect(lastSyncAt("u", "ext", write(`${good}\n{"ts":8,`))).toBe(7);
   });
 
+  test("checks and transfers from a different root cannot date this copy", () => {
+    const record = { ...transfer, ts: 10 };
+    const f = history([
+      record,
+      { ...record, ts: 20, operation: "quick", argv: ["-n", "/source/u/", "/backup/u/"] },
+      { ...record, ts: 30, argv: ["--partial-dir=.syncy-partial", "/other/u/", "/backup/u/"] },
+    ]);
+    expect(lastSyncAt("u", "ext", f, "/source", "/backup")).toBe(10);
+  });
   test("never synced reads as never, not as the epoch", () => {
     const dir = makeFixtureDir("history");
     made.push(dir);

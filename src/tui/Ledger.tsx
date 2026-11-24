@@ -1,9 +1,11 @@
 import { Box, Text } from "ink";
+import type { ArchiveRecord } from "../archive-ledger.ts";
 import type { Config } from "../config.ts";
 import { ageAgo, bytes, stamp } from "../format.ts";
 import { findScan, latestScan, type State } from "../state.ts";
 import { evidencePhrase, GLYPH, knownExtras, targetIdentity, type UnitStatus } from "../status.ts";
-import { displayWidth, padEnd, padStart, truncate } from "../width.ts";
+import { displayWidth, fit, padEnd, padStart, truncate } from "../width.ts";
+import { pairChoices } from "./Archive.tsx";
 import { Forklift, forkliftRows } from "./Forklift.tsx";
 import { Progress, progressLines, type RunProgress } from "./Progress.tsx";
 import { Shelf, verifiedPhrase } from "./Shelf.tsx";
@@ -20,15 +22,19 @@ const FOLDER = 25;
 const SIZE = 8;
 
 export interface Row {
+  readonly archive?: ArchiveRecord;
   readonly status: UnitStatus;
-  readonly size: number;
+  readonly size: number | null;
   /** Files in the folder, so a check can report progress through it. */
   readonly files?: number;
 }
 
+export const hasLocalMeasurement = (row: Row): row is Row & { size: number } => row.size !== null;
+
 export interface LedgerProps {
   readonly rows: readonly Row[];
   readonly selected: number;
+  readonly preferredPair?: readonly string[] | undefined;
   readonly config: Config;
   readonly state: State;
   readonly theme: Theme;
@@ -62,6 +68,8 @@ const HINTS: readonly string[] = [
   // the shift rule is one sentence that covers both keys — so it is worth more
   // of this line than a second glyph pair was.
   "[shift] all",
+  "[a] add",
+  "[c] copies",
   "[p] cmds",
 ];
 const LAST_HINT = "[?] keys";
@@ -83,8 +91,13 @@ function leaders(name: string, w: number): string {
 
 export function Ledger(props: LedgerProps): React.ReactElement {
   const { rows, selected, config, state, theme, width, now } = props;
-  const names = config.targets.map((t) => t.name);
-  const cellW = names.map((n) => Math.max(displayWidth(n), 4) + 2);
+  const columnBudget = width - FOLDER - SIZE - 18;
+  // Keep room for the verdict. The pair picker always shows every destination;
+  // very long names and large destination sets cannot all fit across a ledger.
+  const limit = Math.max(1, Math.floor(columnBudget / 6));
+  const names = config.targets.slice(0, limit).map((t) => t.name);
+  const cellBudget = Math.floor(columnBudget / Math.max(1, names.length));
+  const cellW = names.map((n) => Math.min(cellBudget, Math.max(displayWidth(n), 4) + 2));
   const fixed = 2 + FOLDER + 1 + SIZE + 3 + cellW.reduce((a, b) => a + b, 0);
   const statusW = Math.max(12, width - fixed + 2);
   const rule = (ch: string): string => ch.repeat(width);
@@ -110,7 +123,38 @@ export function Ledger(props: LedgerProps): React.ReactElement {
    * layout; the fix is for the layout to fit by construction, and to give up
    * its least important parts first when it cannot.
    */
-  const detailLines = config.targets.length;
+  const archived =
+    selectedRow?.archive?.local !== undefined && selectedRow.archive.local !== "present"
+      ? selectedRow.archive
+      : undefined;
+  const choices = archived ? pairChoices(archived) : [];
+  const option =
+    choices.find((p) => p.endpoints.every((name, i) => name === props.preferredPair?.[i])) ??
+    (choices.length === 1 || archived?.pairOptions.length === 1 ? choices[0] : undefined);
+  const latest = archived?.pairs.find((p) =>
+    p.endpoints.every((name, i) => name === option?.endpoints[i]),
+  );
+  const archiveDetail: string[] = [];
+  if (archived) {
+    if (option?.blocker) archiveDetail.push(option.blocker);
+    if (option) {
+      const summary = latest
+        ? stamp(latest.at) + " · " + (latest.current ? "" : "last result · ") + latest.detail
+        : "not compared";
+      archiveDetail.push(option.endpoints.join(" ↔ ") + " · " + summary);
+    } else
+      archiveDetail.push(
+        choices.length
+          ? "Choose two destinations to compare"
+          : "Add a second destination to compare copies",
+      );
+    archiveDetail.push(
+      ...archived.localChecks.map(
+        (check) => "Last verified against local · " + check.target + " · " + stamp(check.at),
+      ),
+    );
+  }
+  const detailLines = archived ? archiveDetail.length : config.targets.length;
 
   // What the screen is for, and cannot give up. Counted against `Footer`'s
   // actual output rather than from memory: the summary row, the blank beneath
@@ -189,8 +233,10 @@ export function Ledger(props: LedgerProps): React.ReactElement {
           <Box>
             <Text color={theme.dim}>
               {"  " + padEnd("folder", FOLDER) + " " + padStart("size", SIZE) + "   "}
-              {names.map((n, i) => padEnd(n, cellW[i]!)).join("")}
-              {"status"}
+              {names.map((n, i) => fit(n, cellW[i]!)).join("")}
+              {names.length < config.targets.length
+                ? "+" + (config.targets.length - names.length) + " · status"
+                : "status"}
             </Text>
           </Box>
           <Text color={theme.rule}>{"  " + rule("─")}</Text>
@@ -209,9 +255,13 @@ export function Ledger(props: LedgerProps): React.ReactElement {
             // verdict. Showing it unchanged reads as a result rather than as
             // history, so the row says what is happening instead.
             `${props.running!.mode} check running · ${props.running!.target}`
-          : row.status.state === "verified"
-            ? "verified"
-            : `${row.status.state} · ${row.status.reason}`;
+          : row.archive?.local === "present" && row.size === null
+            ? "Local size unavailable"
+            : row.archive && row.archive.label !== "Local copy present"
+              ? row.archive.label
+              : row.status.state === "verified"
+                ? "verified"
+                : `${row.status.state} · ${row.status.reason}`;
         return (
           <Box key={row.status.unit}>
             {/* Selection and activity are different facts and get different
@@ -225,7 +275,9 @@ export function Ledger(props: LedgerProps): React.ReactElement {
             >
               {leaders(row.status.unit, FOLDER)}
             </Text>
-            <Text color={theme.figure}>{" " + padStart(bytes(row.size), SIZE) + "   "}</Text>
+            <Text color={theme.figure}>
+              {" " + padStart(row.size === null ? "—" : bytes(row.size), SIZE) + "   "}
+            </Text>
             {names.map((n, i) => {
               const cell = row.status.cells.find((c) => c.target === n);
               // The row keeps showing its work even after the cursor moves on.
@@ -238,13 +290,18 @@ export function Ledger(props: LedgerProps): React.ReactElement {
                   </Text>
                 );
               }
-              const glyph = cell === undefined ? "?" : GLYPH[cell.state];
+              const glyph =
+                row.archive && row.archive.local !== "present"
+                  ? "—"
+                  : cell === undefined
+                    ? "?"
+                    : GLYPH[cell.state];
               const suffix =
                 cell !== undefined && cell.state === "behind" ? String(cell.nChanges) : "";
               const token = cell === undefined ? "unchecked" : cellToken(cell.state);
               return (
                 <Text key={n} color={theme[token]}>
-                  {padEnd(glyph + suffix, cellW[i]!)}
+                  {fit(glyph + suffix, cellW[i]!)}
                 </Text>
               );
             })}
@@ -260,7 +317,13 @@ export function Ledger(props: LedgerProps): React.ReactElement {
       {/* Strictness governs the verdict, not the display: an unreachable target
           still shows when it last verified. */}
       {!showDetail ? null : selectedRow === undefined ? (
-        <Text color={theme.dim}>{"  no subfolders under the source root"}</Text>
+        <Text color={theme.dim}>{"  no folders in this view · [a] add or resume"}</Text>
+      ) : archived ? (
+        archiveDetail.map((line, i) => (
+          <Text key={i} color={theme.dim}>
+            {"  " + truncate(line, width - 2)}
+          </Text>
+        ))
       ) : (
         config.targets.map((t, i) => {
           // Filtered to the identity this target resolves to now — the same
@@ -312,8 +375,9 @@ export function Ledger(props: LedgerProps): React.ReactElement {
 
 function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactElement {
   const { rows, theme, busy, width, hidden } = props;
-  const states = rows.map((r) => r.status.state);
-  const entries = rows.map((r) => ({ state: r.status.state, size: r.size }));
+  const local = rows.filter(hasLocalMeasurement);
+  const states = local.map((r) => r.status.state);
+  const entries = local.map((r) => ({ state: r.status.state, size: r.size }));
 
   // Three facts, one measure each: the scale of the archive, the bytes by
   // state, and the shape. The counts by state were the same information a
@@ -329,9 +393,24 @@ function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactEl
   const scale =
     `  ${rows.length} folder${rows.length === 1 ? "" : "s"}` +
     (hidden > 0 ? `, ${hidden} not shown` : "");
-  const phrase = verifiedPhrase(entries);
-  const blocks = Math.min(states.length, 28);
-  const gap = Math.max(2, width + 2 - displayWidth(scale) - displayWidth(phrase) - blocks - 4);
+  const phrase =
+    local.length === rows.length
+      ? verifiedPhrase(entries)
+      : local.length
+        ? verifiedPhrase(entries) +
+          (rows.some((r) => r.size === null && r.archive?.local === "present")
+            ? " measured locally"
+            : " locally")
+        : "No local copies measured";
+  const shelfBudget = width + 2 - displayWidth(scale) - displayWidth(phrase) - 6;
+  const shelfSize =
+    Math.min(states.length, 28) +
+    (states.length > 28 ? displayWidth("+" + (states.length - 28)) : 0);
+  const showShelf = shelfBudget >= shelfSize;
+  const gap = Math.max(
+    0,
+    width + 2 - displayWidth(scale) - displayWidth(phrase) - (showShelf ? shelfSize : 0) - 4,
+  );
 
   return (
     <Box flexDirection="column">
@@ -339,7 +418,7 @@ function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactEl
         <Text color={theme.dim}>{scale}</Text>
         <Text color={theme.verified}>{"    " + phrase}</Text>
         <Text>{" ".repeat(gap)}</Text>
-        <Shelf states={states} theme={theme} />
+        {showShelf && <Shelf states={states} theme={theme} />}
       </Box>
       <Text> </Text>
       {props.running != null ? (
@@ -362,7 +441,12 @@ function Footer(props: LedgerProps & { readonly hidden: number }): React.ReactEl
         // Progress, so one kind of message looks one way.
         <Text color={theme.missing}>{"  " + truncate(props.notice, width - 2)}</Text>
       ) : busy === null ? (
-        <Text color={theme.dim}>{"  " + hintLine(props.width)}</Text>
+        <Text color={theme.dim}>
+          {"  " +
+            (rows[props.selected]?.archive && rows[props.selected]!.archive!.local !== "present"
+              ? truncate("[enter] copies   [q] quick   [d] deep   [a] add   [?] keys", width - 2)
+              : hintLine(props.width))}
+        </Text>
       ) : (
         // Truncated: an untruncated command wrapped across three lines and
         // sheared the layout.

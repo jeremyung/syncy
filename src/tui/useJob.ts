@@ -1,11 +1,12 @@
+import { join } from "node:path";
 import { useEffect, useState } from "react";
-import { runCheckQueue } from "../check-runner.ts";
+import { type CheckRunUnit, recordLocalSkip, runCheckQueue } from "../check-runner.ts";
 import type { Config } from "../config.ts";
-import type { Fingerprint } from "../fingerprint.ts";
+import { type Fingerprint, fingerprint } from "../fingerprint.ts";
 import { withJobOwnership } from "../job-owner.ts";
 import { presentCheckOutcome } from "../presentation.ts";
 import type { Reachability } from "../scan.ts";
-import type { State } from "../state.ts";
+import type { Scan, State } from "../state.ts";
 import type { Row } from "./Ledger.tsx";
 import type { RunProgress } from "./Progress.tsx";
 import { useTimers } from "./useTimers.ts";
@@ -24,6 +25,8 @@ import { useTimers } from "./useTimers.ts";
 /** What the caller knows about the world, so the job can plan against it. */
 export interface JobFacts {
   readonly config: Config;
+  readonly measureFolder?: typeof fingerprint;
+  readonly runQueue?: typeof runCheckQueue;
   /** The rows currently on screen, in the order they appear. */
   readonly rows: Row[];
   /** Which row the cursor is on, already clamped to the visible range. */
@@ -39,7 +42,7 @@ export interface JobFacts {
   /** Show a short refusal message, e.g. when a key arrives while a job runs. */
   readonly notify: (text: string) => void;
   readonly setNow: React.Dispatch<React.SetStateAction<number>>;
-  readonly setState: React.Dispatch<React.SetStateAction<State>>;
+  readonly onScan: (scan: Scan) => void;
 }
 
 export interface Job {
@@ -95,75 +98,92 @@ export function useJob(facts: JobFacts): Job {
       );
       return;
     }
-    const chosen =
+    const requested =
       scope === "all"
         ? facts.rows
         : facts.rows.slice(facts.clampedSelection, facts.clampedSelection + 1);
-    if (chosen.length === 0) return;
+    const excluded: string[] = [];
+    const chosen: CheckRunUnit[] = [];
+    if (requested.length === 0) {
+      facts.notify("No folders selected");
+      return;
+    }
 
     const result = await withJobOwnership(
       "cli",
       mode,
       (job) => {
+        for (const row of requested) {
+          const unit = row.status.unit;
+          let reason: string | undefined;
+          if (row.archive && row.archive.local !== "present") {
+            reason =
+              row.archive.local === "absent"
+                ? "Absent locally · outside local check scope"
+                : row.archive.label;
+          } else {
+            let fp = facts.scan?.fingerprints.get(unit);
+            if (!fp || fp.complete === false)
+              fp = (facts.measureFolder ?? fingerprint)(
+                join(facts.config.source, unit),
+                facts.config.exclude,
+              );
+            if (fp.complete === false) reason = "Could not measure the complete local folder";
+            else chosen.push({ unit, bytes: fp.bytes, files: fp.nfiles, fingerprint: fp });
+          }
+          if (reason) {
+            excluded.push(unit + " · " + reason);
+            job.lease.observe(recordLocalSkip(unit, reason, mode));
+          }
+        }
+        if (!chosen.length) {
+          facts.notify("Local check skipped · " + excluded.join(", "));
+          return null;
+        }
         const startedAt = Date.now();
-        return runCheckQueue(
-          facts.config,
-          facts.state,
-          mode,
-          chosen.map((row) => ({
-            unit: row.status.unit,
-            bytes: row.size,
-            files: row.files ?? 0,
-            ...(facts.scan?.fingerprints.get(row.status.unit) === undefined
-              ? {}
-              : { fingerprint: facts.scan.fingerprints.get(row.status.unit)! }),
-          })),
-          {
-            signal: quitting.signal,
-            ...(facts.scan?.reach === undefined ? {} : { reachability: facts.scan.reach }),
-            onEvent: (event) => {
-              job.lease.observe(event);
-              if (event.type === "job.started") {
-                const batch = event.batch;
-                if (batch === undefined) return;
-                setRunning({
-                  unit: event.unit,
-                  target: event.target,
-                  mode,
-                  done: batch.position - 1,
-                  total: batch.total,
-                  bytesDone: batch.bytesDone,
-                  bytesTotal: batch.bytesTotal,
-                  startedAt,
-                  jobStartedAt: event.at,
-                  filesSeen: 0,
-                  ...(event.unitSize.files === undefined
-                    ? {}
-                    : { filesTotal: event.unitSize.files }),
-                  unitBytes: event.unitSize.bytes,
-                  ...(event.estimatedDurationMs === undefined
-                    ? {}
-                    : { estimatedMs: event.estimatedDurationMs }),
-                });
-              } else if (event.type === "job.progress-observed" && event.filesSeen !== undefined) {
-                // The engine reports every observation; Ink renders at a lower
-                // cadence so a large folder cannot make React the bottleneck.
-                if (event.filesSeen % 25 === 0) {
-                  const filesSeen = event.filesSeen;
-                  setRunning((current) => (current === null ? null : { ...current, filesSeen }));
-                }
-              } else if (event.type === "job.failed") {
-                setBusy(`${event.unit} → ${event.target}: failed — ${event.message}`);
+        return (facts.runQueue ?? runCheckQueue)(facts.config, facts.state, mode, chosen, {
+          signal: quitting.signal,
+          ...(facts.scan?.reach === undefined ? {} : { reachability: facts.scan.reach }),
+          onEvent: (event) => {
+            job.lease.observe(event);
+            if (event.type === "job.started") {
+              const batch = event.batch;
+              if (batch === undefined) return;
+              setRunning({
+                unit: event.unit,
+                target: event.target,
+                mode,
+                done: batch.position - 1,
+                total: batch.total,
+                bytesDone: batch.bytesDone,
+                bytesTotal: batch.bytesTotal,
+                startedAt,
+                jobStartedAt: event.at,
+                filesSeen: 0,
+                ...(event.unitSize.files === undefined ? {} : { filesTotal: event.unitSize.files }),
+                unitBytes: event.unitSize.bytes,
+                ...(event.estimatedDurationMs === undefined
+                  ? {}
+                  : { estimatedMs: event.estimatedDurationMs }),
+              });
+            } else if (event.type === "job.progress-observed" && event.filesSeen !== undefined) {
+              // The engine reports every observation; Ink renders at a lower
+              // cadence so a large folder cannot make React the bottleneck.
+              if (event.filesSeen % 25 === 0) {
+                const filesSeen = event.filesSeen;
+                setRunning((current) => (current === null ? null : { ...current, filesSeen }));
               }
-            },
-            // Publish after each durable record so the ledger fills in while a
-            // batch runs, preserving the old hook's visible behaviour.
-            onState: (state) => {
-              facts.setState(state);
-              facts.setNow(Date.now());
-            },
+            } else if (event.type === "job.failed") {
+              setBusy(`${event.unit} → ${event.target}: failed — ${event.message}`);
+            }
           },
-        );
+          // Publish after each durable record so the ledger fills in while a
+          // batch runs, preserving the old hook's visible behaviour.
+          onState: (_state, scan) => {
+            facts.onScan(scan);
+            facts.setNow(Date.now());
+          },
+        });
       },
       {
         onRefused: ({ owner }) => {
@@ -183,24 +203,26 @@ export function useJob(facts: JobFacts): Job {
     // A check can change what is at the target, and the source may have moved
     // under us while it ran, so both facts are re-read once at the end.
     facts.refresh();
+    const skipped = excluded.join(", ");
     setBusy(
-      presentCheckOutcome({
-        mode,
-        scope,
-        ...(chosen[0] === undefined ? {} : { selectedUnit: chosen[0].status.unit }),
-        selectedFolders: chosen.length,
-        total: result.total,
-        ran: result.ran,
-        failed: result.failed,
-        skipped: result.skipped,
-      }).summary,
+      (skipped ? "Skipped " + excluded.length + " · " + skipped + " · " : "") +
+        presentCheckOutcome({
+          mode,
+          scope,
+          ...(chosen[0] === undefined ? {} : { selectedUnit: chosen[0].unit }),
+          selectedFolders: chosen.length,
+          total: result.total,
+          ran: result.ran,
+          failed: result.failed,
+          skipped: result.skipped,
+        }).summary,
     );
     facts.setNow(Date.now());
     // A skip needs longer on screen than a success: it is the message the
     // user has to read and act on.
     timers.later(
       () => setBusy(null),
-      result.failed.length > 0 || result.skipped.length > 0 ? 8000 : 2500,
+      result.failed.length > 0 || result.skipped.length > 0 || skipped ? 8000 : 2500,
     );
   };
 

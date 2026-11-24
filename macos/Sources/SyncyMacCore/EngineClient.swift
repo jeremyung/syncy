@@ -1,5 +1,7 @@
 import Foundation
 
+private let engineProtocolVersion = 2
+
 private final class ProcessBox: @unchecked Sendable {
   let process: Process
   init(_ process: Process) { self.process = process }
@@ -13,6 +15,11 @@ public protocol EngineClient: Sendable {
     _ operation: EngineCheckOperation, unit: String?, actor: EngineActor,
     onEvent: @escaping JobEventHandler
   ) async throws
+  func folders(discover: Bool, destinations: [String]) async throws -> FolderCandidates
+  func track(unit: String, active: Bool, revision: String) async throws -> EngineSnapshot
+  func compare(
+    _ operation: EngineCheckOperation, unit: String, pair: DestinationPair, revision: String,
+    onEvent: @escaping JobEventHandler) async throws
   func doctor() async throws -> String
   func prepareSync(unit: String, target: String, actor: EngineActor) async throws -> SyncPreflight
   func runSync(
@@ -80,6 +87,8 @@ public struct JobUnitSizeSnapshot: Decodable, Sendable {
 }
 
 public struct JobResultSnapshot: Decodable, Sendable {
+  public let endpoints: [String]?
+  public let detail: String?
   public let outcome: String?
   public let nChanges: Int64?
   public let nFiles: Int64?
@@ -109,7 +118,7 @@ public struct JobEventSnapshot: Decodable, Sendable {
   public let bytesDone: Int64?
   public let bytesTotal: Int64?
   public let lastItem: String?
-  public let reachability: Reachability?
+  public let reachability: JobReachability?
   public let reason: String?
   public let result: JobResultSnapshot?
   public let message: String?
@@ -134,14 +143,14 @@ public struct JobEventSnapshot: Decodable, Sendable {
     bytesDone = try values.decodeIfPresent(Int64.self, forKey: .bytesDone)
     bytesTotal = try values.decodeIfPresent(Int64.self, forKey: .bytesTotal)
     lastItem = try values.decodeIfPresent(String.self, forKey: .lastItem)
-    reachability = try values.decodeIfPresent(Reachability.self, forKey: .reachability)
+    reachability = try values.decodeIfPresent(JobReachability.self, forKey: .reachability)
     reason = try values.decodeIfPresent(String.self, forKey: .reason)
     result = try values.decodeIfPresent(JobResultSnapshot.self, forKey: .result)
     message = try values.decodeIfPresent(String.self, forKey: .message)
     exitCode = try values.decodeIfPresent(Int32.self, forKey: .exitCode)
     transferred = try values.decodeIfPresent(Int64.self, forKey: .transferred)
 
-    guard protocolVersion == 1 else {
+    guard protocolVersion == engineProtocolVersion else {
       throw EngineClientError.protocolFailure("unsupported job event version \(protocolVersion)")
     }
     guard
@@ -185,8 +194,15 @@ public struct JobEventSnapshot: Decodable, Sendable {
         throw EngineClientError.protocolFailure("progress event contains no observation")
       }
     case "job.skipped":
-      guard let reachability, reachability != .ok, reason != nil else {
+      guard let reachability, reachability != .destination(.ok), reason != nil else {
         throw EngineClientError.protocolFailure("invalid job.skipped event")
+      }
+    case "pair.completed":
+      guard let result, result.endpoints?.count == 2, result.detail != nil,
+        ["agree", "different", "missing"].contains(result.outcome),
+        ["quick", "deep"].contains(operation)
+      else {
+        throw EngineClientError.protocolFailure("invalid completed comparison")
       }
     case "job.completed":
       guard let result else {
@@ -216,7 +232,7 @@ public struct JobEventSnapshot: Decodable, Sendable {
 
   private static let allowedTypes: Set<String> = [
     "job.started", "job.phase-changed", "job.progress-observed", "job.skipped",
-    "job.completed", "job.failed", "job.cancelled",
+    "pair.completed", "job.completed", "job.failed", "job.cancelled",
   ]
   private static let allowedOperations: Set<String> = ["quick", "deep", "sync", "setup"]
   private static let allowedPhases: Set<String> = [
@@ -344,6 +360,22 @@ private struct HistoryEnvelope: Decodable {
   let entries: [HistorySnapshotEntry]
 }
 
+public enum JobReachability: Decodable, Equatable, Sendable {
+  case destination(Reachability)
+  case localUnavailable
+
+  public init(from decoder: Decoder) throws {
+    let value = try decoder.singleValueContainer().decode(String.self)
+    if value == "local-unavailable" {
+      self = .localUnavailable
+    } else if let destination = Reachability(rawValue: value) {
+      self = .destination(destination)
+    } else {
+      throw EngineClientError.protocolFailure("unknown check reachability \(value)")
+    }
+  }
+}
+
 public enum Reachability: String, Codable, Sendable {
   case ok
   case missing
@@ -454,7 +486,14 @@ public struct UnitSnapshot: Decodable, Identifiable, Sendable {
   public let unit: String
   public let state: LedgerState
   public let reason: String
-  public let fingerprint: FingerprintSnapshot
+  public let fingerprint: FingerprintSnapshot?
+  public let archive: ArchiveRecord?
+
+  public var measuredFingerprint: FingerprintSnapshot? {
+    fingerprint?.complete == false ? nil : fingerprint
+  }
+
+  public var isLocal: Bool { archive?.local == .present || (archive == nil && fingerprint != nil) }
   public let cells: [CellSnapshot]
 
   public func cell(for target: String) -> CellSnapshot? {
@@ -471,6 +510,20 @@ public struct UnitSnapshot: Decodable, Identifiable, Sendable {
   }
 
   public var needsSync: Bool { !syncableTargets.isEmpty }
+}
+
+extension Array where Element == UnitSnapshot {
+  /// A partial directory walk has no measured total, even when its partial count is zero.
+  public var measuredBytes: Int64? {
+    var total: Int64 = 0
+    for unit in self {
+      guard let fingerprint = unit.measuredFingerprint else { return nil }
+      let next = total.addingReportingOverflow(fingerprint.bytes)
+      guard !next.overflow else { return nil }
+      total = next.partialValue
+    }
+    return total
+  }
 }
 
 public struct ActiveJobSnapshot: Decodable, Sendable {
@@ -552,9 +605,9 @@ public struct EngineSnapshot: Decodable, Sendable {
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     protocolVersion = try values.decode(Int.self, forKey: .protocolVersion)
-    guard protocolVersion == 1 else {
+    guard protocolVersion == engineProtocolVersion else {
       throw EngineClientError.protocolFailure(
-        "unsupported version \(protocolVersion); expected 1")
+        "unsupported version \(protocolVersion); expected \(engineProtocolVersion)")
     }
     type = try values.decode(String.self, forKey: .type)
     guard type == "snapshot" else {
@@ -571,9 +624,21 @@ public struct EngineSnapshot: Decodable, Sendable {
     activeJob = try values.decodeIfPresent(ActiveJobSnapshot.self, forKey: .activeJob)
 
     for (index, unit) in units.enumerated() {
-      guard unit.fingerprint.nfiles >= 0, unit.fingerprint.bytes >= 0 else {
+      guard unit.isLocal == (unit.fingerprint != nil),
+        unit.fingerprint.map({ $0.nfiles >= 0 && $0.bytes >= 0 })
+          ?? (unit.archive != nil && unit.cells.isEmpty && unit.state == .unchecked)
+      else {
         throw EngineClientError.protocolFailure(
-          "units[\(index)].fingerprint contains a negative count")
+          "units[\(index)] has invalid local evidence")
+      }
+      for reading in unit.archive?.pairs ?? [] {
+        guard reading.unit == unit.unit, reading.endpoints.count == 2,
+          Set(reading.endpoints).count == 2, ["quick", "deep"].contains(reading.method),
+          ["agree", "different", "missing"].contains(reading.outcome),
+          reading.at.isFinite, reading.counts.values.allSatisfy({ $0 >= 0 })
+        else {
+          throw EngineClientError.protocolFailure("units[\(index)] contains invalid pair evidence")
+        }
       }
       for (cellIndex, cell) in unit.cells.enumerated() {
         guard
@@ -609,11 +674,15 @@ public struct EngineSnapshot: Decodable, Sendable {
     }
   }
 
-  /// The archive read as one folder would be: the weakest state present. `nil`
-  /// only when no folder is tracked at all, which is an absence rather than a
-  /// state and is reported as one.
+  /// Local replication and pair comparisons have different evidence and denominators.
+  public var localUnits: [UnitSnapshot] { units.filter(\.isLocal) }
+
+  public var latestArchivedPair: PairEvidence? {
+    units.filter { !$0.isLocal }.compactMap { $0.archive?.pairs.first }.max { $0.at < $1.at }
+  }
+
   public var archiveState: LedgerState? {
-    LedgerState.precedence.first { state in units.contains { $0.state == state } }
+    LedgerState.precedence.first { state in localUnits.contains { $0.state == state } }
   }
 
   /// The most recent moment any check was recorded, quick or deep. It is the
@@ -622,12 +691,17 @@ public struct EngineSnapshot: Decodable, Sendable {
   /// snapshot's own `generatedAt` is when we *read* the ledger, not when
   /// anything was measured, and the two are never the same claim.
   public var newestEvidenceAt: Double? {
-    units
+    let localAt =
+      localUnits
       .flatMap(\.cells)
       .compactMap(\.evidence)
       .flatMap { [$0.lastCheck?.at, $0.deepCheck?.at] }
       .compactMap { $0 }
       .max()
+    let recorded = units.compactMap(\.archive)
+    let pairAt = recorded.flatMap(\.pairs).map(\.at).max()
+    let historical = recorded.flatMap(\.localChecks).map(\.at).max()
+    return [localAt, pairAt, historical].compactMap { $0 }.max()
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -694,7 +768,7 @@ public struct ProcessEngineClient: EngineClient {
         executableURL: executableURL, arguments: ["engine", "activity"])
       do {
         let envelope = try JSONDecoder().decode(ActivityEnvelope.self, from: Data(text.utf8))
-        guard envelope.protocolVersion == 1, envelope.type == "activity",
+        guard envelope.protocolVersion == engineProtocolVersion, envelope.type == "activity",
           envelope.generatedAt.isFinite
         else {
           throw EngineClientError.protocolFailure("invalid activity envelope")
@@ -733,12 +807,46 @@ public struct ProcessEngineClient: EngineClient {
     _ operation: EngineCheckOperation, unit: String?, actor: EngineActor,
     onEvent: @escaping JobEventHandler
   ) async throws {
+    try await checkJob(
+      [operation.rawValue] + (unit.map { [$0] } ?? []), actor: actor, onEvent: onEvent)
+  }
+
+  public func compare(
+    _ operation: EngineCheckOperation, unit: String, pair: DestinationPair, revision: String,
+    onEvent: @escaping JobEventHandler
+  ) async throws {
+    try await checkJob(
+      ["compare", operation == .deep ? "deep" : "quick", unit, pair.first, pair.second, "--revision", revision],
+      actor: .mac, onEvent: onEvent)
+  }
+
+  public func folders(discover: Bool, destinations: [String]) async throws -> FolderCandidates {
+    let executableURL = executableURL
+    return try await Task.detached(priority: .userInitiated) {
+      let text = try await Self.runText(
+        executableURL: executableURL,
+        arguments: ["engine", discover ? "discover" : "remembered"] + (discover ? destinations : []))
+      let result = try JSONDecoder().decode(FolderCandidates.self, from: Data(text.utf8))
+      guard result.protocolVersion == engineProtocolVersion, result.type == "folders" else {
+        throw EngineClientError.protocolFailure("invalid folder candidates")
+      }
+      return result
+    }.value
+  }
+
+  public func track(unit: String, active: Bool, revision: String) async throws -> EngineSnapshot {
+    try await mutate(arguments: ["engine", active ? "track" : "stop-tracking", unit, "--revision", revision])
+  }
+
+  private func checkJob(
+    _ arguments: [String], actor: EngineActor,
+    onEvent: @escaping JobEventHandler
+  ) async throws {
     let executableURL = executableURL
     let worker = Task.detached(priority: .userInitiated) {
       try await Self.runJob(
-        executableURL: executableURL,
-        arguments: [operation.rawValue] + (unit.map { [$0] } ?? []), actor: actor,
-        onEvent: onEvent)
+        executableURL: executableURL, arguments: arguments,
+        actor: actor, onEvent: onEvent)
     }
     try await withTaskCancellationHandler {
       try await worker.value
@@ -766,7 +874,8 @@ public struct ProcessEngineClient: EngineClient {
         arguments: ["engine", "preflight", unit, target], actor: actor)
       do {
         let prepared = try JSONDecoder().decode(SyncPreflight.self, from: Data(text.utf8))
-        guard prepared.protocolVersion == 1, prepared.type == "sync.preflight" else {
+        guard prepared.protocolVersion == engineProtocolVersion, prepared.type == "sync.preflight"
+        else {
           throw EngineClientError.protocolFailure("invalid sync preflight envelope")
         }
         guard prepared.nChanges >= 0, prepared.nExtra >= 0, prepared.bytesPending >= 0 else {
@@ -822,7 +931,7 @@ public struct ProcessEngineClient: EngineClient {
       let text = try await Self.runText(
         executableURL: executableURL, arguments: ["engine", "diff", unit, target])
       let envelope = try JSONDecoder().decode(DiffEnvelope.self, from: Data(text.utf8))
-      guard envelope.protocolVersion == 1, envelope.type == "diff" else {
+      guard envelope.protocolVersion == engineProtocolVersion, envelope.type == "diff" else {
         throw EngineClientError.protocolFailure("invalid differences envelope")
       }
       return envelope
@@ -835,7 +944,7 @@ public struct ProcessEngineClient: EngineClient {
       let text = try await Self.runText(
         executableURL: executableURL, arguments: ["engine", "history"])
       let envelope = try JSONDecoder().decode(HistoryEnvelope.self, from: Data(text.utf8))
-      guard envelope.protocolVersion == 1, envelope.type == "history" else {
+      guard envelope.protocolVersion == engineProtocolVersion, envelope.type == "history" else {
         throw EngineClientError.protocolFailure("invalid history envelope")
       }
       return envelope.entries
@@ -1029,6 +1138,21 @@ public struct ProcessEngineClient: EngineClient {
 
 public struct DisconnectedEngineClient: EngineClient {
   public init() {}
+
+  public func compare(
+    _: EngineCheckOperation, unit _: String, pair _: DestinationPair, revision _: String,
+    onEvent _: @escaping JobEventHandler
+  ) async throws {
+    throw EngineClientError.engineNotFound
+  }
+
+  public func folders(discover _: Bool, destinations _: [String]) async throws -> FolderCandidates {
+    throw EngineClientError.engineNotFound
+  }
+
+  public func track(unit _: String, active _: Bool, revision _: String) async throws -> EngineSnapshot {
+    throw EngineClientError.engineNotFound
+  }
 
   public func snapshot() async throws -> EngineSnapshot {
     throw EngineClientError.engineNotFound

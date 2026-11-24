@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useState } from "react";
+import { assertLocalFolder } from "../archive-catalog.ts";
 import type { Config, Target } from "../config.ts";
 import { bytes, count } from "../format.ts";
 import { type Preflight, preflight } from "../guards.ts";
@@ -28,6 +29,7 @@ export interface SyncCandidate {
 export interface ConfirmProps {
   readonly config: Config;
   readonly unit: string;
+  readonly expectedEpoch?: number;
   readonly target: Target;
   /**
    * Every destination this folder is behind on, in ledger order, including
@@ -120,9 +122,25 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
   useEffect(() => {
     let live = true;
     const ranAgainst = target.name;
+    if (props.expectedEpoch !== undefined) {
+      try {
+        assertLocalFolder(config, unit, props.expectedEpoch);
+      } catch (error) {
+        setPre({
+          target: ranAgainst,
+          result: {
+            ok: false,
+            freeAfter: null,
+            checks: [{ name: "source", ok: false, detail: String(error) }],
+          },
+        });
+        return;
+      }
+    }
     preflight(config, target, argv, props.bytesPending)
       .then((p) => {
-        if (live) setPre({ target: ranAgainst, result: p });
+        if (!live) return;
+        setPre({ target: ranAgainst, result: p });
       })
       .catch((e: unknown) => {
         // A preflight that fails to run is a blocked launch, never an allowed one.
@@ -140,7 +158,7 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
     return () => {
       live = false;
     };
-  }, [config, target, props.bytesPending, props.needsChecksum]);
+  }, [config, target, props.bytesPending, props.needsChecksum, props.expectedEpoch, unit]);
 
   const nextTarget = nextCandidate(props.candidates, target.name);
 
@@ -183,6 +201,7 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
     .map((c) => `${c.name} ${count(c.nChanges)} files · ${bytes(c.bytesPending)}`)
     .join("   ");
 
+  const launchHint = ready?.ok ? "[enter] run" : "Checking destination…";
   const footer = (
     <Box flexDirection="column">
       {/* The literal argv. Nothing runs that is not shown here first. */}
@@ -212,8 +231,8 @@ export function Confirm(props: ConfirmProps): React.ReactElement {
       ) : (
         <Text color={theme.dim}>
           {nextTarget === null
-            ? "  [enter] run   [esc] cancel"
-            : `  [enter] run   [tab] switch to ${nextTarget}   [esc] cancel`}
+            ? `  ${launchHint}   [esc] cancel`
+            : `  ${launchHint}   [tab] switch to ${nextTarget}   [esc] cancel`}
         </Text>
       )}
     </Box>

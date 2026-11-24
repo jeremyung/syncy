@@ -27,6 +27,25 @@ describe("cross-platform UI contract", () => {
     });
   });
 
+  test("an offline copy retains its dated pair result and local verification separately", () => {
+    const message = parseEngineMessage(fixture("archive-snapshot.json"));
+    expect(message.type).toBe("snapshot");
+    if (message.type !== "snapshot") return;
+    const unit = message.units[0];
+    expect(unit?.fingerprint).toBeUndefined();
+    expect(unit?.archive?.localChecks).toHaveLength(2);
+    expect(unit?.archive?.pairs[0]).toMatchObject({
+      current: false,
+      outcome: "different",
+      samples: [{ kind: "Only on External", name: "day-1/photo.jpg" }],
+    });
+    const events = fixture("pair-events.jsonl").split("\n").map(parseEngineMessage);
+    expect(events.at(-1)).toMatchObject({
+      type: "pair.completed",
+      result: { endpoints: ["Archive", "External"], detail: "Only on External · 1" },
+    });
+  });
+
   test("difference provenance and labels survive the wire", () => {
     const message = parseEngineMessage(fixture("diff.json"));
     expect(message.type).toBe("diff");

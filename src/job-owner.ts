@@ -327,7 +327,7 @@ export function acquireJobOwner(
           observe(event) {
             if (released) return;
             const terminal =
-              event.type === "job.completed"
+              event.type === "job.completed" || event.type === "pair.completed"
                 ? "completed"
                 : event.type === "job.skipped"
                   ? "skipped"

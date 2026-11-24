@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { assertLocalFolder } from "./archive-catalog.ts";
 import { type Config, canonicalPath, containmentError, type Target } from "./config.ts";
 import { type Item, parseItemizeLine } from "./itemize.ts";
 import { debug } from "./log.ts";
@@ -30,6 +31,7 @@ export interface SyncResult {
 }
 
 export interface SyncOptions {
+  readonly expectedEpoch?: number;
   readonly bin?: string;
   /** Repair mode: decide by checksum, for drift a deep verify found. */
   readonly checksum?: boolean;
@@ -106,6 +108,7 @@ export function startSync(
     throw new RsyncError(`no such unit at the source: ${source}`);
   }
 
+  assertLocalFolder(config, unit, opts.expectedEpoch);
   const argv = argvFor(config, unit, target, "sync", {
     ...(opts.checksum === true ? { checksum: true } : {}),
   });

@@ -218,8 +218,8 @@ describe("engine JSON Lines protocol", () => {
   });
 
   test("rejects unsupported versions rather than guessing compatibility", () => {
-    const wrong = JSON.stringify({ ...started, protocolVersion: 2 });
-    expect(() => parseEngineMessage(wrong)).toThrow(/unsupported version 2/);
+    const wrong = JSON.stringify({ ...started, protocolVersion: 3 });
+    expect(() => parseEngineMessage(wrong)).toThrow(/unsupported version 3/);
   });
 
   test("rejects a skipped destination described as reachable", () => {

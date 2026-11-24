@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { render } from "ink-testing-library";
+import { runCheckQueue } from "../src/check-runner.ts";
 import { type Config, parseConfig } from "../src/config.ts";
 import { fingerprint } from "../src/fingerprint.ts";
 import { acquireJobOwner } from "../src/job-owner.ts";
@@ -84,8 +85,8 @@ afterEach(() => {
   removeFixtureDir(root);
 });
 
-function mount() {
-  const r = render(<App config={config} />);
+function mount(runQueue?: typeof runCheckQueue) {
+  const r = render(<App config={config} {...(runQueue ? { runQueue } : {})} />);
   return {
     ...r,
     frame: () => plain(r.lastFrame()),
@@ -256,35 +257,43 @@ describe("a key that cannot act says so", () => {
    * was discarded in silence. It cost four failing test runs to notice, which
    * is the point: the interface knew something the person watching did not.
    */
-  test("pressing a check key mid-run reports the refusal instead of ignoring it", async () => {
-    const s = mount();
-    await s.ready();
-    await s.press("d"); // starts a deep verify
-    await s.press("d"); // arrives while the first is still running
-    await tick(200);
-    const frame = s.frame();
-    // Either the second press was refused out loud, or the first finished
-    // before it landed — both are honest; silence is not.
-    const refused = /ignored/.test(frame);
-    const finished = !/deep .*→/.test(frame);
-    expect(refused || finished, `neither refused nor finished:\n${frame}`).toBe(true);
-    s.unmount();
-  });
-
-  test("the refusal names the key and what is holding it up", async () => {
-    const s = mount();
-    await s.ready();
-    await s.press("q");
-    await s.press("d");
-    await tick(200);
-    const frame = s.frame();
-    if (/ignored/.test(frame)) {
-      const line = frame.split("\n").find((l) => l.includes("ignored"))!;
-      expect(line).toContain("[d]");
-      expect(line).toMatch(/quick|deep/);
-    }
-    s.unmount();
-  });
+  for (const mode of ["quick", "deep"] as const) {
+    test(
+      "pressing a check key during a " + mode + " check names the key and its blocker",
+      async () => {
+        // Hold the real queue's completion while the owner still has its lease.
+        // A missing destination finishes too quickly to deliver a second key reliably.
+        mkdirSync(join(root, "dst/photos-2019"));
+        const gate = Promise.withResolvers<void>();
+        const settled = Promise.withResolvers<void>();
+        let started = false;
+        const s = mount(async (...args) => {
+          started = true;
+          try {
+            const result = await runCheckQueue(...args);
+            await gate.promise;
+            return result;
+          } finally {
+            settled.resolve();
+          }
+        });
+        try {
+          await s.ready();
+          s.stdin.write(mode === "quick" ? "q" : "d");
+          await waitFor(() => s.frame().includes(mode + " check running"), {
+            what: "the check to acquire the keyboard",
+          });
+          s.stdin.write("d");
+          await waitFor(() => s.frame().includes("[d] ignored"), { what: "the mid-run refusal" });
+          expect(s.frame()).toContain("the " + mode + " check on photos-2019 is still running");
+        } finally {
+          gate.resolve();
+          if (started) await settled.promise;
+          s.unmount();
+        }
+      },
+    );
+  }
 
   test("[s] refuses to open confirm while another process holds the job-owner lease", async () => {
     const s = mount();
@@ -372,6 +381,7 @@ describe("a finished check does not resurrect superseded evidence", () => {
     // found the unit clean. The fingerprint is the source's real one, so the
     // row reading `verified` is legitimate evidence, not a lie to be caught.
     const deepClean: Scan = {
+      source: config.source,
       unit: "photos-2019",
       target: "dst",
       ts: Date.now() - 3_600_000,

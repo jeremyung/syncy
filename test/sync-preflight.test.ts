@@ -171,7 +171,7 @@ describe("engine preflight reads exactly one cell", () => {
     const expectedArgv = argvFor(config, "photos-2019", config.targets[0]!, "sync", {});
 
     expect(message).toEqual({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "sync.preflight",
       generatedAt: 1_750_000_001_000,
       unit: "photos-2019",

@@ -1,7 +1,9 @@
+import { lstatSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { assertLocalFolder, rememberLocalScan } from "./archive-catalog.ts";
 import type { Config, Target } from "./config.ts";
 import { saveDiff } from "./diff.ts";
-import type { JobEvent, JobPhase } from "./engine-protocol.ts";
+import { ENGINE_PROTOCOL_VERSION, type JobEvent, type JobPhase } from "./engine-protocol.ts";
 import { type Fingerprint, fingerprint } from "./fingerprint.ts";
 import { debug } from "./log.ts";
 import {
@@ -55,7 +57,9 @@ export interface CheckRunResult {
 
 export interface CheckRunnerDependencies {
   readonly reachability: typeof allReachability;
-  readonly check: typeof checkUnit;
+  readonly check: (
+    ...args: Parameters<typeof checkUnit>
+  ) => Promise<CheckResult & { readonly localEpoch?: number }>;
   /** The merge base for every record: the state file as it is at record time. */
   readonly loadState: typeof loadState;
   readonly saveState: typeof saveState;
@@ -63,9 +67,25 @@ export interface CheckRunnerDependencies {
   readonly appendHistory: typeof appendHistory;
 }
 
+/** A queued row can disappear, or a mount can change, while an earlier folder runs. */
+function sourceDirectoryStamp(source: string, unit: string): string {
+  const root = statSync(source, { bigint: true });
+  const folder = lstatSync(join(source, unit), { bigint: true });
+  if (!root.isDirectory() || !folder.isDirectory())
+    throw new Error("Local copy unavailable · " + unit);
+  return [root.dev, root.ino, folder.dev, folder.ino].join("/");
+}
+
 const DEFAULT_DEPENDENCIES: CheckRunnerDependencies = {
   reachability: allReachability,
-  check: checkUnit,
+  async check(config, unit, target, mode, options) {
+    const stamp = sourceDirectoryStamp(config.source, unit);
+    const localEpoch = assertLocalFolder(config, unit);
+    const result = await checkUnit(config, unit, target, mode, options);
+    if (stamp !== sourceDirectoryStamp(config.source, unit))
+      throw new Error("Local copy changed during check · " + unit);
+    return { ...result, localEpoch };
+  },
   loadState,
   saveState,
   saveDiff,
@@ -90,7 +110,7 @@ export interface CheckRunOptions {
   readonly reachability?: ReadonlyMap<string, Reachability>;
   readonly onEvent?: (event: JobEvent) => void;
   /** Published only after evidence has been durably recorded. */
-  readonly onState?: (state: State) => void;
+  readonly onState?: (state: State, scan: Scan) => void;
   readonly now?: () => number;
   readonly jobId?: (unit: string, target: string, position: number) => string;
   /** Test seam. Production callers should use the guarded defaults. */
@@ -112,10 +132,42 @@ export function recordScan(
   scan: Scan,
   read: typeof loadState = loadState,
   write: typeof saveState = saveState,
+  expectedEpoch?: number,
 ): State {
-  const merged = upsertScan(read(), scan);
-  write(merged);
-  return merged;
+  const persist = () => {
+    const merged = upsertScan(read(), scan);
+    write(merged);
+    return merged;
+  };
+  return scan.source && write === saveState
+    ? rememberLocalScan(scan, expectedEpoch, persist)
+    : persist();
+}
+
+export function recordLocalSkip(unit: string, reason: string, mode: "quick" | "deep") {
+  const at = Date.now();
+  const target = "Local source";
+  appendHistory({
+    ts: at,
+    unit,
+    target,
+    operation: mode,
+    outcome: "skipped",
+    argv: [],
+    exitCode: null,
+    detail: reason,
+  });
+  return {
+    protocolVersion: ENGINE_PROTOCOL_VERSION,
+    type: "job.skipped",
+    jobId: crypto.randomUUID(),
+    at,
+    operation: mode,
+    unit,
+    target,
+    reachability: "local-unavailable",
+    reason,
+  } as const;
 }
 
 interface PlannedCheck extends CheckRunUnit {
@@ -206,7 +258,7 @@ export async function runCheckQueue(
     const jobStartedAt = now();
     const estimate = estimateMs(working, job.target.name, methodOf(mode), job.bytes);
     const base = {
-      protocolVersion: 1,
+      protocolVersion: ENGINE_PROTOCOL_VERSION,
       jobId,
       operation: mode,
       unit: job.unit,
@@ -301,8 +353,9 @@ export async function runCheckQueue(
         phase: "recording-evidence",
       });
       // Merged onto the file as it is now, never onto `working`: see recordScan.
-      working = recordScan(result.scan, deps.loadState, deps.saveState);
-      deps.saveDiff(result.diff);
+      if (result.localEpoch !== undefined) assertLocalFolder(config, job.unit, result.localEpoch);
+      working = recordScan(result.scan, deps.loadState, deps.saveState, result.localEpoch);
+      deps.saveDiff({ ...result.diff, sourceRoot: config.source });
       deps.appendHistory({
         ts: result.scan.ts,
         unit: job.unit,
@@ -313,7 +366,7 @@ export async function runCheckQueue(
         outcome: result.scan.outcome === "error" ? "failed" : "completed",
       });
       recordedEndings.add(job);
-      options.onState?.(working);
+      options.onState?.(working, result.scan);
       options.onEvent?.({
         ...base,
         type: "job.completed",

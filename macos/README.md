@@ -6,7 +6,7 @@ evidence, history, setup, diagnostics, quick checks, deep verifies, and guarded
 syncs.
 
 At runtime the app launches Syncy's `engine snapshot` command and strictly
-decodes protocol version 1. It does not substitute sample evidence when the
+decodes protocol version 2. It does not substitute sample evidence when the
 engine is missing or returns invalid output. Between full ledger reads it polls
 `engine activity`, which reads only live job ownership and never walks the
 source or destinations. A full snapshot runs when the app opens, after work
@@ -38,6 +38,10 @@ The test suite covers the shared engine contract and the app's scheduler state
 machine. Scheduler tests use in-memory preferences and controlled engine
 completion, so cancellation, final refresh, and configuration-change suspension
 can be exercised without changing real schedules or requesting notifications.
+Build the bundle first to run the cross-client archive test. It resumes an
+absent folder in the native app model, compares its two copies through the
+TUI, then reads the same result in the app. The fixture keeps config, state
+and destination files under the repository’s test directory.
 
 From the repository root, `scripts/build-mac-app.sh` builds the engine and a
 `build/Syncy.app` bundle, embeds the engine helper, and ad-hoc signs both. Set
@@ -77,6 +81,22 @@ counts, and destination provenance are produced by the same presentation and
 protocol layer the terminal UI uses. Bun and Swift tests decode the same golden
 fixtures under `test/fixtures/ui-contract` so either client changing meaning
 without the other is a contract failure.
+
+## Archive folders
+
+A tracked row stays in the ledger after its local copy goes away. Open its
+folder record to compare two destination copies. Quick Check compares their
+file lists and metadata. Deep Check also compares bytes. Each result names both
+destinations and the time of the check. The record keeps earlier local
+verifications and dated results for disconnected drives.
+
+Choose **Add Folder** to resume a remembered folder. **Find on Destinations**
+also lists folders seen on connected destinations, including folders without a
+scan record. Choosing a tracked folder focuses its row. **Tracking → Stop
+Tracking This Folder** hides the row and keeps its history for a later resume.
+
+Bulk checks, schedules, and local replication totals cover local copies.
+Comparisons between destinations start from their folder record.
 
 ## Background work
 

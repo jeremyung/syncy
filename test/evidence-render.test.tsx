@@ -53,7 +53,7 @@ const config: Config = {
   ],
 };
 
-const row: Row = {
+const row: Row & { size: number } = {
   status: {
     unit: "photos-2019",
     state: "unverified",

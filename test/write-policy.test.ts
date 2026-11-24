@@ -70,6 +70,7 @@ describe("no source file writes outside the allowed modules", () => {
    */
   const ALLOWED = new Set([
     "configio.ts", // the config file syncy owns
+    "archive-catalog.ts", // transactional folder catalog and pair evidence in syncy’s state directory
     "state.ts", // state.json and history.jsonl
     "log.ts", // the debug log
     "staging.ts", // scratch inside the state directory

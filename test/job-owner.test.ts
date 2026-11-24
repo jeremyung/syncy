@@ -182,7 +182,7 @@ describe("cross-process job ownership", () => {
     });
     if (!result.acquired) throw new Error("expected ownership");
     result.lease.observe({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "job.started",
       jobId: "job-1",
       at: 1_800,
@@ -195,7 +195,7 @@ describe("cross-process job ownership", () => {
       estimatedDurationMs: 42_000,
     });
     result.lease.observe({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "job.progress-observed",
       jobId: "job-1",
       at: 1_900,
@@ -223,7 +223,7 @@ describe("cross-process job ownership", () => {
     });
 
     result.lease.observe({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "job.phase-changed",
       jobId: "job-1",
       at: 1_950,
@@ -241,7 +241,7 @@ describe("cross-process job ownership", () => {
     });
 
     result.lease.observe({
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "job.started",
       jobId: "job-2",
       at: 1_975,

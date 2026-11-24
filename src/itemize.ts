@@ -83,7 +83,7 @@ export interface Summary {
 const ITEMIZE = /^([<>ch.])([fdLDS])/;
 
 export function parseItemizeLine(line: string): Item | null {
-  const raw = line.trimEnd();
+  const raw = line.endsWith("\r") ? line.slice(0, -1) : line;
   if (raw === "") return null;
 
   const first = raw.indexOf("|");
@@ -99,7 +99,8 @@ export function parseItemizeLine(line: string): Item | null {
   // replays as an undated entry rather than as a parse failure.
   const third = raw.indexOf("|", second + 1);
   const mtime = third < 0 ? null : parseMtime(raw.slice(second + 1, third));
-  const name = mtime === null ? raw.slice(second + 1) : raw.slice(third + 1);
+  const hasTimestamp = third >= 0 && MTIME.test(raw.slice(second + 1, third).trim());
+  const name = hasTimestamp ? raw.slice(third + 1) : raw.slice(second + 1);
   if (name === "") return null;
 
   // `*deleting` means the file exists at the destination but not at the source.

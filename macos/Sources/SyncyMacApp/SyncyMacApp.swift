@@ -353,7 +353,20 @@ final class AppModel: ObservableObject {
     }
   }
 
+  private enum CheckScope {
+    case local(unit: String?)
+    case copies(unit: String, pair: DestinationPair, revision: String)
+  }
+
   func runCheck(_ operation: EngineCheckOperation, unit: String? = nil) async {
+    await performCheck(operation, scope: .local(unit: unit))
+  }
+
+  func compareCopies(_ operation: EngineCheckOperation, unit: String, pair: DestinationPair, revision: String) async {
+    await performCheck(operation, scope: .copies(unit: unit, pair: pair, revision: revision))
+  }
+
+  private func performCheck(_ operation: EngineCheckOperation, scope: CheckScope) async {
     guard !isLaunchingJob, activeJob == nil else { return }
     isLaunchingJob = true
     suppressSnapshotJob = false
@@ -367,13 +380,27 @@ final class AppModel: ObservableObject {
     }
     let events = eventHandler(actor: .mac)
     let worker = Task {
-      try await client.runCheck(operation, unit: unit, actor: .mac, onEvent: events)
+      switch scope {
+      case .local(let unit):
+        try await client.runCheck(operation, unit: unit, actor: .mac, onEvent: events)
+      case .copies(let unit, let pair, let revision):
+        try await client.compare(operation, unit: unit, pair: pair, revision: revision, onEvent: events)
+      }
     }
     checkTask = worker
     do {
       try await worker.value
       await refresh()
-      finishJob(success: "\(operation.readerTitle) completed · evidence recorded")
+      if case let .copies(unit, pair, revision) = scope {
+        let reading =
+          engineErrorMessage == nil && snapshot?.configRevision == revision
+          ? snapshot?.units.first(where: { $0.unit == unit })?.archive?.pairs.first {
+            pair.matches($0.endpoints) && $0.method == (operation == .deep ? "deep" : "quick")
+          } : nil
+        finishJob(success: "\(operation.readerTitle) · \(unit) · \(pair.label) · \(reading?.detail ?? "Comparison complete")")
+      } else {
+        finishJob(success: "\(operation.readerTitle) completed · evidence recorded")
+      }
     } catch is CancellationError {
       await refresh()
       errorMessage =
@@ -465,6 +492,20 @@ final class AppModel: ObservableObject {
     checkTask?.cancel()
     syncTask?.cancel()
     scheduleTask?.cancel()
+  }
+
+  func folders(discover: Bool, destinations: [String] = []) async throws -> FolderCandidates {
+    try await client.folders(discover: discover, destinations: destinations)
+  }
+
+  @discardableResult
+  func track(_ unit: String, active: Bool, revision: String) async -> Bool {
+    let saved = await updateSetup(active ? "Tracking folder" : "Stopping tracking") {
+      try await client.track(unit: unit, active: active, revision: revision)
+    }
+    if saved, active { selectedUnitID = unit }
+    if !saved { errorMessage = setupMessage ?? "Could not update tracking" }
+    return saved
   }
 
   @discardableResult
@@ -703,7 +744,7 @@ final class AppModel: ObservableObject {
   private func observe(_ event: JobEventSnapshot, actor: EngineActor) {
     switch event.type {
     case "job.skipped":
-      let reason = event.reason ?? event.reachability?.ledgerPhrase ?? "not run"
+      let reason = event.reason ?? "not run"
       jobOutcomeProblems.append("\(event.unit) → \(event.target) skipped · \(reason)")
       liveActiveJob = nil
       liveJobID = nil
@@ -725,12 +766,12 @@ final class AppModel: ObservableObject {
       liveActiveJob = nil
       liveJobID = nil
       suppressSnapshotJob = true
-    case "job.completed":
+    case "job.completed", "pair.completed":
       liveActiveJob = nil
       liveJobID = nil
       suppressSnapshotJob = true
     default:
-      let existing = liveActiveJob
+      let existing = liveJobID == event.jobId ? liveActiveJob : nil
       let startedAt =
         event.type == "job.started" || liveJobID != event.jobId
         ? event.at : existing?.startedAt ?? event.at
@@ -795,7 +836,7 @@ final class AppModel: ObservableObject {
     if schedule.operation == .sync {
       return "Sync · \(schedule.unit ?? "no folder") → \(schedule.target ?? "no destination")"
     }
-    return "\(schedule.operation.readerTitle) · \(schedule.unit ?? "all folders")"
+    return "\(schedule.operation.readerTitle) · \(schedule.unit ?? "all local folders")"
   }
 }
 
